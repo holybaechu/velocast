@@ -1,5 +1,6 @@
 //! Isolated Electron host. JSONL carries control and frame metadata only.
 //! Software BGRA uses one bounded private file; Windows GPU capture uses NT handles.
+//! The WebCodecs experiment retains textures in Electron and stages compressed H.264.
 use std::cell::{Cell, RefCell};
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(windows)]
@@ -37,6 +38,7 @@ const MAX_FRAME_BYTES: u64 = 256 * 1024 * 1024;
 
 pub struct ElectronRenderer {
     surface_mode: BrowserSurfaceMode,
+    webcodecs: bool,
     paint_state: PaintState,
     host: RefCell<Option<HostProcess>>,
     session: RefCell<Option<RenderSession>>,
@@ -47,6 +49,7 @@ impl ElectronRenderer {
     pub fn new(surface_mode: BrowserSurfaceMode) -> anyhow::Result<Self> {
         Ok(Self {
             surface_mode,
+            webcodecs: false,
             paint_state: PaintState::default(),
             host: RefCell::new(None),
             session: RefCell::new(None),
@@ -58,9 +61,38 @@ impl ElectronRenderer {
         self.paint_state.clone()
     }
 
+    pub fn new_webcodecs() -> anyhow::Result<Self> {
+        let mut renderer = Self::new(BrowserSurfaceMode::Accelerated)?;
+        renderer.webcodecs = true;
+        Ok(renderer)
+    }
+
+    pub(crate) fn webcodecs_request(&self, request: Value) -> anyhow::Result<Value> {
+        ensure!(self.webcodecs, "webcodecs.not_enabled");
+        self.request(request, Duration::from_secs(45))
+    }
+
+    pub(crate) fn webcodecs_stream(&self) -> anyhow::Result<PathBuf> {
+        ensure!(self.webcodecs, "webcodecs.not_enabled");
+        Ok(self
+            .host
+            .borrow()
+            .as_ref()
+            .context("electron.host_unavailable")?
+            .host_directory
+            .as_ref()
+            .context("electron.host_directory_unavailable")?
+            .root
+            .join("webcodecs.h264"))
+    }
+
     pub async fn load(&self, job: &RenderJob) -> anyhow::Result<()> {
         let cancellation = RenderCancellation::from_event_log_path(job.event_log_path.as_deref());
-        *self.host.borrow_mut() = Some(HostProcess::spawn(cancellation, self.surface_mode)?);
+        *self.host.borrow_mut() = Some(HostProcess::spawn(
+            cancellation,
+            self.surface_mode,
+            self.webcodecs,
+        )?);
         self.request(
             json!({"method":"load","url":job.serve_url,"width":1200,"height":630}),
             Duration::from_secs(16),
@@ -678,12 +710,16 @@ struct HostProcess {
 }
 
 impl HostProcess {
-    fn spawn(cancellation: RenderCancellation, mode: BrowserSurfaceMode) -> anyhow::Result<Self> {
+    fn spawn(
+        cancellation: RenderCancellation,
+        mode: BrowserSurfaceMode,
+        webcodecs: bool,
+    ) -> anyhow::Result<Self> {
         let binary = absolute_file_env("VELOCAST_ELECTRON_BINARY")?;
         let script = absolute_file_env("VELOCAST_ELECTRON_HOST_SCRIPT")?;
         let software = mode == BrowserSurfaceMode::Software;
         ensure!(
-            software || cfg!(windows),
+            software || webcodecs || cfg!(windows),
             "electron.accelerated_unsupported: shared texture import requires Windows; select software surface"
         );
         let host_directory = HostDirectory::create()?;
@@ -693,7 +729,13 @@ impl HostProcess {
             .env_remove("ELECTRON_RUN_AS_NODE")
             .env(
                 "VELOCAST_ELECTRON_SURFACE_MODE",
-                if software { "software" } else { "accelerated" },
+                if webcodecs {
+                    "webcodecs"
+                } else if software {
+                    "software"
+                } else {
+                    "accelerated"
+                },
             )
             .env(
                 "VELOCAST_ELECTRON_PROFILE_DIRECTORY",
@@ -703,7 +745,7 @@ impl HostProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        if software {
+        if software || webcodecs {
             command.env("VELOCAST_ELECTRON_FRAME_DIRECTORY", &host_directory.root);
         }
         #[cfg(windows)]

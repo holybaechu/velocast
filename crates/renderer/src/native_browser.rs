@@ -13,6 +13,19 @@ use crate::paint_state::PaintState;
 pub struct NativeBrowser(crate::electron_app::ElectronRenderer);
 
 impl NativeBrowser {
+    pub(crate) fn new_webcodecs() -> anyhow::Result<Self> {
+        selected_browser_host()?;
+        Ok(Self(crate::electron_app::ElectronRenderer::new_webcodecs()?))
+    }
+
+    pub(crate) fn webcodecs_request(&self, request: Value) -> anyhow::Result<Value> {
+        self.0.webcodecs_request(request)
+    }
+
+    pub(crate) fn webcodecs_stream(&self) -> anyhow::Result<std::path::PathBuf> {
+        self.0.webcodecs_stream()
+    }
+
     pub fn new(mode: BrowserSurfaceMode) -> anyhow::Result<Self> {
         selected_browser_host()?;
         Ok(Self(crate::electron_app::ElectronRenderer::new(mode)?))

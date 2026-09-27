@@ -2,6 +2,8 @@
 
 - [Architecture and development boundaries](architecture.md)
 - [Electron renderer and platform support](electron-renderer.md)
+- [Cross-platform GPU rendering options](cross-platform-rendering.md)
+- [Experimental Electron sharedTexture + WebCodecs backend](experimental-webcodecs.md)
 - [Declarative composition authoring](composition-authoring.md)
 - [React starter](react-project-starter.md)
 - [Agent composition checks](agent-composition-checks.md)

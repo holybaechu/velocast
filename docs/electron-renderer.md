@@ -18,7 +18,10 @@ remain in place. WebCodecs is a separate future encoder decision.
 | `required` acceleration                      | D3D11 shared textures and native encoding  | Fails with `electron.gpu_capture_unsupported` |
 | Self-contained runtime candidate             | Packager and local validation              | Production packaging/signing remains blocked  |
 
-Linux/macOS GPU rendering is not implemented. The release manifest has no
+The default Linux/macOS GPU rendering path is not implemented. An opt-in
+[sharedTexture + WebCodecs experiment](experimental-webcodecs.md) adds browser-owned
+H.264 encoding without claiming required hardware acceleration or validated Unix
+GPU support. The release manifest has no
 published artifacts; source builds and local runtime candidates do not establish
 public installation support.
 

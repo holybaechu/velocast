@@ -13,6 +13,10 @@ artifact. Native rendering currently requires a local source build or a
 separately prepared runtime. See the [Electron renderer guide](docs/electron-renderer.md)
 for platform limits and [Windows runtime preparation](docs/windows-runtime-candidate-prep.md).
 
+An opt-in [Electron sharedTexture + WebCodecs experiment](docs/experimental-webcodecs.md)
+adds serial H.264 encoding inside Chromium. It currently has Windows validation;
+macOS/Linux GPU execution and actual hardware selection remain unverified.
+
 See [PRODUCT.md](PRODUCT.md) for product goals and scope, the
 [documentation index](docs/README.md) for technical guides, and
 [architecture](docs/architecture.md) for implementation boundaries.

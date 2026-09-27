@@ -200,3 +200,11 @@ native GPU capture and encoding. Linux and macOS retain software rendering;
 required GPU capture fails explicitly. The former CEF, Linux DMA-BUF/Vulkan/VAAPI,
 and macOS GPU scaffolding has been removed. Signed distribution and broader
 platform validation remain separate release requirements.
+
+An [experimental WebCodecs route](experimental-webcodecs.md), selected only by
+`VELOCAST_EXPERIMENTAL_ENCODER=webcodecs`, keeps shared-texture capture and H.264
+encoding inside Electron. Its serial schedule rejoins the existing audio and
+transactional publication flow. A separate trusted encoder preload receives
+textures; composition pages retain their sandbox. This route explicitly rejects
+required acceleration because actual hardware selection and Chromium readbacks
+cannot be verified.

@@ -180,7 +180,7 @@ export function packageElectronRuntime(options) {
   for (const entry of readdirSync(host, { withFileTypes: true })) {
     if (
       entry.isFile() &&
-      (entry.name.endsWith(".cjs") || entry.name === "package.json")
+      (entry.name.endsWith(".cjs") || entry.name === "webcodecs.html" || entry.name === "package.json")
     )
       cpSync(
         join(host, entry.name),

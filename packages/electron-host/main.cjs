@@ -1,7 +1,8 @@
 "use strict";
 
-// This file is Electron's main process. The composition only runs in the sandboxed
-// page. Native commands and GPU handles never enter that page or an Electron preload.
+// This file is Electron's main process. The composition stays in a sandboxed
+// page without native commands or GPU handles. The optional trusted encoder
+// preload lives in a separate window that never loads composition content.
 const { app, BrowserWindow } = require("electron/main");
 const fs = require("node:fs");
 const {
@@ -23,10 +24,12 @@ const PAINT_TIMEOUT_MS = 1_800;
 const LEASE_TIMEOUT_MS = 10_000;
 
 const surfaceMode = process.env.VELOCAST_ELECTRON_SURFACE_MODE || "accelerated";
-if (!["software", "accelerated"].includes(surfaceMode)) {
+if (!["software", "accelerated", "webcodecs"].includes(surfaceMode)) {
   throw new Error("Invalid Electron surface mode");
 }
 const software = surfaceMode === "software";
+const webcodecs = surfaceMode === "webcodecs";
+let webcodecsEncoder = null;
 // Older protocol-1 controllers do not provide an owned profile directory.
 // Keep their existing startup behavior; updated controllers always isolate it.
 if (process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY !== undefined)
@@ -96,6 +99,7 @@ function cleanup() {
   inputStream?.destroy();
   inputStream = null;
   try {
+    webcodecsEncoder?.dispose();
     leases.releaseAll();
     softwareFrames?.releaseAll();
   } catch (error) {
@@ -182,8 +186,14 @@ function onPaint(event, dirtyRect, image) {
       texture.textureInfo,
       waiter.request,
       textureId,
+      webcodecs ? ["bgra", "rgba"] : ["bgra"],
     );
     metadata.dirtyRect = dirtyRect;
+    if (webcodecs && waiter.request.webcodecs) {
+      // This object stays in main; only compressed packets leave the encoder.
+      waiter.resolve({ texture, metadata });
+      return;
+    }
     if (waiter.request.copy) {
       leases.retain(textureId, texture);
       armLeaseTimeout();
@@ -431,6 +441,28 @@ async function commandExecute(command) {
 
 async function dispatch(command) {
   switch (command.method) {
+    case "webcodecs-open": {
+      if (!webcodecs || webcodecsEncoder) throw new Error("webcodecs.invalid_open");
+      const { WebCodecsHost } = require("./webcodecs-host.cjs");
+      webcodecsEncoder = new WebCodecsHost(process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY);
+      return { config: await webcodecsEncoder.open(command.settings) };
+    }
+    case "webcodecs-frame": {
+      if (!webcodecs || !webcodecsEncoder || command.index !== webcodecsEncoder.frames ||
+          !Number.isSafeInteger(command.index) || command.index < 0) throw new Error("webcodecs.invalid_sequence");
+      const generation = command.index + 1;
+      // Match the native reference path's initial and per-generation settling.
+      for (let paint = 0; paint < (command.index === 0 ? 6 : 2); paint++) {
+        await waitForPaint({ generation, copy: false });
+      }
+      const { texture, metadata } = await waitForPaint({ generation, copy: false, webcodecs: true });
+      return { ...(await webcodecsEncoder.encode(texture, command.index)),
+        width: metadata.width, height: metadata.height, pixelFormat: metadata.pixelFormat };
+    }
+    case "webcodecs-finish": {
+      if (!webcodecs || !webcodecsEncoder) throw new Error("webcodecs.invalid_finish");
+      return webcodecsEncoder.finish();
+    }
     case "load":
       return commandLoad(command);
     case "execute":
@@ -477,7 +509,7 @@ async function dispatch(command) {
         );
       }
       browser();
-      return waitForPaint(command);
+      return waitForPaint({ generation: command.generation, copy: command.copy });
     }
     case "release": {
       if (software) {
@@ -604,7 +636,7 @@ function listenForCommands() {
 app
   .whenReady()
   .then(async () => {
-    if (!software && process.platform !== "win32") {
+    if (!software && !webcodecs && process.platform !== "win32") {
       throw new Error(
         "Electron shared-texture host currently supports Windows only",
       );

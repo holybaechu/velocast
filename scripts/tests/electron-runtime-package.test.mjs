@@ -92,6 +92,7 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
       name.endsWith(".exe") ? executableFixture() : "fixture",
     );
   writeFileSync(join(host, "main.cjs"), "fixture-host");
+  writeFileSync(join(host, "webcodecs.html"), "trusted-encoder-page");
   const options = {
     platform: "win32",
     arch: "x64",
@@ -116,6 +117,7 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
     "fixture-host",
   );
   assert.throws(() => packageElectronRuntime(options), /runtime.output_exists/);
+  assert.equal(readFileSync(join(options.output, "electron-host/webcodecs.html"), "utf8"), "trusted-encoder-page");
   assert.throws(
     () =>
       packageElectronRuntime({

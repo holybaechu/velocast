@@ -27,6 +27,7 @@ mod segment;
 mod segment_muxer;
 mod surface;
 mod telemetry;
+mod webcodecs;
 
 use args::Args;
 use clap::Parser;
@@ -210,6 +211,18 @@ async fn run_coordinator_render(
     output_context: &mut output_result::OutputContext,
 ) -> anyhow::Result<()> {
     let initial_surface = initial_surface_for_job(job);
+    if webcodecs::requested(job)? {
+        return run_coordinator_render_with_surface_mode(
+            job,
+            telemetry,
+            event_sink,
+            resources,
+            crate::browser_surface::BrowserSurfaceMode::Accelerated,
+            output_context,
+            true,
+        )
+        .await;
+    }
     let surface_mode = native_browser::resolve_surface_mode(initial_surface, job.acceleration)?;
     if surface_mode != initial_surface {
         telemetry.record_fallback(native_browser::ELECTRON_SOFTWARE_FALLBACK.to_owned());
@@ -221,6 +234,7 @@ async fn run_coordinator_render(
         resources,
         surface_mode,
         output_context,
+        false,
     )
     .await;
 
@@ -239,6 +253,7 @@ async fn run_coordinator_render(
                 resources,
                 crate::browser_surface::BrowserSurfaceMode::Software,
                 output_context,
+                false,
             )
             .await;
         }
@@ -308,9 +323,14 @@ async fn run_coordinator_render_with_surface_mode(
     resources: &mut render_job::RenderJobResources,
     surface_mode: crate::browser_surface::BrowserSurfaceMode,
     output_context: &mut output_result::OutputContext,
+    webcodecs: bool,
 ) -> anyhow::Result<()> {
     let input_props = input_props::read_input_props(job.input_props_path.as_deref())?;
-    let renderer = NativeBrowser::new(surface_mode)?;
+    let renderer = if webcodecs {
+        NativeBrowser::new_webcodecs()?
+    } else {
+        NativeBrowser::new(surface_mode)?
+    };
     let page_load_started_at = Instant::now();
     renderer.load(job).await?;
     telemetry.page_load_ms += page_load_started_at.elapsed().as_millis();
@@ -422,6 +442,24 @@ async fn run_coordinator_render_with_surface_mode(
         renderer.resolve_audio_plan(&composition, input_props.as_ref())?,
         &audio_directory,
     )?;
+
+    if webcodecs {
+        let temporary = parallel::temp_output_path_for(Path::new(&job.output), &audio_directory);
+        webcodecs::render(
+            job,
+            &composition,
+            &renderer,
+            &temporary,
+            resources,
+            telemetry,
+            event_sink,
+        )
+        .await?;
+        if let Some(audio) = audio {
+            audio_pipeline::mix_and_mux(audio, &temporary, resources, telemetry).await?;
+        }
+        return Ok(());
+    }
 
     let render_plan = crate::pipeline::plan_for_coordinator(
         job,
@@ -620,6 +658,7 @@ fn resolve_coordinator_concurrency(
 }
 
 async fn run_worker(mut job: RenderJob) -> anyhow::Result<()> {
+    webcodecs::requested(&job)?;
     let initial_surface = initial_surface_for_job(&job);
     let surface_mode = native_browser::resolve_surface_mode(initial_surface, job.acceleration)?;
     if surface_mode == crate::browser_surface::BrowserSurfaceMode::Software {

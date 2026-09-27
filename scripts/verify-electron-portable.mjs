@@ -1,15 +1,19 @@
 // Native Electron software/frame gates shared by Windows and hosted Unix CI.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   assertFrameOracle,
   COLORS,
   FRAME_STATES,
   HEIGHT,
   WIDTH,
+  cancellationMarkerPath,
+  firstRenderedFrame,
   splitRawFrames,
 } from "./electron-renderer-oracle.mjs";
 
@@ -22,7 +26,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
 }
 if (!options.has("--renderer") || !options.has("--output"))
   throw new Error(
-    "Required: --renderer EXE --output NEW-DIRECTORY [--frames 24] [--repeats 3] [--bundled true]",
+    "Required: --renderer EXE --output NEW-DIRECTORY [--frames 24] [--repeats 3] [--bundled true] [--encoder software|webcodecs]",
   );
 const renderer = resolve(options.get("--renderer")),
   output = resolve(options.get("--output"));
@@ -38,6 +42,12 @@ if (
 )
   throw new Error("Invalid frame/repeat bounds");
 const env = { ...process.env, VELOCAST_RENDERER_BINARY: renderer };
+const encoder = options.get("--encoder") ?? "software";
+if (!["software", "webcodecs"].includes(encoder))
+  throw new Error("Unknown encoder");
+const webcodecs = encoder === "webcodecs";
+if (webcodecs) env.VELOCAST_EXPERIMENTAL_ENCODER = "webcodecs";
+else delete env.VELOCAST_EXPERIMENTAL_ENCODER;
 delete env.VELOCAST_BROWSER;
 delete env.VELOCAST_EXPERIMENTAL_BROWSER;
 if (options.get("--bundled") === "true") {
@@ -65,6 +75,7 @@ const report = {
   frames,
   repeats,
   renderer,
+  encoder,
   cases: [],
 };
 const persist = () =>
@@ -230,7 +241,7 @@ await cp(join(root, "packages/core/dist"), join(source, "core"), {
 });
 await writeFile(
   config,
-  `export default ${JSON.stringify({ entry: "source/index.html", renderer: { binary: renderer, snapshotRoot: "source", acceleration: "off", concurrency: 1, assembly: "reference", codec: "h264", pixelFormat: "yuv420p", bitrate: "8M" } })};\n`,
+  `export default ${JSON.stringify({ entry: "source/index.html", renderer: { binary: renderer, snapshotRoot: "source", acceleration: webcodecs ? "auto" : "off", concurrency: 1, assembly: "reference", codec: "h264", pixelFormat: "yuv420p", bitrate: "8M" } })};\n`,
 );
 await writeFile(
   join(source, "index.html"),
@@ -240,6 +251,7 @@ const states=${JSON.stringify(states)},colors=${JSON.stringify(COLORS)},g=docume
 const crop=document.createElement('div');crop.id='crop';crop.style.cssText='position:absolute;left:257px;top:173px;width:${WIDTH}px;height:${HEIGHT}px;background:rgb(32,64,192)';document.body.append(crop);
 registerFrameAdapter('portable',{id:'portable',getDurationFrames:()=>states.length,getAudioPlan:()=>({sampleRate:48000,durationSamples:${frames * 4000},clips:[{source:'tone.wav',startSample:0,sourceStartSample:0,durationSamples:${frames * 4000},gain:0.2}]}),seekFrame(frame,context){if(context.inputProps?.failAt===frame)throw Error('fixture.intentional_failure');g.fillStyle='rgb('+colors[states[frame]].join(',')+')';g.fillRect(0,0,${WIDTH},${HEIGHT});for(let bit=0;bit<8;bit++){g.fillStyle=((frame>>bit)&1)?'#ffffff':'#000000';g.fillRect(8+bit*20,90,14,16);}}},{width:${WIDTH},height:${HEIGHT},fps:12,target:'#scene',rootElement:'#scene'});
 registerFrameAdapter('static',{id:'static',getDurationFrames:()=>6,init(){g.fillStyle='rgb('+colors[0].join(',')+')';g.fillRect(0,0,${WIDTH},${HEIGHT});},seekFrame(){}},{width:${WIDTH},height:${HEIGHT},fps:12,target:'#scene',rootElement:'#scene'});
+registerFrameAdapter('cancel',{id:'cancel',getDurationFrames:()=>300,seekFrame(){}},{width:${WIDTH},height:${HEIGHT},fps:12,target:'#scene',rootElement:'#scene'});
 registerFrameAdapter('crop',{id:'crop',getDurationFrames:()=>1,seekFrame(){}},{width:${WIDTH},height:${HEIGHT},fps:12,target:'#crop',rootElement:'#crop'});
 </script></body></html>`,
 );
@@ -294,7 +306,7 @@ await gate("png-offset-target", async () => {
   await checkPixels(png, [0], { exactStatic: true });
 });
 for (let run = 1; run <= repeats; run++)
-  await gate(`software-reference-${run}`, async () => {
+  await gate(`${encoder}-reference-${run}`, async () => {
     const video = join(output, `reference-${run}.mp4`),
       telemetry = join(output, `reference-${run}.json`);
     await invoke([
@@ -311,17 +323,29 @@ for (let run = 1; run <= repeats; run++)
     );
     const data = JSON.parse(await readFile(telemetry, "utf8"));
     if (
-      data.capture_backend !== "electron_software_bgra" ||
+      data.capture_backend !==
+        (webcodecs
+          ? "electron_shared_texture_webcodecs"
+          : "electron_software_bgra") ||
       data.frames_encoded !== frames
     )
-      throw new Error(`Wrong software telemetry: ${JSON.stringify(data)}`);
+      throw new Error(`Wrong ${encoder} telemetry: ${JSON.stringify(data)}`);
+    if (
+      webcodecs &&
+      (data.webcodecs?.hardware_encoder_verified !== false ||
+        data.webcodecs?.uncompressed_readback_verified !== false ||
+        data.encoder_backend !== "electron_webcodecs_h264" ||
+        data.fallback_used)
+    ) {
+      throw new Error(`Wrong experimental guarantees: ${JSON.stringify(data)}`);
+    }
     return {
       decodedFrames: decoded,
       captureBackend: data.capture_backend,
       ...(await checkAudio(video, frames)),
     };
   });
-await gate("software-range", async () => {
+await gate(`${encoder}-range`, async () => {
   const video = join(output, "range.mp4");
   await invoke([
     "render",
@@ -341,24 +365,25 @@ await gate("unchanged-static", async () => {
   await invoke(["render", "static", "--output", video]);
   await checkPixels(video, Array(6).fill(0), { exactStatic: true });
 });
-await gate("two-worker-software", async () => {
-  const video = join(output, "parallel.mp4");
-  await invoke([
-    "render",
-    "portable",
-    "--concurrency",
-    "2",
-    "--assembly",
-    "auto",
-    "--output",
-    video,
-  ]);
-  await checkPixels(
-    video,
-    states.map((_, frame) => frame),
-  );
-  return checkAudio(video, frames);
-});
+if (!webcodecs)
+  await gate("two-worker-software", async () => {
+    const video = join(output, "parallel.mp4");
+    await invoke([
+      "render",
+      "portable",
+      "--concurrency",
+      "2",
+      "--assembly",
+      "auto",
+      "--output",
+      video,
+    ]);
+    await checkPixels(
+      video,
+      states.map((_, frame) => frame),
+    );
+    return checkAudio(video, frames);
+  });
 await gate("failure-preserves-output", async () => {
   const video = join(output, "reference-1.mp4"),
     before = sha(await readFile(video));
@@ -380,7 +405,118 @@ await gate("failure-preserves-output", async () => {
   )
     throw new Error("Failure did not preserve previous output");
 });
-if (process.platform !== "win32") {
+if (webcodecs) {
+  await gate("webcodecs-cancellation-preserves-output", async () => {
+    const video = join(output, "reference-1.mp4"),
+      before = sha(await readFile(video));
+    const events = join(output, "cancel-events.jsonl");
+    const require = createRequire(import.meta.url);
+    const child = spawn(
+      renderer,
+      [
+        "--job-json",
+        JSON.stringify({
+          mode: "composition",
+          composition_id: "cancel",
+          serve_url: pathToFileURL(join(source, "index.html")).href,
+          output: video,
+          codec: "h264",
+          acceleration: "auto",
+          pixel_format: "yuv420p",
+          event_log_path: events,
+        }),
+      ],
+      {
+        env: {
+          ...env,
+          VELOCAST_ELECTRON_BINARY: require(
+            join(root, "packages/electron-host/node_modules/electron"),
+          ),
+          VELOCAST_ELECTRON_HOST_SCRIPT: join(
+            root,
+            "packages/electron-host/main.cjs",
+          ),
+        },
+        windowsHide: true,
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let ended = false,
+      errors = "";
+    child.stderr.on("data", (bytes) => {
+      errors = (errors + bytes).slice(-16000);
+    });
+    const closed = new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code) => {
+        ended = true;
+        resolve(code);
+      });
+    });
+    const timer = setTimeout(() => child.kill(), 45_000);
+    try {
+      let observed = null;
+      while (!ended && observed === null) {
+        try {
+          observed = firstRenderedFrame(await readFile(events, "utf8"));
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+        if (observed === null)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (ended || observed === null)
+        throw new Error(`Render ended before cancellation: ${errors}`);
+      await writeFile(cancellationMarkerPath(events, child.pid), "", {
+        flag: "wx",
+      });
+      if (
+        (await closed) === 0 ||
+        !errors.includes("renderer.cancelled") ||
+        sha(await readFile(video)) !== before
+      )
+        throw new Error(`Cancellation did not preserve output: ${errors}`);
+      const leftovers = (await readdir(tmpdir())).filter((name) =>
+        name.startsWith(`velocast-electron-${child.pid}-`),
+      );
+      if (leftovers.length)
+        throw new Error(`Cancellation leaked host directories: ${leftovers}`);
+      return { observedFrame: observed };
+    } finally {
+      clearTimeout(timer);
+      if (!ended) {
+        child.kill();
+        await closed;
+      }
+    }
+  });
+  for (const args of [
+    ["--acceleration", "required"],
+    ["--acceleration", "off"],
+    ["--concurrency", "2"],
+    ["--assembly", "segments"],
+    ["--codec", "hevc"],
+    ["--pixel-format", "yuv444p"],
+  ]) {
+    await gate(`reject-${args.join("-")}`, async () => {
+      const video = join(output, "reference-1.mp4"),
+        before = sha(await readFile(video));
+      const result = await invoke(
+        ["render", "portable", ...args, "--output", video],
+        { allowFailure: true },
+      );
+      if (
+        result.code === 0 ||
+        !result.stdout.includes("webcodecs.") ||
+        sha(await readFile(video)) !== before
+      )
+        throw new Error(
+          "Unsupported WebCodecs request succeeded or changed prior output",
+        );
+    });
+  }
+}
+if (!webcodecs && process.platform !== "win32") {
   await gate("automatic-software-fallback", async () => {
     const video = join(output, "automatic.mp4"),
       telemetry = join(output, "automatic.json");

@@ -23,7 +23,8 @@ function parseCommand(line) {
     );
   }
   if (
-    !["load", "execute", "resize", "invalidate", "paint", "release", "close"].includes(
+    !["load", "execute", "resize", "invalidate", "paint", "release", "close",
+      "webcodecs-open", "webcodecs-frame", "webcodecs-finish"].includes(
       command.method,
     )
   ) {
@@ -100,11 +101,11 @@ function rectangle(value, name) {
   };
 }
 
-function textureMetadata(textureInfo, request, textureId) {
+function textureMetadata(textureInfo, request, textureId, formats = ["bgra"]) {
   if (
     !textureInfo ||
     textureInfo.widgetType !== "frame" ||
-    textureInfo.pixelFormat !== "bgra"
+    !formats.includes(textureInfo.pixelFormat)
   ) {
     throw new Error("Electron did not produce a BGRA frame shared texture");
   }
@@ -132,7 +133,7 @@ function textureMetadata(textureInfo, request, textureId) {
     textureWidth,
     textureHeight,
     sourceRect,
-    pixelFormat: "bgra",
+    pixelFormat: textureInfo.pixelFormat,
     colorSpace: textureInfo.colorSpace ?? null,
     contentRect: textureInfo.contentRect ?? null,
     timestamp: textureInfo.timestamp ?? null,

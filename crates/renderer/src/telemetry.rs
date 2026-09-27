@@ -138,6 +138,16 @@ pub enum RenderModeLabel {
     ReferenceGpu,
     ParallelSegments,
     StreamedBgraWorkers,
+    ExperimentalWebCodecs,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WebCodecsTelemetry {
+    pub codec: String,
+    pub hardware_acceleration: String,
+    pub hardware_encoder_verified: bool,
+    pub uncompressed_readback_verified: bool,
+    pub color_space: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -173,6 +183,8 @@ pub struct AudioTelemetry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RenderTelemetry {
     pub mode: RenderModeLabel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webcodecs: Option<WebCodecsTelemetry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<AudioTelemetry>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -232,6 +244,7 @@ impl RenderTelemetry {
     pub fn new(mode: RenderModeLabel) -> Self {
         Self {
             mode,
+            webcodecs: None,
             audio: None,
             capture_probe: None,
             capture_backend: None,

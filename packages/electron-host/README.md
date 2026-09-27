@@ -102,6 +102,12 @@ and [native texture lifecycle](https://github.com/electron/electron/blob/main/sh
 
 ## Validation
 
+The opt-in `webcodecs` surface mode adds `webcodecs-open`, `webcodecs-frame`, and
+`webcodecs-finish` commands. It transfers OSR textures to a separate trusted
+encoder window and writes only compressed H.264 into the native-owned temporary
+directory. See [experimental WebCodecs](../../docs/experimental-webcodecs.md) for
+activation, lifecycle, telemetry, restrictions, and real runtime tests.
+
 `node --test packages/electron-host/test/*.test.cjs` runs bounded transfer and
 protocol tests. Set `VELOCAST_ELECTRON_TEST_BINARY` to an absolute Electron binary
 path to additionally run the real software host test. It verifies exact BGRA and
