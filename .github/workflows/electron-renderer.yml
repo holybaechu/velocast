@@ -49,6 +49,10 @@ jobs:
           sudo chown root:root "$sandbox"
           sudo chmod 4755 "$sandbox"
       - run: pnpm build
+      - name: Check portable native addon and Vulkan foundation
+        run: |
+          cargo check -p velocast-native-encoder
+          cargo test -p gpu-pipeline
       - name: Verify sandboxed Electron software host (Linux)
         if: runner.os == 'Linux'
         run: |

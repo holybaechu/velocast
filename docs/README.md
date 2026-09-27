@@ -2,6 +2,7 @@
 
 - [Architecture and development boundaries](architecture.md)
 - [Electron renderer and platform support](electron-renderer.md)
+- [Experimental native NV12 renderer](native-nv12-renderer.md)
 - [Declarative composition authoring](composition-authoring.md)
 - [React starter](react-project-starter.md)
 - [Agent composition checks](agent-composition-checks.md)

@@ -26,7 +26,6 @@ use crate::browser_protocol::{self, BrowserDriver};
 use crate::browser_surface::BrowserSurfaceMode;
 use crate::cancellation::RenderCancellation;
 use crate::frame_loop::{seek_frame_script, SelectorMeasurement};
-#[cfg(windows)]
 use crate::paint_state::AcceleratedFrame;
 use crate::paint_state::PaintState;
 use crate::surface::TextureSourceRect;
@@ -186,7 +185,40 @@ impl ElectronRenderer {
         if self.surface_mode == BrowserSurfaceMode::Software {
             return self.capture_software();
         }
+        if crate::native_nv12::enabled() {
+            return self.capture_native_nv12(copy);
+        }
         self.capture_accelerated(copy)
+    }
+
+    pub(crate) fn native_encoder_request(&self, request: Value) -> anyhow::Result<Value> {
+        self.request(request, Duration::from_secs(30))
+    }
+
+    fn capture_native_nv12(&self, copy: bool) -> anyhow::Result<()> {
+        let generation = self.paint_state.current_generation();
+        let value = self.request(
+            json!({"method":"paint","generation":generation,"copy":copy}),
+            Duration::from_secs(3),
+        )?;
+        let paint: PaintResponse = serde_json::from_value(value)
+            .context("electron.protocol_error: invalid native NV12 paint metadata")?;
+        paint.validate_native_nv12(generation, copy)?;
+        self.paint_state.store_accelerated_frame(AcceleratedFrame {
+            generation,
+            width: paint.width,
+            height: paint.height,
+            texture_width: paint.texture_width,
+            texture_height: paint.texture_height,
+            source_rect: paint.source_rect.into(),
+            color_type_debug: "NV12".into(),
+            platform_handle_debug: "electron_native_nv12".into(),
+            native_texture_id: paint.texture_id,
+            owned_texture: None,
+            bgra: None,
+            software_capture_backend: "electron_software_bgra",
+        });
+        Ok(())
     }
 
     fn capture_software(&self) -> anyhow::Result<()> {
@@ -275,6 +307,7 @@ impl ElectronRenderer {
             texture_height: paint.texture_height,
             source_rect: paint.source_rect.into(),
             color_type_debug: "BGRA".into(),
+            native_texture_id: None,
             platform_handle_debug: "electron_d3d11_shared_texture".into(),
             owned_texture,
             bgra: None,
@@ -567,6 +600,51 @@ struct PaintResponse {
 }
 
 impl PaintResponse {
+    fn validate_native_nv12(&self, generation: u64, copy: bool) -> anyhow::Result<()> {
+        ensure!(
+            self.generation == generation,
+            "electron.stale_paint: capture generation did not match request"
+        );
+        ensure!(
+            self.pixel_format == "nv12",
+            "electron.unsupported_format: expected NV12 shared texture"
+        );
+        ensure!(
+            self.handle.is_none(),
+            "electron.unexpected_handle: native encoder handles must stay in the host"
+        );
+        ensure!(
+            self.width > 0
+                && self.height > 0
+                && self.width % 2 == 0
+                && self.height % 2 == 0
+                && self.source_rect.left % 2 == 0
+                && self.source_rect.top % 2 == 0
+                && self.source_rect.width == self.width
+                && self.source_rect.height == self.height
+                && self
+                    .source_rect
+                    .left
+                    .checked_add(self.width)
+                    .is_some_and(|v| v <= self.texture_width)
+                && self
+                    .source_rect
+                    .top
+                    .checked_add(self.height)
+                    .is_some_and(|v| v <= self.texture_height),
+            "electron.invalid_geometry: invalid NV12 source rectangle"
+        );
+        ensure!(
+            if copy {
+                self.texture_id.as_ref().is_some_and(|id| !id.is_empty())
+            } else {
+                self.texture_id.is_none()
+            },
+            "electron.invalid_lease: native NV12 paint lease did not match capture intent"
+        );
+        Ok(())
+    }
+
     fn validate(&self, generation: u64, copy: bool) -> anyhow::Result<()> {
         ensure!(
             self.generation == generation,
@@ -604,6 +682,48 @@ impl PaintResponse {
             "electron.unexpected_texture: observation must release its source texture"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod native_paint_tests {
+    use super::*;
+
+    fn paint() -> Value {
+        json!({"generation":7,"width":128,"height":72,"textureWidth":144,"textureHeight":80,
+            "sourceRect":{"left":2,"top":2,"width":128,"height":72},
+            "pixelFormat":"nv12","textureId":"7:2"})
+    }
+
+    #[test]
+    fn native_paint_retains_only_a_generation_bound_token() {
+        let response: PaintResponse = serde_json::from_value(paint()).unwrap();
+        response.validate_native_nv12(7, true).unwrap();
+        assert!(response.validate_native_nv12(8, true).is_err());
+        assert!(response.validate_native_nv12(7, false).is_err());
+        let mut observed = paint();
+        observed.as_object_mut().unwrap().remove("textureId");
+        let observed: PaintResponse = serde_json::from_value(observed).unwrap();
+        observed.validate_native_nv12(7, false).unwrap();
+        assert!(observed.validate_native_nv12(7, true).is_err());
+    }
+
+    #[test]
+    fn native_paint_rejects_handles_and_misaligned_planes() {
+        for (name, value) in [
+            ("handle", json!("0x42")),
+            ("pixelFormat", json!("bgra")),
+            ("width", json!(127)),
+        ] {
+            let mut response = paint();
+            response[name] = value;
+            let response: PaintResponse = serde_json::from_value(response).unwrap();
+            assert!(response.validate_native_nv12(7, true).is_err(), "{name}");
+        }
+        let mut response = paint();
+        response["sourceRect"]["left"] = json!(3);
+        let response: PaintResponse = serde_json::from_value(response).unwrap();
+        assert!(response.validate_native_nv12(7, true).is_err());
     }
 }
 
@@ -700,6 +820,14 @@ impl HostProcess {
                 host_directory.profile_path(),
             )
             .env_remove("VELOCAST_ELECTRON_FRAME_DIRECTORY")
+            .env(
+                "VELOCAST_ELECTRON_CAPTURE_FORMAT",
+                if !software && crate::native_nv12::enabled() {
+                    "nv12"
+                } else {
+                    "bgra"
+                },
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());

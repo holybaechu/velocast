@@ -13,6 +13,7 @@ const {
   textureMetadata,
 } = require("./protocol.cjs");
 const { TextureLease } = require("./texture-lease.cjs");
+const { NativeEncodeSession } = require("./native-encode.cjs");
 const { SoftwareFrameLease, byteLength } = require("./software-frame.cjs");
 const { resolveCaptureFrameRate } = require("./capture-rate.cjs");
 const { configureProfileDirectory } = require("./profile-directory.cjs");
@@ -27,10 +28,20 @@ if (!["software", "accelerated"].includes(surfaceMode)) {
   throw new Error("Invalid Electron surface mode");
 }
 const software = surfaceMode === "software";
+const captureFormat = process.env.VELOCAST_ELECTRON_CAPTURE_FORMAT || "bgra";
+if (
+  !["bgra", "nv12"].includes(captureFormat) ||
+  (software && captureFormat !== "bgra")
+) {
+  throw new Error("Invalid Electron capture format for surface mode");
+}
 // Older protocol-1 controllers do not provide an owned profile directory.
 // Keep their existing startup behavior; updated controllers always isolate it.
 if (process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY !== undefined)
-  configureProfileDirectory(app, process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY);
+  configureProfileDirectory(
+    app,
+    process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY,
+  );
 // This must happen before app.whenReady and before any renderer process exists.
 if (software) app.disableHardwareAcceleration();
 const softwareFrames = software
@@ -47,6 +58,11 @@ let textureSequence = 0;
 let leaseTimer = null;
 let inputStream = null;
 const leases = new TextureLease();
+const nativeEncode = new NativeEncodeSession({
+  leases,
+  addonPath: process.env.VELOCAST_NATIVE_ENCODER_ADDON,
+  captureFormat,
+});
 const debug = (...parts) => {
   if (process.env.VELOCAST_ELECTRON_HOST_DEBUG === "1") {
     process.stderr.write(`[electron-host] ${parts.join(" ")}\n`);
@@ -95,17 +111,37 @@ function cleanup() {
   leaseTimer = null;
   inputStream?.destroy();
   inputStream = null;
-  try {
-    leases.releaseAll();
-    softwareFrames?.releaseAll();
-  } catch (error) {
-    process.stderr.write(`${error}\n`);
-  }
-  if (window && !window.isDestroyed()) window.destroy();
-  window = null;
-  debug("cleanup exit process");
-  app.exit(0);
-  debug("app.exit returned");
+  // An unresponsive GPU worker must not keep an orphaned host alive forever.
+  // End the process on a hard deadline; never fake completion or release a
+  // texture that native GPU commands may still be reading. The coordinator also
+  // contains and terminates the full Electron process tree on request failure.
+  const shutdownWatchdog = setTimeout(() => {
+    process.stderr.write(
+      "Electron native cleanup timed out; terminating host\n",
+    );
+    app.exit(1);
+  }, 5_000);
+  shutdownWatchdog.unref();
+  void (async () => {
+    try {
+      await nativeEncode.abort();
+    } catch (error) {
+      process.stderr.write(`${error}\n`);
+    } finally {
+      await leases.waitForIdle();
+      try {
+        leases.releaseAll();
+        softwareFrames?.releaseAll();
+      } catch (error) {
+        process.stderr.write(`${error}\n`);
+      }
+      if (window && !window.isDestroyed()) window.destroy();
+      window = null;
+      clearTimeout(shutdownWatchdog);
+      debug("cleanup exit process");
+      app.exit(0);
+    }
+  })();
 }
 
 function positiveSize(value, name) {
@@ -127,7 +163,10 @@ function onPaint(event, dirtyRect, image) {
     const waiter = paintWaiter;
     if (!waiter || !image || image.isEmpty()) return;
     const size = image.getSize(1);
-    if (size.width !== waiter.request.expectedWidth || size.height !== waiter.request.expectedHeight) {
+    if (
+      size.width !== waiter.request.expectedWidth ||
+      size.height !== waiter.request.expectedHeight
+    ) {
       waiter.staleSizePaints++;
       schedulePaintRetry(waiter);
       return;
@@ -182,15 +221,23 @@ function onPaint(event, dirtyRect, image) {
       texture.textureInfo,
       waiter.request,
       textureId,
+      captureFormat,
     );
     metadata.dirtyRect = dirtyRect;
     if (waiter.request.copy) {
-      leases.retain(textureId, texture);
+      leases.retain(textureId, texture, metadata);
       armLeaseTimeout();
     } else {
       releaseTexture(texture);
     }
-    waiter.resolve(metadata);
+    if (captureFormat === "nv12") {
+      // The native addon imports this process-local handle directly. The
+      // controller only needs the lease token and actual texture properties.
+      const { handle, ...publicMetadata } = metadata;
+      waiter.resolve(publicMetadata);
+    } else {
+      waiter.resolve(metadata);
+    }
   } catch (error) {
     releaseTexture(texture);
     waiter.reject(error);
@@ -201,7 +248,8 @@ function schedulePaintRetry(waiter) {
   if (waiter.retryTimer) return;
   waiter.retryTimer = setTimeout(() => {
     waiter.retryTimer = null;
-    if (paintWaiter === waiter && window && !window.isDestroyed()) browser().invalidate();
+    if (paintWaiter === waiter && window && !window.isDestroyed())
+      browser().invalidate();
   }, 50);
 }
 
@@ -244,23 +292,38 @@ function waitForTitle(token) {
 }
 
 async function captureSoftware(request) {
-  if (softwareFrames.occupied) throw new Error("Release the previous software frame first");
+  if (softwareFrames.occupied)
+    throw new Error("Release the previous software frame first");
   const contents = browser();
   const [width, height] = window.getContentSize();
-  await deadline(contents.executeJavaScript(
-    "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
-  ), PAINT_TIMEOUT_MS, "Electron software compositor fence");
+  await deadline(
+    contents.executeJavaScript(
+      "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
+    ),
+    PAINT_TIMEOUT_MS,
+    "Electron software compositor fence",
+  );
   // OSR invalidate() synchronously emits CompositeFrame from its cached backing
   // bitmap. It does not request a new compositor frame. capturePage instead
   // resolves this request through OSR CopyFromSurface/CopyFromCompositingSurface.
-  const image = await deadline(contents.capturePage(
-    { x: 0, y: 0, width, height }, { stayHidden: true, stayAwake: true },
-  ), PAINT_TIMEOUT_MS, "Electron software compositor copy");
+  const image = await deadline(
+    contents.capturePage(
+      { x: 0, y: 0, width, height },
+      { stayHidden: true, stayAwake: true },
+    ),
+    PAINT_TIMEOUT_MS,
+    "Electron software compositor copy",
+  );
   if (closed) throw new Error("Electron host closed during software capture");
   const size = image.getSize(1);
-  if (image.isEmpty() || size.width !== (request.expectedWidth ?? width) ||
-      size.height !== (request.expectedHeight ?? height)) {
-    throw new Error("Electron software compositor copy returned invalid dimensions");
+  if (
+    image.isEmpty() ||
+    size.width !== (request.expectedWidth ?? width) ||
+    size.height !== (request.expectedHeight ?? height)
+  ) {
+    throw new Error(
+      "Electron software compositor copy returned invalid dimensions",
+    );
   }
   const metadata = softwareFrames.capture(image, request);
   if (request.copy) armLeaseTimeout();
@@ -273,9 +336,13 @@ async function waitForPaint(request) {
     // Observation fences establish the loaded/resized surface before capture.
     // Pixel-bearing requests use captureSoftware's correlated compositor copy;
     // a paint notification alone can still contain cached prior-frame pixels.
-    await deadline(browser().executeJavaScript(
-      "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
-    ), PAINT_TIMEOUT_MS, "Electron software compositor fence");
+    await deadline(
+      browser().executeJavaScript(
+        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
+      ),
+      PAINT_TIMEOUT_MS,
+      "Electron software compositor fence",
+    );
   }
   if (paintWaiter)
     throw new Error("Electron host already has a paint in flight");
@@ -344,7 +411,12 @@ async function commandLoad(command) {
       frame: false,
       backgroundColor: "#000000",
       webPreferences: {
-        offscreen: { useSharedTexture: !software },
+        offscreen: {
+          useSharedTexture: !software,
+          ...(captureFormat === "nv12"
+            ? { sharedTexturePixelFormat: "nv12" }
+            : {}),
+        },
         backgroundThrottling: false,
         nodeIntegration: false,
         contextIsolation: true,
@@ -352,7 +424,9 @@ async function commandLoad(command) {
         webviewTag: false,
         // Preserve the renderer's Windows generic monospace resolution. Electron otherwise
         // uses Courier New and canvas text differs even with the same source.
-        ...(process.platform === "win32" ? { defaultFontFamily: { monospace: "Consolas" } } : {}),
+        ...(process.platform === "win32"
+          ? { defaultFontFamily: { monospace: "Consolas" } }
+          : {}),
       },
     });
     const contents = window.webContents;
@@ -437,7 +511,9 @@ async function dispatch(command) {
       return commandExecute(command);
     case "invalidate": {
       if (software || leases.occupied || paintWaiter)
-        throw new Error("GPU preparation requires an idle, released capture surface");
+        throw new Error(
+          "GPU preparation requires an idle, released capture surface",
+        );
       // The native loop discards this preparation paint. Submit it without
       // waiting for a paint that capture would discard. Actual frame
       // acceptance still goes through all generation/size/settling fences.
@@ -494,6 +570,30 @@ async function dispatch(command) {
       leaseTimer = null;
       return {};
     }
+    case "beginNativeEncode":
+      return nativeEncode.begin(command.config);
+    case "encodeNativeFrame": {
+      try {
+        return await nativeEncode.encode(command);
+      } finally {
+        if (!leases.occupied) {
+          clearTimeout(leaseTimer);
+          leaseTimer = null;
+        }
+      }
+    }
+    case "finishNativeEncode":
+      return nativeEncode.finish();
+    case "abortNativeEncode":
+      try {
+        return await nativeEncode.abort();
+      } finally {
+        leases.releaseAll();
+        if (!leases.occupied) {
+          clearTimeout(leaseTimer);
+          leaseTimer = null;
+        }
+      }
     case "close":
       return {};
     default:
@@ -609,8 +709,15 @@ app
         "Electron shared-texture host currently supports Windows only",
       );
     }
-    await writeLine({ event: "ready", version: 1, pid: process.pid, surfaceMode,
-      asyncPaintInvalidation: !software });
+    await writeLine({
+      event: "ready",
+      version: 1,
+      pid: process.pid,
+      surfaceMode,
+      captureFormat,
+      nativeEncode: captureFormat === "nv12",
+      asyncPaintInvalidation: !software,
+    });
     listenForCommands();
   })
   .catch((error) => {

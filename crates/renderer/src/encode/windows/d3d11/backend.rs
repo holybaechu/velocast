@@ -248,6 +248,9 @@ impl D3D11FfmpegHardwareEncoder {
             CapturedFrame::BgraSoftware(_) => Err(anyhow::anyhow!(
                 "D3D11 hardware encoder received a CPU BGRA frame"
             )),
+            CapturedFrame::GpuSurface(_) => Err(anyhow::anyhow!(
+                "D3D11 hardware encoder received a texture lease owned by a different backend"
+            )),
         }
     }
 

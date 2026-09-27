@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/protocol", "crates/renderer-policy", "crates/renderer"]
+members = ["crates/protocol", "crates/renderer-policy", "crates/renderer", "crates/native-encoder", "crates/gpu-pipeline"]
 resolver = "2"
 
 [workspace.package]

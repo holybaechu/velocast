@@ -47,6 +47,10 @@ impl NativeBrowser {
     pub fn measure_selector(&self, selector: &str) -> anyhow::Result<SelectorMeasurement> {
         self.0.measure_selector(selector)
     }
+
+    pub(crate) fn native_encoder_request(&self, request: Value) -> anyhow::Result<Value> {
+        self.0.native_encoder_request(request)
+    }
 }
 
 impl BrowserDriver for NativeBrowser {

@@ -31,8 +31,12 @@ pub(crate) fn plan_for_coordinator(
         &capabilities,
     )?;
     #[cfg(windows)]
-    if plan.backend.conversion_mode == render_plan::RenderPipelineConversionMode::D3D11VideoProcessor
-        && crate::encode::windows::D3D11FfmpegHardwareEncoder::planned_shader_conversion(&settings.codec)?
+    if !crate::native_nv12::enabled()
+        && plan.backend.conversion_mode
+            == render_plan::RenderPipelineConversionMode::D3D11VideoProcessor
+        && crate::encode::windows::D3D11FfmpegHardwareEncoder::planned_shader_conversion(
+            &settings.codec,
+        )?
     {
         plan.backend.conversion_mode = render_plan::RenderPipelineConversionMode::D3D11Shader;
     }

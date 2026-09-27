@@ -23,7 +23,7 @@ const INITIAL_POST_RENDER_SETTLE_PAINTS: usize = 4;
 const CAPTURE_GENERATION_SETTLE_PAINTS: usize = 2;
 const PAINT_REINVALIDATION_INTERVAL: Duration = Duration::from_millis(50);
 
-trait FrameEncoder {
+pub(crate) trait FrameEncoder {
     async fn write_frame(
         &mut self,
         absolute_frame: u32,
@@ -208,7 +208,7 @@ pub(crate) async fn render_frame_png(
     Ok(())
 }
 
-async fn validate_required_reference_output(
+pub(crate) async fn validate_required_reference_output(
     output: &Path,
     job: &RenderJob,
     composition: &CompositionManifest,
@@ -444,7 +444,7 @@ where
     .await
 }
 
-async fn render_scheduled_frames_with_encoder<E>(
+pub(crate) async fn render_scheduled_frames_with_encoder<E>(
     composition: &CompositionManifest,
     frames: impl IntoIterator<Item = u32>,
     paint_state: PaintState,
@@ -710,6 +710,8 @@ async fn render_one_frame(
                 frame,
                 telemetry.as_deref_mut(),
             ) {
+                anyhow::ensure!(accelerated_frame.native_texture_id.is_none(),
+                    "native_nv12.stale_lease: rejecting a retained native capture with unexpected frame geometry");
                 continue;
             }
 
@@ -850,6 +852,20 @@ fn read_bgra_from_accelerated_frame(frame: &mut AcceleratedFrame) -> anyhow::Res
 fn captured_frame_from_accelerated_frame(
     frame: &mut AcceleratedFrame,
 ) -> anyhow::Result<CapturedFrame> {
+    if let Some(texture_id) = frame.native_texture_id.take() {
+        return Ok(CapturedFrame::GpuSurface(GpuSurfaceFrame {
+            width: frame.width,
+            height: frame.height,
+            texture_width: frame.texture_width,
+            texture_height: frame.texture_height,
+            source_rect: frame.source_rect,
+            source_format: SurfaceFormat::Nv12,
+            platform_surface: PlatformSurface::ElectronNativeNv12 {
+                texture_id,
+                generation: frame.generation,
+            },
+        }));
+    }
     if let Some(pixels) = frame.bgra.take() {
         return Ok(CapturedFrame::BgraSoftware(SoftwareFrame {
             capture_backend: frame.software_capture_backend,
@@ -1150,6 +1166,7 @@ mod tests {
             texture_height: 3,
             source_rect: TextureSourceRect::full(2, 3),
             color_type_debug: "format=BGRA".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "d3d11".to_string(),
             owned_texture: None,
             bgra: None,
@@ -1175,6 +1192,7 @@ mod tests {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "electron-on-paint".to_string(),
             owned_texture: None,
             bgra: Some(vec![9, 8, 7, 6]),
@@ -1197,6 +1215,7 @@ mod tests {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "software_bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "software".to_string(),
             owned_texture: None,
             bgra: Some(vec![9, 8, 7, 255]),
@@ -1221,6 +1240,7 @@ mod tests {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "electron-on-paint".to_string(),
             owned_texture: None,
             bgra: Some(pixels),
@@ -1390,6 +1410,7 @@ mod tests {
             texture_height: 1080,
             source_rect: TextureSourceRect::full(1920, 1080),
             color_type_debug: "format=BGRA".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "d3d11".to_string(),
             owned_texture: Some(
                 crate::capture::windows_d3d11::OwnedTextureLease::borrowed_for_test(42),
@@ -1424,6 +1445,7 @@ mod tests {
             texture_height: 1080,
             source_rect: TextureSourceRect::full(1920, 1080),
             color_type_debug: "format=BGRA".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "d3d11".to_string(),
             owned_texture: Some(
                 crate::capture::windows_d3d11::OwnedTextureLease::borrowed_for_test(42),
@@ -1458,6 +1480,7 @@ mod tests {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "software".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "none".to_string(),
             owned_texture: None,
             bgra: Some(vec![0, 0, 0, 255]),
@@ -1672,6 +1695,7 @@ mod tests {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "stale-preview".to_string(),
             owned_texture: None,
             bgra: Some(vec![72, 0, 0, 255]),

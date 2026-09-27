@@ -100,6 +100,11 @@ pub fn required_gpu_backend_for_telemetry(
     encoder_backend: &str,
 ) -> Option<&'static BackendDescriptor> {
     required_gpu_backend_descriptors().find(|descriptor| {
+        if capture_backend == "electron_native_nv12" {
+            return conversion_backend == "d3d11_nv12_copy"
+                && matches!(encoder_backend, "h264_qsv" | "h264_nvenc" | "h264_amf")
+                && descriptor.supports_encoder_backend(encoder_backend);
+        }
         capture_matches(descriptor, capture_backend)
             && conversion_matches(descriptor, conversion_backend)
             && descriptor.supports_encoder_backend(encoder_backend)
@@ -108,6 +113,9 @@ pub fn required_gpu_backend_for_telemetry(
 }
 
 pub fn required_gpu_capture_backend_known(capture_backend: &str) -> bool {
+    if capture_backend == "electron_native_nv12" {
+        return true;
+    }
     required_gpu_backend_descriptors()
         .any(|descriptor| capture_matches(descriptor, capture_backend))
 }
@@ -137,6 +145,9 @@ pub fn required_gpu_conversion_backend_known(
     capture_backend: &str,
     conversion_backend: &str,
 ) -> bool {
+    if capture_backend == "electron_native_nv12" {
+        return conversion_backend == "d3d11_nv12_copy";
+    }
     required_gpu_backend_descriptors().any(|descriptor| {
         capture_matches(descriptor, capture_backend)
             && conversion_matches(descriptor, conversion_backend)
@@ -435,6 +446,29 @@ impl BackendRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_nv12_accepts_only_its_explicit_copy_and_h264_path() {
+        for encoder in ["h264_qsv", "h264_nvenc", "h264_amf"] {
+            assert!(required_gpu_backend_for_telemetry(
+                "electron_native_nv12",
+                "d3d11_nv12_copy",
+                encoder
+            )
+            .is_some());
+        }
+        for (capture, conversion, encoder) in [
+            ("electron_native_nv12", "d3d11_shader_nv12", "h264_qsv"),
+            ("electron_native_nv12", "d3d11_nv12_copy", "hevc_qsv"),
+            ("electron_native_nv12", "d3d11_nv12_copy", "h264_mf"),
+            (
+                "electron_d3d11_shared_texture",
+                "d3d11_nv12_copy",
+                "h264_qsv",
+            ),
+        ] {
+            assert!(required_gpu_backend_for_telemetry(capture, conversion, encoder).is_none());
+        }
+    }
     #[test]
     fn hardware_priority_and_required_selection_are_independent_of_input_order() {
         let registry = BackendRegistry::new(vec![

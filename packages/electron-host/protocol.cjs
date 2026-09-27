@@ -23,9 +23,19 @@ function parseCommand(line) {
     );
   }
   if (
-    !["load", "execute", "resize", "invalidate", "paint", "release", "close"].includes(
-      command.method,
-    )
+    ![
+      "load",
+      "execute",
+      "resize",
+      "invalidate",
+      "paint",
+      "release",
+      "beginNativeEncode",
+      "encodeNativeFrame",
+      "finishNativeEncode",
+      "abortNativeEncode",
+      "close",
+    ].includes(command.method)
   ) {
     throw new Error(
       `Electron host command method is unsupported: ${String(command.method)}`,
@@ -100,13 +110,23 @@ function rectangle(value, name) {
   };
 }
 
-function textureMetadata(textureInfo, request, textureId) {
+function textureMetadata(
+  textureInfo,
+  request,
+  textureId,
+  expectedPixelFormat = "bgra",
+) {
+  if (!["bgra", "nv12"].includes(expectedPixelFormat)) {
+    throw new Error("Invalid Electron capture pixel format");
+  }
   if (
     !textureInfo ||
     textureInfo.widgetType !== "frame" ||
-    textureInfo.pixelFormat !== "bgra"
+    textureInfo.pixelFormat !== expectedPixelFormat
   ) {
-    throw new Error("Electron did not produce a BGRA frame shared texture");
+    throw new Error(
+      `Electron did not produce a ${expectedPixelFormat.toUpperCase()} frame shared texture`,
+    );
   }
   const textureWidth = positiveDimension(
     textureInfo.codedSize?.width,
@@ -125,6 +145,19 @@ function textureMetadata(textureInfo, request, textureId) {
       "Electron shared texture visible rectangle exceeds coded size",
     );
   }
+  const contentRect =
+    textureInfo.contentRect == null
+      ? null
+      : rectangle(textureInfo.contentRect, "content rectangle");
+  if (
+    contentRect &&
+    (contentRect.left + contentRect.width > textureWidth ||
+      contentRect.top + contentRect.height > textureHeight)
+  ) {
+    throw new Error(
+      "Electron shared texture content rectangle exceeds coded size",
+    );
+  }
   const metadata = {
     generation: request.generation,
     width: sourceRect.width,
@@ -132,9 +165,9 @@ function textureMetadata(textureInfo, request, textureId) {
     textureWidth,
     textureHeight,
     sourceRect,
-    pixelFormat: "bgra",
+    pixelFormat: textureInfo.pixelFormat,
     colorSpace: textureInfo.colorSpace ?? null,
-    contentRect: textureInfo.contentRect ?? null,
+    contentRect,
     timestamp: textureInfo.timestamp ?? null,
   };
   if (request.copy) {

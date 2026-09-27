@@ -74,6 +74,60 @@ test("unsupported or malformed GPU paint fails before native import", () => {
   );
 });
 
+test("NV12 paint reports actual color and crop while rejecting a format mismatch", () => {
+  const ntHandle = Buffer.alloc(8);
+  ntHandle.writeBigUInt64LE(0x1234n);
+  const colorSpace = {
+    primaries: "bt709",
+    transfer: "bt709",
+    matrix: "bt709",
+    range: "limited",
+  };
+  const texture = {
+    widgetType: "frame",
+    pixelFormat: "nv12",
+    codedSize: { width: 192, height: 112 },
+    visibleRect: { x: 8, y: 4, width: 160, height: 100 },
+    contentRect: { x: 10, y: 6, width: 100, height: 80 },
+    colorSpace,
+    handle: { ntHandle },
+  };
+  const metadata = textureMetadata(
+    texture,
+    { generation: 19, copy: true },
+    "19:1",
+    "nv12",
+  );
+  assert.equal(metadata.pixelFormat, "nv12");
+  assert.deepEqual(metadata.colorSpace, colorSpace);
+  assert.deepEqual(metadata.sourceRect, {
+    left: 8,
+    top: 4,
+    width: 160,
+    height: 100,
+  });
+  assert.deepEqual(metadata.contentRect, {
+    left: 10,
+    top: 6,
+    width: 100,
+    height: 80,
+  });
+  assert.equal(metadata.handle, "0x1234");
+  texture.pixelFormat = "bgra";
+  assert.throws(
+    () =>
+      textureMetadata(texture, { generation: 19, copy: true }, "19:1", "nv12"),
+    /NV12/,
+  );
+  texture.pixelFormat = "nv12";
+  texture.contentRect.width = 200;
+  assert.throws(
+    () =>
+      textureMetadata(texture, { generation: 19, copy: false }, "19:1", "nv12"),
+    /content rectangle exceeds coded size/,
+  );
+});
+
 test("lease holds only one texture and releases the exact texture once", () => {
   const leases = new TextureLease();
   let releaseCount = 0;
@@ -103,6 +157,16 @@ test("commands reject unsupported operations and unsafe request IDs", () => {
     /safe integer/,
   );
   assert.throws(() => parseCommand('{"id":1,"method":"eval"}'), /unsupported/);
+  for (const method of [
+    "beginNativeEncode",
+    "encodeNativeFrame",
+    "finishNativeEncode",
+    "abortNativeEncode",
+  ])
+    assert.equal(
+      parseCommand(JSON.stringify({ id: 8, method })).method,
+      method,
+    );
 });
 
 test("load accepts the native controller local file entry and web server URLs", () => {

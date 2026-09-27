@@ -22,6 +22,7 @@ impl TextureSourceRect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceFormat {
     Bgra,
+    Nv12,
     #[cfg(test)]
     Rgba,
     #[cfg(test)]
@@ -32,6 +33,7 @@ impl SurfaceFormat {
     pub fn telemetry_label(self) -> &'static str {
         match self {
             SurfaceFormat::Bgra => "bgra",
+            SurfaceFormat::Nv12 => "nv12",
             #[cfg(test)]
             SurfaceFormat::Rgba => "rgba",
             #[cfg(test)]
@@ -68,6 +70,11 @@ pub enum SoftwarePixelFormat {
 #[derive(Debug)]
 pub enum PlatformSurface {
     WindowsD3D11(WindowsD3D11Surface),
+    /// Lease stays in Electron's main process; no native HANDLE crosses this seam.
+    ElectronNativeNv12 {
+        texture_id: String,
+        generation: u64,
+    },
 }
 
 impl PlatformSurface {
@@ -75,6 +82,7 @@ impl PlatformSurface {
     pub fn capture_backend_label(&self) -> &'static str {
         match self {
             PlatformSurface::WindowsD3D11(surface) => surface.owned_texture.capture_backend_label(),
+            PlatformSurface::ElectronNativeNv12 { .. } => "electron_native_nv12",
         }
     }
 
@@ -84,12 +92,18 @@ impl PlatformSurface {
                 surface.owned_texture.capture_backend_label(),
                 source_format.telemetry_label(),
             ),
+            PlatformSurface::ElectronNativeNv12 { .. } => {
+                CapturedSurfaceMetadata::generic("electron_native_nv12", "nv12")
+            }
         }
     }
 
     pub fn validate_for_capture_probe(&self) -> anyhow::Result<()> {
         match self {
             PlatformSurface::WindowsD3D11(_) => Ok(()),
+            PlatformSurface::ElectronNativeNv12 { .. } => {
+                anyhow::bail!("native_nv12.capture_probe_unsupported: validate by encoding a frame")
+            }
         }
     }
 }
@@ -179,7 +193,7 @@ impl CapturedFrame {
                 Ok(frame.pixels)
             }
             CapturedFrame::GpuSurface(frame) => match frame.platform_surface {
-                PlatformSurface::WindowsD3D11(_) => {
+                PlatformSurface::WindowsD3D11(_) | PlatformSurface::ElectronNativeNv12 { .. } => {
                     Err(anyhow::anyhow!("capture.accelerated_readback_unavailable"))
                 }
             },

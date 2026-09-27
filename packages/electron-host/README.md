@@ -41,6 +41,19 @@ file length, reads the packed BGRA bytes, and acknowledges the exact lease with
 `release { softwareFrameId }`. Release, EOF, and close delete the file; native
 also deletes an abandoned file and its directory after process termination.
 
+Accelerated capture defaults to BGRA. Set
+`VELOCAST_ELECTRON_CAPTURE_FORMAT=nv12` explicitly to request Electron's NV12
+shared texture output on Windows. This mode requires accelerated capture.
+The ready event advertises `captureFormat` and `nativeEncode`. Electron's
+requested format is only a request: the host checks each paint's actual pixel
+format and coded, visible, and content geometry. It reports the actual color
+space to the addon, which validates supported values. NV12
+paint responses contain the texture lease token and actual metadata, but no NT
+HANDLE. The host retains the handle inside the lease and passes it only to the
+same-process addon loaded from an explicit absolute
+`VELOCAST_NATIVE_ENCODER_ADDON` path. The sandboxed page has no addon access.
+Linux native NV12 import is unsupported; Linux software capture is unchanged.
+
 Software pixel capture awaits a compositor fence and `capturePage`'s
 request-correlated surface copy. An invalidation event can re-emit the cached
 backing bitmap, so it cannot acknowledge a pixel-bearing software request.
@@ -66,9 +79,13 @@ Commands have a safe integer `id` and one of these methods:
 | --------- | ------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `load`    | HTTP(S) or local `file:` `url`, `width`, `height` | none                                                                                 |
 | `execute` | `script`, optional `token`                        | `result` string for tokened scripts                                                  |
-| `resize`  | `width`, `height`                                 | none, after a size-matched BGRA paint                                                |
-| `paint`   | `generation`, `copy` boolean                      | geometry, pixel format, color metadata; `textureId` and `handle` when `copy` is true |
+| `resize`  | `width`, `height`                                 | none, after a size-matched paint                                                     |
+| `paint`   | `generation`, `copy` boolean                      | actual geometry, pixel format, color metadata; `textureId` when `copy` is true, plus `handle` for BGRA only |
 | `release` | `textureId` or software `softwareFrameId`         | none                                                                                 |
+| `beginNativeEncode` | `config` object | addon ready `report` |
+| `encodeNativeFrame` | `textureId`, `generation`, `frame`, `pts` | addon frame `stats`, after completed GPU copy and source release |
+| `finishNativeEncode` | none | final addon `report` |
+| `abortNativeEncode` | none | none |
 | `close`   | none                                              | none, then process exit                                                              |
 
 Every command gets `{ "id": N, "ok": true, ... }` or
@@ -79,13 +96,17 @@ for other tokens do not complete the request. An accelerated paint command calls
 textures are released immediately. A copied paint retains one Electron texture
 until native has duplicated its process-local NT HANDLE, copied into its own GPU
 texture, and sent `release`. The handle is a `0x` hexadecimal string so all 64
-bits survive JSON. The host rejects any non-BGRA or malformed shared texture.
+bits survive JSON on the BGRA path. The host rejects any shared texture whose
+actual format differs from the selected capture format. On the NV12 path,
+`encodeNativeFrame` retrieves the handle by exact texture and generation IDs,
+waits for the addon to finish its GPU copy, then releases the Electron texture
+exactly once. An in-flight copy retains its source through EOF and cleanup.
 
 Commands and responses are limited to 4 MiB, and the queue is bounded. Load,
 script, and paint waits have timeouts. Each accelerated paint request restarts the offscreen
 capturer before invalidating, which produces a fresh GPU texture even for static
 content without changing composition pixels or layout. Early null-texture paints
-are ignored until the bounded paint deadline. Resize waits for a BGRA paint at
+are ignored until the bounded paint deadline. Resize waits for a matching paint at
 the requested viewport size before adapter initialization can continue; paints
 from the old size are released. EOF or pipe failure tears down the
 window and releases retained textures. After the `close` ACK, native closes the

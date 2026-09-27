@@ -14,6 +14,7 @@ mod frame_loop;
 mod generated;
 mod input_props;
 mod native_browser;
+mod native_nv12;
 mod output_media;
 mod output_result;
 mod output_workspace;
@@ -67,6 +68,7 @@ async fn run() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
     let mut job = args.parse_job()?;
+    native_nv12::validate_selection(&job)?;
     job.render_session = Some(browser_protocol::render_session_for_job(&job));
 
     match job.kind().map_err(anyhow::Error::msg)? {
@@ -315,6 +317,10 @@ async fn run_coordinator_render_with_surface_mode(
     renderer.load(job).await?;
     telemetry.page_load_ms += page_load_started_at.elapsed().as_millis();
     let mut effective_job = job.clone();
+    if native_nv12::enabled() {
+        effective_job.concurrency = Some(RendererConcurrency::Workers(NonZeroU32::new(1).unwrap()));
+        effective_job.assembly_mode = velocast_protocol::RendererAssemblyMode::Reference;
+    }
     if surface_mode == crate::browser_surface::BrowserSurfaceMode::Software {
         effective_job.acceleration = RendererAcceleration::Off;
     }
@@ -436,11 +442,31 @@ async fn run_coordinator_render_with_surface_mode(
             effective_concurrency: render_plan.effective_concurrency,
             probe_tier: render_plan.probe_tier.as_str().to_owned(),
             segment_count: render_plan.segments.len(),
-            capture_mode: render_plan.backend.capture_mode.as_str().to_owned(),
-            conversion_mode: render_plan.backend.conversion_mode.as_str().to_owned(),
-            encoder_mode: render_plan.backend.encoder_mode.as_str().to_owned(),
-            planned_encoder_backend: render_plan.backend.encoder_backend.clone(),
-            encoder_backend: render_plan.backend.encoder_backend.clone(),
+            capture_mode: if native_nv12::enabled() {
+                "electron_native_nv12".into()
+            } else {
+                render_plan.backend.capture_mode.as_str().to_owned()
+            },
+            conversion_mode: if native_nv12::enabled() {
+                "d3d11_nv12_copy".into()
+            } else {
+                render_plan.backend.conversion_mode.as_str().to_owned()
+            },
+            encoder_mode: if native_nv12::enabled() {
+                "electron_native_addon".into()
+            } else {
+                render_plan.backend.encoder_mode.as_str().to_owned()
+            },
+            planned_encoder_backend: if native_nv12::enabled() {
+                "native_nv12_hardware_candidates".into()
+            } else {
+                render_plan.backend.encoder_backend.clone()
+            },
+            encoder_backend: if native_nv12::enabled() {
+                "native_nv12_hardware_candidates".into()
+            } else {
+                render_plan.backend.encoder_backend.clone()
+            },
         })
         .await?;
 
@@ -452,16 +478,28 @@ async fn run_coordinator_render_with_surface_mode(
                 input_props.as_ref(),
             ) {
                 Ok(()) => {
-                    frame_loop::render_frames(
-                        job,
-                        &composition,
-                        &render_plan,
-                        renderer.paint_state(),
-                        &renderer,
-                        telemetry,
-                        Some(event_sink),
-                    )
-                    .await
+                    if native_nv12::enabled() {
+                        native_nv12::render(
+                            job,
+                            &composition,
+                            &render_plan,
+                            &renderer,
+                            telemetry,
+                            Some(event_sink),
+                        )
+                        .await
+                    } else {
+                        frame_loop::render_frames(
+                            job,
+                            &composition,
+                            &render_plan,
+                            renderer.paint_state(),
+                            &renderer,
+                            telemetry,
+                            Some(event_sink),
+                        )
+                        .await
+                    }
                 }
                 Err(error) => Err(error),
             }

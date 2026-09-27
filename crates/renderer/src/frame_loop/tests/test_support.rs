@@ -47,6 +47,7 @@ impl BrowserDriver for FakeBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "test".to_string(),
             owned_texture: None,
             bgra: Some(vec![frame as u8, 0, 0, 255]),
@@ -191,6 +192,7 @@ impl BrowserDriver for StaleThenCurrentPaintBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "stale-after-capture-generation".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![72, 0, 0, 255]),
@@ -208,6 +210,7 @@ impl BrowserDriver for StaleThenCurrentPaintBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "current-after-stale".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![frame as u8, 0, 0, 255]),
@@ -265,6 +268,7 @@ impl BrowserDriver for MismatchedThenCurrentPaintBrowser {
                 texture_height: 2,
                 source_rect: TextureSourceRect::full(2, 2),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "mismatched-after-capture-generation".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![72, 0, 0, 255]),
@@ -282,6 +286,7 @@ impl BrowserDriver for MismatchedThenCurrentPaintBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "current-after-mismatch".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![frame as u8, 0, 0, 255]),
@@ -340,6 +345,7 @@ impl BrowserDriver for DelayedPaintBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "delayed-paint".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![frame as u8, 0, 0, 255]),
@@ -384,6 +390,7 @@ impl BrowserDriver for StaleDuringRenderBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "stale-preview-during-render-frame".to_string(),
             owned_texture: None,
             bgra: Some(vec![72, 0, 0, 255]),
@@ -408,6 +415,7 @@ impl BrowserDriver for StaleDuringRenderBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "delayed-target-paint".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![frame as u8, 0, 0, 255]),
@@ -452,6 +460,7 @@ impl BrowserDriver for SlowPostRequestPaintBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "slow-stale-preview-during-render-frame".to_string(),
             owned_texture: None,
             bgra: Some(vec![72, 0, 0, 255]),
@@ -476,6 +485,7 @@ impl BrowserDriver for SlowPostRequestPaintBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "slow-delayed-target-paint".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![frame as u8, 0, 0, 255]),
@@ -520,6 +530,7 @@ impl BrowserDriver for PaintDuringRenderBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "premature-paint-during-render-frame".to_string(),
             owned_texture: None,
             bgra: Some(vec![72, 0, 0, 255]),
@@ -544,6 +555,7 @@ impl BrowserDriver for PaintDuringRenderBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "post-request-target-paint".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![frame as u8, 0, 0, 255]),
@@ -608,6 +620,7 @@ impl BrowserDriver for StaleFirstPostRenderPaintBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: if stale {
                 "stale-first-post-render-surface".to_string()
             } else {
@@ -655,6 +668,7 @@ impl BrowserDriver for VerySlowPostRequestPaintBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "very-slow-stale-preview-during-render-frame".to_string(),
             owned_texture: None,
             bgra: Some(vec![72, 0, 0, 255]),
@@ -679,6 +693,7 @@ impl BrowserDriver for VerySlowPostRequestPaintBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "very-slow-delayed-target-paint".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![frame as u8, 0, 0, 255]),
@@ -756,6 +771,7 @@ impl BrowserDriver for LateInitialPreviewPaintBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: if requests == 1 {
                 "late-initial-preview-surface".to_string()
             } else {
@@ -828,6 +844,7 @@ impl BrowserDriver for ReorderedInitialPreviewPaintBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: if requests == 2 {
                 "reordered-initial-preview-surface".to_string()
             } else {
@@ -900,6 +917,7 @@ impl BrowserDriver for MultipleInitialPreviewPaintBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: if requests <= 4 {
                 "multiple-initial-preview-surface".to_string()
             } else {
@@ -962,6 +980,7 @@ impl BrowserDriver for SecondRequestPaintBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "second-request-target-paint".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![frame as u8, 0, 0, 255]),
@@ -1106,6 +1125,7 @@ impl BrowserDriver for SameSizeStaleAfterRenderBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: "same-size-stale-after-request-paint".to_string(),
             owned_texture: None,
             bgra: Some(vec![72, 0, 0, 255]),
@@ -1130,6 +1150,7 @@ impl BrowserDriver for SameSizeStaleAfterRenderBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "current-frame-after-request-paint".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![frame as u8, 0, 0, 255]),
@@ -1206,6 +1227,7 @@ impl BrowserDriver for DelayedPreviousPaintTaggedCurrentBrowser {
             texture_height: 1,
             source_rect: TextureSourceRect::full(1, 1),
             color_type_debug: "format=software-bgra".to_string(),
+            native_texture_id: None,
             platform_handle_debug: if delayed_previous {
                 "delayed-previous-tagged-current".to_string()
             } else {
@@ -1253,6 +1275,7 @@ impl BrowserDriver for MismatchedPaintBrowser {
                 texture_height: 2,
                 source_rect: TextureSourceRect::full(2, 2),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "previous-viewport-paint".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![72, 0, 0, 255]),
@@ -1273,6 +1296,7 @@ impl BrowserDriver for MismatchedPaintBrowser {
                 texture_height: 1,
                 source_rect: TextureSourceRect::full(1, 1),
                 color_type_debug: "format=software-bgra".to_string(),
+                native_texture_id: None,
                 platform_handle_debug: "current-viewport-paint".to_string(),
                 owned_texture: None,
                 bgra: Some(vec![frame as u8, 0, 0, 255]),
