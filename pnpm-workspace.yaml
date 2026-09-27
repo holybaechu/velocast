@@ -1,0 +1,12 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "crates/renderer"
+# TypeScript 7 provides the `tsc` binary through the @typescript/native alias.
+# The `typescript` alias retains the TypeScript 6 compiler API for typescript-eslint only.
+allowBuilds:
+  electron: true
+  esbuild: true
+peerDependencyRules:
+  allowedVersions:
+    eslint: "10"

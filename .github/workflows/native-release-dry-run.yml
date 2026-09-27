@@ -1,0 +1,98 @@
+name: Native release dry run
+
+on:
+  workflow_dispatch:
+    inputs:
+      execute_native:
+        description: Run configured native self-hosted validation jobs
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm release:verify
+      - run: pnpm release:test
+      - run: pnpm contracts:check
+      - run: pnpm check-types
+      - run: pnpm test
+
+  native:
+    if: inputs.execute_native
+    needs: foundation
+    runs-on: [self-hosted, velocast, windows, x64]
+    env:
+      VELOCAST_RELEASE_TARGET: win32-x64
+      VELOCAST_RELEASE_MODE: "1"
+      VELOCAST_AUTHENTICODE_CERTIFICATE: ${{ secrets.VELOCAST_AUTHENTICODE_CERTIFICATE }}
+      VELOCAST_AUTHENTICODE_PASSWORD: ${{ secrets.VELOCAST_AUTHENTICODE_PASSWORD }}
+      VELOCAST_APPLE_SIGNING_IDENTITY: ${{ secrets.VELOCAST_APPLE_SIGNING_IDENTITY }}
+      VELOCAST_APPLE_NOTARY_PROFILE: ${{ secrets.VELOCAST_APPLE_NOTARY_PROFILE }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: node packages/electron-host/node_modules/electron/install.js
+      - name: Build Electron renderer and stage runtime
+        run: node scripts/native-release-target.mjs build win32-x64
+        env:
+          VELOCAST_RELEASE_EVIDENCE: ${{ runner.temp }}/velocast-evidence
+      - name: Package and verify immutable artifact
+        run: node scripts/native-release-target.mjs package win32-x64
+        env:
+          VELOCAST_RELEASE_EVIDENCE: ${{ runner.temp }}/velocast-evidence
+      - name: npm and pnpm external-project validation
+        run: node scripts/native-release-target.mjs validate win32-x64
+        env:
+          VELOCAST_RELEASE_EVIDENCE: ${{ runner.temp }}/velocast-evidence
+      - uses: actions/upload-artifact@v7
+        with:
+          name: velocast-win32-x64
+          path: ${{ runner.temp }}/velocast-evidence
+          if-no-files-found: error
+
+  assemble:
+    if: inputs.execute_native
+    needs: native
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: velocast-*
+          path: ${{ runner.temp }}/velocast-evidence
+          merge-multiple: true
+      - run: >-
+          node scripts/assemble-release-manifest.mjs
+          --target win32-x64
+          --evidence-dir ${{ runner.temp }}/velocast-evidence
+          --output ${{ runner.temp }}/velocast-release-dry-run.json
+          --base-url https://artifacts.invalid/velocast/dry-run/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: velocast-release-dry-run
+          path: ${{ runner.temp }}/velocast-release-dry-run.json

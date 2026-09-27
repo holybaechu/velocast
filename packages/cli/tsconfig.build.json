@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "paths": {
+      "@velocast/core": ["../core/dist/index.d.ts"]
+    },
+    "types": ["node"]
+  },
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+}

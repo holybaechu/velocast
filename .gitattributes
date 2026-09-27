@@ -1,0 +1,22 @@
+* text=auto eol=lf
+
+*.png binary -eol
+*.jpg binary -eol
+*.jpeg binary -eol
+*.gif binary -eol
+*.webp binary -eol
+*.ico binary -eol
+*.mp4 binary -eol
+*.mov binary -eol
+*.webm binary -eol
+*.zip binary -eol
+*.gz binary -eol
+*.7z binary -eol
+*.dll binary -eol
+*.exe binary -eol
+*.so binary -eol
+*.so.* binary -eol
+*.dylib binary -eol
+*.dat binary -eol
+*.pak binary -eol
+*.bin binary -eol

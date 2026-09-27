@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "declaration": false,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "noEmit": true,
+    "paths": {
+      "@velocast/core": ["../../packages/core/src/index.ts"],
+      "@velocast/core/testing": ["../../packages/core/src/testing.ts"],
+      "@velocast/gsap": ["../../packages/gsap/src/index.ts"]
+    },
+    "strictNullChecks": true,
+    "types": ["vitest/globals"]
+  },
+  "include": ["src/main.js", "src/product-hero.js", "velocast.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

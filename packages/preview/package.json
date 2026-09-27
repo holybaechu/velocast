@@ -1,0 +1,41 @@
+{
+  "name": "@velocast/preview",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && vite build && node scripts/build-platform.mjs && node ../../scripts/copy-release-manifest.mjs preview",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src --max-warnings 0",
+    "test": "vitest run",
+    "verify:browser": "node scripts/verify-browser.mjs",
+    "verify:external-pack": "node scripts/verify-external-pack.mjs",
+    "verify:official-preview": "node scripts/verify-official-preview.mjs",
+    "prepare:release-consumer": "node scripts/prepare-release-consumer.mjs"
+  },
+  "dependencies": {
+    "@velocast/core": "workspace:0.1.0"
+  },
+  "devDependencies": {
+    "@typescript/native": "npm:typescript@7.0.2",
+    "eslint": "^10.11.0",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

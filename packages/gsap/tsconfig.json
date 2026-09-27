@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "../..",
+    "paths": {
+      "@velocast/core": ["../core/src/index.ts"],
+      "@velocast/core/testing": ["../core/src/testing.ts"]
+    },
+    "strictNullChecks": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

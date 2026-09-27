@@ -1,0 +1,127 @@
+:root {
+  color: #f8fbff;
+  background: #050505;
+  font-family:
+    Inter, "Malgun Gothic", "Apple SD Gothic Neo", ui-sans-serif, system-ui,
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #050505;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.preview-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 24px;
+  background: #050505;
+}
+
+.preview-shell .product-hero {
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  aspect-ratio: 16 / 9;
+}
+
+html[data-velocast-rendering="true"] .preview-shell {
+  min-height: 100vh;
+  padding: 0;
+}
+
+html[data-velocast-rendering="true"] .preview-shell .product-hero {
+  max-width: none;
+  max-height: none;
+}
+
+.product-hero {
+  position: relative;
+  --scene-scale: 1;
+  overflow: hidden;
+  color: #f8fbff;
+  background: #050505;
+  isolation: isolate;
+}
+
+.metric-scene {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: calc(86px * var(--scene-scale));
+  padding: calc(144px * var(--scene-scale)) calc(172px * var(--scene-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-headline {
+  color: #ffffff;
+  font-family:
+    "Arial Black", Impact, Inter, "Malgun Gothic", "Apple SD Gothic Neo",
+    sans-serif;
+  font-size: calc(196px * var(--scene-scale));
+  font-weight: 900;
+  line-height: 0.94;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(42px * var(--scene-scale)) calc(92px * var(--scene-scale));
+  margin: 0;
+}
+
+.metric-row {
+  min-width: 0;
+  padding-block-start: calc(18px * var(--scene-scale));
+  border-block-start: calc(3px * var(--scene-scale)) solid
+    rgba(248, 251, 255, 0.2);
+}
+
+.metric-row:last-child {
+  grid-column: 1 / -1;
+}
+
+.metric-label {
+  margin: 0 0 calc(10px * var(--scene-scale));
+  color: #aeb8c3;
+  font-size: calc(24px * var(--scene-scale));
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.metric-value {
+  margin: 0;
+  color: #f8fbff;
+  font-family:
+    "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: calc(82px * var(--scene-scale));
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.metric-row:nth-child(2n) .metric-value {
+  color: #8fffe2;
+}
+
+.metric-row:nth-child(3n) .metric-value {
+  color: #ffd27a;
+}

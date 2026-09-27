@@ -1,0 +1,277 @@
+{
+  "$schema": "https://velocast.dev/contracts/renderer-protocol.schema.json",
+  "name": "renderer-protocol",
+  "version": 1,
+  "outputApiVersion": 1,
+  "browserProtocolVersion": 4,
+  "rendererEvents": [
+    {
+      "name": "renderer_started",
+      "fields": [
+        { "name": "mode", "type": "string", "required": true },
+        { "name": "output", "type": "string", "required": true }
+      ]
+    },
+    {
+      "name": "pipeline_plan_resolved",
+      "fields": [
+        { "name": "route", "type": "string", "required": true },
+        { "name": "effective_concurrency", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "probe_tier", "type": "string", "required": true },
+        { "name": "segment_count", "type": "integer", "required": true, "integer": "usize" },
+        { "name": "capture_mode", "type": "string", "required": true },
+        { "name": "conversion_mode", "type": "string", "required": true },
+        { "name": "encoder_mode", "type": "string", "required": true },
+        { "name": "planned_encoder_backend", "type": "string", "required": true },
+        { "name": "encoder_backend", "type": "string", "required": true, "deprecated": "Planned first candidate; use planned_encoder_backend." }
+      ]
+    },
+    {
+      "name": "frame_rendered",
+      "fields": [
+        { "name": "frame", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "capture_backend", "type": "string|null", "required": false },
+        { "name": "surface_format_in", "type": "string|null", "required": false }
+      ]
+    },
+    {
+      "name": "frame_encoded",
+      "fields": [
+        { "name": "frame", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "frames_encoded", "type": "integer", "required": true, "integer": "u32" }
+      ]
+    },
+    {
+      "name": "renderer_finished",
+      "fields": [
+        { "name": "frames_rendered", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "frames_encoded", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "fallback_used", "type": "boolean", "required": true },
+        { "name": "fallback_reason", "type": "string|null", "required": false },
+        { "name": "cpu_readback_frames", "type": "integer", "required": true, "integer": "u64" },
+        { "name": "capture_backend", "type": "string|null", "required": false },
+        { "name": "conversion_backend", "type": "string|null", "required": false },
+        { "name": "encoder_backend", "type": "string|null", "required": false }
+      ]
+    },
+    {
+      "name": "renderer_failed",
+      "fields": [
+        { "name": "error", "type": "string", "required": true }
+      ]
+    }
+  ],
+  "backendDiagnosticCodes": [
+    {
+      "code": "backend.unavailable"
+    },
+    {
+      "code": "encoder.codec_unavailable"
+    },
+    {
+      "code": "encoder.ffmpeg_finish_failed"
+    },
+    {
+      "code": "encoder.ffmpeg_open_failed"
+    },
+    {
+      "code": "encoder.ffmpeg_packet_write_failed"
+    },
+    {
+      "code": "encoder.hardware_unavailable"
+    },
+    {
+      "code": "gpu.convert_failed"
+    },
+    {
+      "code": "gpu.import_unavailable"
+    },
+    {
+      "code": "pipeline.mode_unsupported"
+    },
+    {
+      "code": "platform.device_mismatch"
+    },
+    {
+      "code": "platform.device_unavailable"
+    },
+    {
+      "code": "platform.target_unavailable"
+    }
+  ],
+  "wireEnums": {
+    "RenderOperation": {
+      "values": ["render", "inspect", "frame"],
+      "default": "render"
+    },
+    "RenderMode": {
+      "values": [
+        "composition",
+        "url",
+        "composition_worker"
+      ]
+    },
+    "RendererAcceleration": {
+      "values": [
+        "required",
+        "auto",
+        "off"
+      ],
+      "default": "auto"
+    },
+    "RendererAssemblyMode": {
+      "values": [
+        "auto",
+        "reference",
+        "segments"
+      ],
+      "default": "auto"
+    },
+    "RenderCaptureProbe": {
+      "values": [
+        "accelerated_paint"
+      ]
+    }
+  },
+  "wireUnions": {
+    "RendererConcurrency": {
+      "literal": "auto",
+      "integer": "nonzero_u32",
+      "rustLiteralVariant": "Auto",
+      "rustIntegerVariant": "Workers",
+      "error": "renderer concurrency must be a positive integer or auto"
+    }
+  },
+  "wireRecords": {
+    "AudioEnvelopePoint": {
+      "eq": false,
+      "fields": [
+        { "name": "sample", "type": "integer", "integer": "safe_u64", "required": true },
+        { "name": "gain", "type": "number", "required": true, "minimum": 0 }
+      ]
+    },
+    "AudioClip": {
+      "eq": false,
+      "fields": [
+        { "name": "source", "type": "string", "required": true },
+        { "name": "startSample", "type": "integer", "required": true, "integer": "safe_i64" },
+        { "name": "sourceStartSample", "type": "integer", "required": true, "integer": "safe_u64" },
+        { "name": "durationSamples", "type": "integer", "required": true, "integer": "safe_u64" },
+        { "name": "gain", "type": "number", "required": true, "minimum": 0 },
+        { "name": "volumeEnvelope", "type": "AudioEnvelopePoint[]", "required": false, "omitNone": true }
+      ]
+    },
+    "AudioPlan": {
+      "eq": false,
+      "fields": [
+        { "name": "sampleRate", "type": "integer", "required": true, "integer": "safe_u64", "minimum": 1 },
+        { "name": "durationSamples", "type": "integer", "required": true, "integer": "safe_u64" },
+        { "name": "clips", "type": "AudioClip[]", "required": true }
+      ]
+    },
+    "OutputFrameRange": {
+      "fields": [
+        { "name": "startFrame", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "endFrame", "type": "integer", "required": true, "integer": "u32" }
+      ]
+    },
+    "CompositionManifest": {
+      "fields": [
+        { "name": "id", "type": "string", "required": true },
+        { "name": "width", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "height", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "fps", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "durationFrames", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "target", "type": "string", "required": false, "nullable": true },
+        { "name": "url", "type": "string", "required": false, "nullable": true },
+        { "name": "maxConcurrency", "type": "integer", "required": false, "nullable": true, "integer": "nonzero_u32", "error": "maxConcurrency must be a positive integer" }
+      ]
+    },
+    "RenderSession": {
+      "fields": [
+        { "name": "sessionId", "type": "string", "required": true },
+        { "name": "sourceVersion", "type": "string", "required": false, "nullable": true, "omitNone": true }
+      ]
+    },
+    "RenderContext": {
+      "fields": [
+        { "name": "compositionId", "type": "string", "required": true },
+        { "name": "width", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "height", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "fps", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "durationFrames", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "target", "type": "string", "required": false, "nullable": true },
+        { "name": "inputProps", "type": "json", "required": false, "nullable": true, "omitNone": true },
+        { "name": "renderSession", "type": "RenderSession", "required": false, "nullable": true, "omitNone": true }
+      ]
+    },
+    "RenderJob": {
+      "validate": "render_job_mode",
+      "fields": [
+        { "name": "operation", "type": "RenderOperation", "required": false, "default": "render" },
+        { "name": "output_frame", "type": "integer", "required": false, "nullable": true, "omitNone": true, "integer": "u32" },
+        { "name": "output_range", "type": "OutputFrameRange", "required": false, "nullable": true, "omitNone": true },
+        { "name": "result_path", "type": "string", "required": false, "nullable": true, "omitNone": true },
+        { "name": "mode", "type": "RenderMode", "required": true },
+        { "name": "composition_id", "type": "string", "required": false, "nullable": true },
+        { "name": "composition", "type": "CompositionManifest", "required": false, "nullable": true },
+        { "name": "serve_url", "type": "string", "required": true },
+        { "name": "render_session", "type": "RenderSession", "required": false, "nullable": true, "omitNone": true },
+        { "name": "selector", "type": "string", "required": false, "nullable": true },
+        { "name": "output", "type": "string", "required": true },
+        { "name": "codec", "type": "string", "required": true },
+        { "name": "pixel_format", "type": "string", "required": false, "nullable": true },
+        { "name": "bitrate_bps", "type": "integer", "required": false, "nullable": true, "integer": "u64" },
+        { "name": "acceleration", "type": "RendererAcceleration", "required": false, "default": "auto" },
+        { "name": "concurrency", "type": "RendererConcurrency", "required": false, "nullable": true },
+        { "name": "assembly_mode", "type": "RendererAssemblyMode", "required": false, "default": "auto" },
+        { "name": "capture_probe", "type": "RenderCaptureProbe", "required": false, "nullable": true },
+        { "name": "report_path", "type": "string", "required": false, "nullable": true },
+        { "name": "worker_report_path", "type": "string", "required": false, "nullable": true },
+        { "name": "event_log_path", "type": "string", "required": false, "nullable": true },
+        { "name": "verify_segments", "type": "boolean", "required": false, "default": false },
+        { "name": "input_props_path", "type": "string", "required": false, "nullable": true },
+        { "name": "frame_start", "type": "integer", "required": false, "nullable": true, "integer": "u32" },
+        { "name": "frame_end", "type": "integer", "required": false, "nullable": true, "integer": "u32" },
+        { "name": "frame_step", "type": "integer", "required": false, "nullable": true, "integer": "nonzero_u32" },
+        { "name": "chunk_output", "type": "string", "required": false, "nullable": true }
+      ]
+    },
+    "ProgressEvent": {
+      "fields": [
+        { "name": "frame", "type": "integer", "required": true, "integer": "u32" },
+        { "name": "total_frames", "type": "integer", "required": true, "integer": "u32" }
+      ]
+    }
+  },
+  "renderJobModes": {
+    "composition": {
+      "forbidden": [
+        "frame_start",
+        "frame_end",
+        "frame_step",
+        "chunk_output"
+      ],
+      "forbiddenError": "composition job cannot include composition_worker frame/chunk fields"
+    },
+    "url": {
+      "required": [
+        "selector"
+      ],
+      "forbidden": [
+        "frame_start",
+        "frame_end",
+        "frame_step",
+        "chunk_output"
+      ],
+      "forbiddenError": "url job cannot include composition_worker frame/chunk fields"
+    },
+    "composition_worker": {
+      "required": [
+        "frame_start",
+        "frame_end",
+        "chunk_output"
+      ]
+    }
+  }
+}

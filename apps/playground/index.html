@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>velocast playground</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="root">
+      <main class="preview-shell">
+        <section
+          id="product-hero"
+          class="product-hero"
+          aria-label="Render metrics"
+        >
+          <section class="metric-scene">
+            <div class="metric-headline"></div>
+            <dl class="metric-grid">
+              <div class="metric-row">
+                <dt class="metric-label">TIME</dt>
+                <dd class="metric-value" data-metric="time"></dd>
+              </div>
+              <div class="metric-row">
+                <dt class="metric-label">PROGRESS</dt>
+                <dd class="metric-value" data-metric="progress"></dd>
+              </div>
+              <div class="metric-row">
+                <dt class="metric-label">RESOLUTION</dt>
+                <dd class="metric-value" data-metric="resolution"></dd>
+              </div>
+              <div class="metric-row">
+                <dt class="metric-label">RATE</dt>
+                <dd class="metric-value" data-metric="rate"></dd>
+              </div>
+              <div class="metric-row">
+                <dt class="metric-label">COMPOSITION</dt>
+                <dd class="metric-value" data-metric="composition"></dd>
+              </div>
+            </dl>
+          </section>
+        </section>
+      </main>
+    </div>
+    <script src="./node_modules/gsap/dist/gsap.min.js"></script>
+    <script src="../../packages/gsap/browser/velocast-gsap.global.js"></script>
+    <script src="./src/product-hero.js"></script>
+    <script src="./src/main.js"></script>
+  </body>
+</html>

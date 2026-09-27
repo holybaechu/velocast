@@ -1,0 +1,218 @@
+{
+  "schema": "velocast-windows-private-rc-consumer-plan-v1",
+  "status": "prepared-not-executed",
+  "target": "win32-x64",
+  "publication": {
+    "upload": false,
+    "publicRelease": false,
+    "supportedManifestFlip": false
+  },
+  "prerequisites": [
+    "final integration release build and immutable source commit",
+    "current native rendering and media acceptance checks passed",
+    "Windows native artifact produced by scripts/package-native-artifact.mjs",
+    "artifact-manifest.json SHA-256 and archive evidence JSON",
+    "validated host requirements evidence",
+    "fresh core, preview, React, compatibility, and velocast package tarballs",
+    "npm and pnpm available only for clean consumer installation"
+  ],
+  "placeholders": {
+    "NODE_EXE": "absolute Node executable used only to launch installed velocast/dist/bin.js",
+    "CONSUMER_ROOT": "new directory outside the repository",
+    "PROJECT_ROOT": "external 240-frame authored project inside CONSUMER_ROOT",
+    "CLI_JS": "CONSUMER_ROOT/node_modules/velocast/dist/bin.js",
+    "PRIVATE_MANIFEST": "disposable manifest derived from final evidence; never committed as supported",
+    "ARTIFACT_ARCHIVE": "local file URL for the final native tar.gz",
+    "CACHE_ROOT": "new empty directory inside CONSUMER_ROOT",
+    "EVIDENCE_ROOT": "new directory inside CONSUMER_ROOT",
+    "CONFIG": "PROJECT_ROOT/velocast.config.mjs",
+    "COMPOSITION": "the composition id selected for release acceptance"
+  },
+  "minimalEnvironment": {
+    "preserveFromHost": [
+      "SystemRoot",
+      "WINDIR",
+      "COMSPEC",
+      "PATHEXT",
+      "PROCESSOR_ARCHITECTURE",
+      "TEMP",
+      "TMP",
+      "USERPROFILE",
+      "LOCALAPPDATA",
+      "APPDATA"
+    ],
+    "set": {
+      "PATH": "<directory-of-NODE_EXE>;<SystemRoot>/System32;<SystemRoot>",
+      "VELOCAST_RELEASE_MANIFEST": "<PRIVATE_MANIFEST>",
+      "VELOCAST_CACHE_DIR": "<CACHE_ROOT>",
+      "INIT_CWD": "<PROJECT_ROOT>"
+    },
+    "mustBeAbsent": [
+      "VELOCAST_RENDERER_BINARY",
+      "VELOCAST_ARTIFACT_DIR",
+      "VELOCAST_ARTIFACT_MANIFEST_SHA256",
+      "CARGO_TARGET_DIR",
+      "CEF_PATH",
+      "VELOCAST_CEF_RUNTIME_DIR",
+      "VELOCAST_LINUX_RENDERER_RUNTIME_DIR",
+      "VELOCAST_LINUX_RENDERER_RUNTIME_SOURCE_DIR",
+      "FFMPEG_PATH",
+      "VCPKG_ROOT",
+      "LIBCLANG_PATH"
+    ],
+    "reason": "The installed CLI must acquire its own verified Electron artifact and prepend that artifact to child PATH; no repository, Rust, LLVM, vcpkg, or machine FFmpeg path may satisfy runtime resolution."
+  },
+  "privateManifest": {
+    "releaseChannel": "private-rc",
+    "sourceCommit": "<final integration commit>",
+    "targets.win32-x64.artifact": {
+      "name": "<artifact evidence name>",
+      "url": "file:///<ARTIFACT_ARCHIVE>",
+      "format": "tar.gz",
+      "size": "<artifact evidence size>",
+      "sha256": "<artifact evidence sha256>",
+      "sourceCommit": "<artifact evidence sourceCommit>",
+      "renderer": "velocast-renderer.exe",
+      "root": "<artifact evidence root>"
+    },
+    "targets.win32-x64.requirements": "<validated host requirements>",
+    "targets.win32-x64.blocker": null,
+    "scope": "disposable consumer only; source release manifest remains blocked until all evidence is accepted"
+  },
+  "commands": [
+    {
+      "id": "package-audit",
+      "environment": "build host",
+      "argv": [
+        "<NODE_EXE>",
+        "scripts/audit-package-tarballs.mjs",
+        "<core.tgz>",
+        "<preview.tgz>",
+        "<react.tgz>",
+        "<remotion.tgz>",
+        "<velocast.tgz>"
+      ]
+    },
+    {
+      "id": "fresh-setup",
+      "environment": "minimal",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "setup", "--json"],
+      "expect": "source download; archive copied from the local file URL into an empty verified cache"
+    },
+    {
+      "id": "versions-after-setup",
+      "environment": "minimal",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "versions", "--json"],
+      "expect": "target win32-x64 and artifactStatus verified"
+    },
+    {
+      "id": "cached-setup",
+      "environment": "minimal",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "setup", "--json"],
+      "expect": "source cache and the same artifact directory/hash"
+    },
+    {
+      "id": "offline-setup",
+      "environment": "minimal plus VELOCAST_OFFLINE=1",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "setup", "--json"],
+      "expect": "source cache; no network request"
+    },
+    {
+      "id": "concurrent-setup",
+      "environment": "two minimal processes sharing a new CACHE_ROOT",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "setup", "--json"],
+      "expect": "both succeed with one promoted cache entry and no stale lock/partial directory"
+    },
+    {
+      "id": "composition-discovery",
+      "environment": "minimal",
+      "cwd": "<PROJECT_ROOT>",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "compositions", "--config", "<CONFIG>", "--json"]
+    },
+    {
+      "id": "frame-output",
+      "environment": "minimal",
+      "cwd": "<PROJECT_ROOT>",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "frame", "<COMPOSITION>", "--config", "<CONFIG>", "--frame", "12", "--output", "<EVIDENCE_ROOT>/frame-12.png", "--json"]
+    },
+    {
+      "id": "full-240-frame-output",
+      "environment": "minimal",
+      "cwd": "<PROJECT_ROOT>",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "render", "<COMPOSITION>", "--config", "<CONFIG>", "--output", "<EVIDENCE_ROOT>/full.mp4", "--concurrency", "1", "--assembly", "reference", "--report", "<EVIDENCE_ROOT>/full.report.json", "--events", "<EVIDENCE_ROOT>/full.events.jsonl", "--json"]
+    },
+    {
+      "id": "deterministic-repeat",
+      "environment": "minimal",
+      "cwd": "<PROJECT_ROOT>",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "render", "<COMPOSITION>", "--config", "<CONFIG>", "--output", "<EVIDENCE_ROOT>/repeat.mp4", "--concurrency", "1", "--assembly", "reference", "--report", "<EVIDENCE_ROOT>/repeat.report.json", "--json"]
+    },
+    {
+      "id": "software-fallback",
+      "environment": "minimal",
+      "cwd": "<PROJECT_ROOT>",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "render", "<COMPOSITION>", "--config", "<CONFIG>", "--output", "<EVIDENCE_ROOT>/software.mp4", "--acceleration", "off", "--concurrency", "1", "--assembly", "reference", "--report", "<EVIDENCE_ROOT>/software.report.json", "--json"]
+    },
+    {
+      "id": "preview-session",
+      "environment": "minimal",
+      "cwd": "<PROJECT_ROOT>",
+      "argv": ["<NODE_EXE>", "<CLI_JS>", "preview", "--config", "<CONFIG>", "--port", "0", "--json", "--output-directory", "<EVIDENCE_ROOT>/preview-output"],
+      "expect": "browser frame/range output, source refresh guard, watch-child cleanup, and session shutdown evidence"
+    }
+  ],
+  "negativeScenarios": [
+    {
+      "id": "corrupt-archive",
+      "setup": "copy ARTIFACT_ARCHIVE and change one byte",
+      "expect": "setup fails artifact checksum before extraction and preserves no promoted cache"
+    },
+    {
+      "id": "corrupt-cache",
+      "setup": "after cached-setup, change one byte in a copied cache and run offline-setup against that disposable cache",
+      "expect": "runtime file verification fails; valid evidence cache and outputs remain untouched"
+    },
+    {
+      "id": "version-mismatch",
+      "setup": "use a disposable manifest whose sourceCommit/nativeRendererVersion/protocol does not match artifact-manifest.json",
+      "expect": "artifact compatibility validation fails before native launch"
+    },
+    {
+      "id": "cancel-render",
+      "setup": "start a long render in a fresh process, wait for renderer_started, then signal cancellation",
+      "expect": "CLI, renderer, Electron children, temporary outputs, and locks terminate without publishing a final output"
+    },
+    {
+      "id": "offline-empty-cache",
+      "setup": "new empty CACHE_ROOT plus VELOCAST_OFFLINE=1",
+      "expect": "artifact.offline_missing and no download attempt"
+    }
+  ],
+  "acceptance": {
+    "frames": 240,
+    "originalLyricsSourceRange": {
+      "start": 820,
+      "end": 1060,
+      "reason": "Representative four-second range includes known lyric transitions near frames 847 and 887 while preserving the 13,488-frame source identity."
+    },
+    "packageManagers": ["npm", "pnpm"],
+    "requiredScenarios": [
+      "scriptsDisabled",
+      "freshSetup",
+      "cachedSetup",
+      "offlineSetup",
+      "concurrentSetup",
+      "npmRender",
+      "pnpmRender",
+      "deterministicRepeat",
+      "softwareFallback"
+    ],
+    "extraPreviewScenarios": [
+      "previewFrame",
+      "previewRange",
+      "sourceVersionGuard",
+      "watchCleanup"
+    ],
+    "evidence": "write one consumer-validation JSON plus videos, reports, events, hashes, environment allowlist, process cleanup, and cache tree inventory"
+  }
+}

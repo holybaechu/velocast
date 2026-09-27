@@ -1,0 +1,81 @@
+name: Electron renderer
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: electron-renderer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable-software:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/velocast-cargo
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install media tools and software display dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg xvfb libgtk-3-0 libnss3 libasound2t64
+      - name: Install media tools
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install the pinned Electron runtime
+        run: node packages/electron-host/node_modules/electron/install.js
+      - name: Configure Electron's Linux sandbox helper
+        if: runner.os == 'Linux'
+        run: |
+          sandbox="$(node -p "require('node:path').join(require('node:path').dirname(require('./packages/electron-host/node_modules/electron')), 'chrome-sandbox')")"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
+      - run: pnpm build
+      - name: Verify sandboxed Electron software host (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          export VELOCAST_ELECTRON_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
+          xvfb-run -a node --test packages/electron-host/test/software-runtime.test.cjs
+      - name: Verify sandboxed Electron software host (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          export VELOCAST_ELECTRON_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
+          node --test packages/electron-host/test/software-runtime.test.cjs
+      - name: Build and test renderer
+        run: |
+          cargo test -p velocast-renderer
+          cargo build -p velocast-renderer
+          cargo tree -p velocast-renderer > "$RUNNER_TEMP/electron-cargo-tree.txt"
+          if grep -E ' cef(-| | v)' "$RUNNER_TEMP/electron-cargo-tree.txt"; then exit 1; fi
+          "$CARGO_TARGET_DIR/debug/velocast-renderer" --capabilities-json
+      - name: Validate Electron software and PNG output (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node scripts/verify-electron-portable.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/electron-portable" --repeats 2
+      - name: Validate Electron software and PNG output (macOS)
+        if: runner.os == 'macOS'
+        run: node scripts/verify-electron-portable.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/electron-portable" --repeats 2
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: electron-software-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/electron-portable
+            ${{ runner.temp }}/electron-cargo-tree.txt

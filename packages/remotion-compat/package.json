@@ -1,0 +1,66 @@
+{
+  "name": "@velocast/remotion",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./bundler": {
+      "types": "./dist/bundler.d.ts",
+      "default": "./dist/bundler.js"
+    },
+    "./upstream": {
+      "types": "./dist/upstream-host.d.ts",
+      "default": "./dist/upstream-host.js"
+    },
+    "./remotion": {
+      "types": "./dist/remotion.d.ts",
+      "default": "./dist/remotion.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/prune-retired-emits.mjs remotion-compat && tsc -p tsconfig.build.json && node ../../scripts/copy-release-manifest.mjs remotion-compat",
+    "lint": "eslint src --max-warnings 0",
+    "check-types": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@velocast/core": "workspace:0.1.0",
+    "@velocast/react": "workspace:0.1.0",
+    "@velocast/remotion-source": "workspace:0.1.0",
+    "remotion-pinned": "npm:remotion@4.0.244"
+  },
+  "peerDependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@remotion/bundler": "4.0.244",
+    "@remotion/renderer": "4.0.244",
+    "remotion": "4.0.244",
+    "@remotion/google-fonts": "4.0.244",
+    "@types/node": "26.6.2",
+    "@types/react": "18.3.11",
+    "@types/react-dom": "18.3.0",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "eslint": "^10.11.0",
+    "jsdom": "^30.1.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion-current": "npm:remotion@4.0.526",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "vitest": "^5.0.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

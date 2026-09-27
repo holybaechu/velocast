@@ -1,0 +1,72 @@
+{
+  "name": "@velocast/remotion-source",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Project-resolved upstream Remotion source for Velocast",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./upstream": {
+      "types": "./dist/upstream-host.d.ts",
+      "default": "./dist/upstream-host.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node ../../scripts/copy-release-manifest.mjs remotion-source",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src eslint.config.mjs --max-warnings 0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@velocast/core": "workspace:0.1.0"
+  },
+  "peerDependencies": {
+    "remotion": ">=4.0.244 <5",
+    "@remotion/bundler": ">=4.0.244 <5",
+    "@remotion/renderer": ">=4.0.244 <5",
+    "react": ">=18 <20",
+    "react-dom": ">=18 <20"
+  },
+  "peerDependenciesMeta": {
+    "remotion": {
+      "optional": true
+    },
+    "@remotion/bundler": {
+      "optional": true
+    },
+    "@remotion/renderer": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@remotion/bundler": "4.0.244",
+    "@remotion/renderer": "4.0.244",
+    "remotion": "4.0.244",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@types/node": "26.6.2",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "eslint": "^10.11.0",
+    "jsdom": "^30.1.0",
+    "vitest": "^5.0.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

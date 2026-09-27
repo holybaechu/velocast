@@ -1,0 +1,46 @@
+{
+  "name": "@velocast/repo",
+  "private": true,
+  "scripts": {
+    "electron:verify": "node scripts/verify-electron-renderer.mjs",
+    "electron:verify-portable": "node scripts/verify-electron-portable.mjs",
+    "electron:package": "node scripts/package-electron-runtime.mjs",
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint --only",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "check-types": "turbo run check-types",
+    "test": "turbo run test",
+    "test:rust": "cargo test --workspace",
+    "test:policy": "cargo test -p velocast-protocol -p velocast-renderer-policy",
+    "check:fast": "pnpm contracts:check && pnpm check-types && pnpm lint && pnpm test && pnpm test:electron-oracle && pnpm test:policy",
+    "test:electron-oracle": "node --test scripts/tests/electron-*.test.mjs",
+    "contracts:generate": "node scripts/generate-renderer-contracts.mjs",
+    "contracts:check": "node scripts/generate-renderer-contracts.mjs --check",
+    "release:verify": "node scripts/verify-release-manifest.mjs",
+    "release:test": "node scripts/test-release-foundation.mjs",
+    "release:package-audit": "node scripts/audit-package-tarballs.mjs",
+    "release:pack-public": "node scripts/pack-public-packages.mjs",
+    "release:package-native": "node scripts/package-native-artifact.mjs",
+    "release:assemble": "node scripts/assemble-release-manifest.mjs",
+    "velocast": "node scripts/run-velocast.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "eslint": "^10.11.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-only-warn": "^1.2.1",
+    "eslint-plugin-turbo": "^2.11.2",
+    "prettier": "^3.9.8",
+    "tar": "^7.5.22",
+    "turbo": "^2.11.2",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "typescript-eslint": "^8.70.0",
+    "velocast": "workspace:*"
+  },
+  "packageManager": "pnpm@12.5.1",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  }
+}

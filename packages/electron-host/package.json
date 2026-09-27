@@ -1,0 +1,13 @@
+{
+  "name": "@velocast/electron-host",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Offscreen Electron browser host for the native renderer",
+  "main": "main.cjs",
+  "scripts": {
+    "test": "node --test test/*.test.cjs"
+  },
+  "devDependencies": {
+    "electron": "44.4.5"
+  }
+}
