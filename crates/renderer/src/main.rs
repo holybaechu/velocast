@@ -306,6 +306,7 @@ async fn run_coordinator_render_with_mode(
         &composition,
         scheduler::available_parallelism(),
     )?;
+    let requested_backend = job.media_backend.as_deref().unwrap_or("auto");
     event_sink
         .emit(RendererEvent::PipelinePlanResolved {
             route: plan.route.as_str().into(),
@@ -318,10 +319,18 @@ async fn run_coordinator_render_with_mode(
                 "electron_shared_texture"
             }
             .into(),
-            conversion_mode: "chromium_webcodecs".into(),
-            encoder_mode: "webcodecs".into(),
-            planned_encoder_backend: format!("electron_webcodecs_{}", webcodecs::codec(job)?),
-            encoder_backend: format!("electron_webcodecs_{}", webcodecs::codec(job)?),
+            conversion_mode: match requested_backend {
+                "webcodecs" => "chromium_webcodecs",
+                "native" => "mediabunny_native",
+                _ => "media_auto",
+            }
+            .into(),
+            encoder_mode: requested_backend.into(),
+            planned_encoder_backend: format!(
+                "electron_{requested_backend}_{}",
+                webcodecs::codec(job)?
+            ),
+            encoder_backend: format!("electron_{requested_backend}_{}", webcodecs::codec(job)?),
         })
         .await?;
     if plan.ranges.len() > 1 {
@@ -338,10 +347,17 @@ async fn run_coordinator_render_with_mode(
         )
         .await?;
         if let Some(audio) = audio {
-            let mixed = directory.join("audio-final.mp4");
-            let metadata=renderer.media_operation(serde_json::json!({"kind":"mux-audio-plan","videoPath":temporary,"outputPath":mixed,"audio":audio}))?;
+            let mixed = directory.join(format!("audio-final.{}", webcodecs::container(job)?));
+            let metadata=renderer.media_operation(serde_json::json!({"kind":"mux-audio-plan","videoPath":temporary,"outputPath":mixed,"audio":audio,"audioCodec":webcodecs::audio_codec(job)?,"fps":composition.fps}))?;
             output_media::validate_video(&metadata, &composition, telemetry.frames_expected)?;
-            webcodecs::record_audio(&audio, &metadata, telemetry)?;
+            output_media::validate_codec(&metadata, webcodecs::codec(job)?)?;
+            output_media::validate_container(&metadata, webcodecs::container(job)?)?;
+            webcodecs::record_audio(
+                &audio,
+                &metadata,
+                telemetry,
+                Some(webcodecs::audio_codec(job)?),
+            )?;
             std::fs::rename(&mixed, &temporary)?;
         }
     } else {
@@ -459,7 +475,7 @@ async fn run_worker(mut job: RenderJob) -> anyhow::Result<()> {
         telemetry::RenderTelemetry::new(telemetry::RenderModeLabel::ReferenceWebCodecs);
     let started = Instant::now();
     let directory = output.with_extension("worker-workspace");
-    let temporary = directory.join("segment.mp4");
+    let temporary = directory.join(format!("segment.{}", webcodecs::container(&job)?));
     render_job::RenderJobResources::run(Some(&output), &temporary, &directory, async |resources| {
         resources.set_cancellation(cancellation::RenderCancellation::from_event_log_path(
             job.event_log_path.as_deref(),

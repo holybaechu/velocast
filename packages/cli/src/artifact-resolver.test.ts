@@ -158,6 +158,96 @@ describe("native artifact verification", () => {
       ),
     ).toThrow("artifact.wrong_architecture");
   });
+
+  it("verifies optional files declared by the complete runtime inventory", async () => {
+    const fixture = await releaseFixture();
+    const optional = Buffer.from("bundled transitive dependency");
+    writeFileSync(join(fixture.runtimeDir, "optional-dependency.js"), optional);
+    const inventoryPath = join(fixture.runtimeDir, "artifact-manifest.json");
+    const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
+    inventory.files.push({
+      path: "optional-dependency.js",
+      size: optional.length,
+      sha256: sha256(optional),
+    });
+    writeFileSync(inventoryPath, JSON.stringify(inventory));
+    verifyRuntimeDirectory(
+      fixture.runtimeDir,
+      "win32-x64",
+      fixture.manifest.targets["win32-x64"],
+      fixture.artifact,
+      fixture.manifest,
+    );
+
+    writeFileSync(
+      join(fixture.runtimeDir, "optional-dependency.js"),
+      "changed",
+    );
+    expect(() =>
+      verifyRuntimeDirectory(
+        fixture.runtimeDir,
+        "win32-x64",
+        fixture.manifest.targets["win32-x64"],
+        fixture.artifact,
+        fixture.manifest,
+      ),
+    ).toThrow(
+      "artifact.runtime_corrupt: optional-dependency.js failed verification",
+    );
+  });
+
+  it.each([
+    { path: "../outside.dll", reason: "artifact.path_invalid" },
+    {
+      path: "resources.pak",
+      duplicate: true,
+      reason: "duplicate checksum inventory path",
+    },
+  ])(
+    "rejects invalid inventory paths and duplicate records: %j",
+    async ({ path, duplicate, reason }) => {
+      const fixture = await releaseFixture();
+      const inventoryPath = join(fixture.runtimeDir, "artifact-manifest.json");
+      const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
+      const record = duplicate
+        ? inventory.files.find((file: { path: string }) => file.path === path)
+        : inventory.files[0];
+      inventory.files.push(duplicate ? { ...record } : { ...record, path });
+      writeFileSync(inventoryPath, JSON.stringify(inventory));
+      expect(() =>
+        verifyRuntimeDirectory(
+          fixture.runtimeDir,
+          "win32-x64",
+          fixture.manifest.targets["win32-x64"],
+          fixture.artifact,
+          fixture.manifest,
+        ),
+      ).toThrow(reason);
+    },
+  );
+
+  it("checks architecture of native modules declared outside the required file list", async () => {
+    const fixture = await releaseFixture();
+    const addon = peExecutable(0xaa64);
+    writeFileSync(join(fixture.runtimeDir, "transitive.node"), addon);
+    const inventoryPath = join(fixture.runtimeDir, "artifact-manifest.json");
+    const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
+    inventory.files.push({
+      path: "transitive.node",
+      size: addon.length,
+      sha256: sha256(addon),
+    });
+    writeFileSync(inventoryPath, JSON.stringify(inventory));
+    expect(() =>
+      verifyRuntimeDirectory(
+        fixture.runtimeDir,
+        "win32-x64",
+        fixture.manifest.targets["win32-x64"],
+        fixture.artifact,
+        fixture.manifest,
+      ),
+    ).toThrow("artifact.wrong_architecture");
+  });
 });
 
 describe("artifact setup", () => {
@@ -480,7 +570,12 @@ async function releaseFixture(
   writeFileSync(join(runtimeDir, "resources.pak"), "resource");
   mkdirSync(join(runtimeDir, "locales"));
   writeFileSync(join(runtimeDir, "locales", "en-US.pak"), "locale");
-  for (const file of ["electron", "main.cjs", "media-client.cjs", "media-runtime.cjs"])
+  for (const file of [
+    "electron",
+    "main.cjs",
+    "media-client.cjs",
+    "media-runtime.cjs",
+  ])
     writeFileSync(join(runtimeDir, file), "fixture");
   writeFileSync(
     join(runtimeDir, "electron-runtime.json"),

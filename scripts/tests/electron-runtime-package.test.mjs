@@ -92,7 +92,13 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
       name.endsWith(".exe") ? executableFixture() : "fixture",
     );
   writeFileSync(join(host, "main.cjs"), "fixture-host");
-  for (const name of ["media-client.cjs", "media-runtime.cjs", "media-main.cjs", "media-preload.cjs", "media-io.cjs"])
+  for (const name of [
+    "media-client.cjs",
+    "media-runtime.cjs",
+    "media-main.cjs",
+    "media-preload.cjs",
+    "media-io.cjs",
+  ])
     writeFileSync(join(host, name), "fixture-media");
   writeFileSync(join(host, "webcodecs.html"), "trusted-encoder-page");
   const mediabunny = join(root, "mediabunny");
@@ -100,8 +106,14 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
   mkdirSync(join(mediabunny, "dist", "bundles"), { recursive: true });
   writeFileSync(join(mediabunny, "package.json"), '{"name":"mediabunny"}');
   writeFileSync(join(mediabunny, "LICENSE"), "license");
-  writeFileSync(join(mediabunny, "dist/bundles/mediabunny.node.cjs"), "media-runtime");
-  writeFileSync(join(mediabunny, "dist/bundles/mediabunny.cjs"), "browser-runtime");
+  writeFileSync(
+    join(mediabunny, "dist/bundles/mediabunny.node.cjs"),
+    "media-runtime",
+  );
+  writeFileSync(
+    join(mediabunny, "dist/bundles/mediabunny.cjs"),
+    "browser-runtime",
+  );
   const options = {
     platform: "win32",
     arch: "x64",
@@ -114,11 +126,24 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
     probeCapabilities: () => ({
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 2,
+      electronHostProtocolVersion: 3,
       videoEncoderBackend: "webcodecs",
       mediaRuntime: "mediabunny",
+      supportedMediaBackends: ["webcodecs", "native"],
     }),
   };
+  const server = join(host, "node_modules", "@mediabunny", "server");
+  mkdirSync(server, { recursive: true });
+  writeFileSync(
+    join(server, "package.json"),
+    JSON.stringify({
+      name: "@mediabunny/server",
+      version: "1.60.0",
+      main: "index.cjs",
+    }),
+  );
+  writeFileSync(join(server, "index.cjs"), "module.exports = {};");
+  writeFileSync(join(server, "LICENSE"), "server-license");
   const result = packageElectronRuntime(options);
   assert.equal(result.status, "unsigned-local-candidate");
   assert.ok(result.files.every((file) => /^[a-f0-9]{64}$/.test(file.sha256)));
@@ -127,9 +152,28 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
     "fixture-host",
   );
   assert.throws(() => packageElectronRuntime(options), /runtime.output_exists/);
-  assert.equal(readFileSync(join(options.output, "electron-host/webcodecs.html"), "utf8"), "trusted-encoder-page");
-  assert.equal(readFileSync(join(options.output, "electron-host/node_modules/mediabunny/dist/bundles/mediabunny.node.cjs"), "utf8"), "media-runtime");
-  assert.ok(!result.files.some(({ path }) => /(^|\/)(ffmpeg|ffprobe)(\.exe)?$/i.test(path)));
+  assert.equal(
+    readFileSync(join(options.output, "electron-host/webcodecs.html"), "utf8"),
+    "trusted-encoder-page",
+  );
+  assert.equal(
+    readFileSync(
+      join(
+        options.output,
+        "electron-host/node_modules/mediabunny/dist/bundles/mediabunny.node.cjs",
+      ),
+      "utf8",
+    ),
+    "media-runtime",
+  );
+  assert.ok(
+    !result.files.some(({ path }) =>
+      /(^|\/)(ffmpeg|ffprobe)(\.exe)?$/i.test(path),
+    ),
+  );
+  assert.ok(
+    result.mediaDependencies.some(({ name }) => name === "@mediabunny/server"),
+  );
   assert.throws(
     () =>
       packageElectronRuntime({

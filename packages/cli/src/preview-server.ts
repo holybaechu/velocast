@@ -32,6 +32,7 @@ import {
 import type { OutputResult } from "./output-result.js";
 import { isObjectRecord } from "./internal/validation.js";
 import { previewSourceRevision } from "./preview-source-revision.js";
+import { resolveRendererContainer } from "./renderer-options.js";
 
 interface PreviewAssets {
   entryScript: string;
@@ -557,7 +558,11 @@ export async function createPreviewServer(
             "preview.invalid_output",
             "Frame must be a nonnegative integer",
           );
-        const name = randomUUID() + (range === undefined ? ".png" : ".mp4"),
+        const name =
+            randomUUID() +
+            (range === undefined
+              ? ".png"
+              : `.${resolveRendererContainer(config) ?? "mp4"}`),
           output = join(outputDirectory, name);
         const client = new AbortController();
         const disconnected = () => {
@@ -627,7 +632,16 @@ export async function createPreviewServer(
       if (url.pathname.startsWith("/artifacts/")) {
         const path = artifacts.get(url.pathname.slice("/artifacts/".length));
         if (path) {
-          type = path.endsWith(".png") ? "image/png" : "video/mp4";
+          type =
+            (
+              {
+                ".png": "image/png",
+                ".mp4": "video/mp4",
+                ".webm": "video/webm",
+                ".mov": "video/quicktime",
+                ".mkv": "video/x-matroska",
+              } as Record<string, string>
+            )[extname(path)] ?? "application/octet-stream";
           const file = await stat(path);
           response.writeHead(200, {
             "Content-Type": type,

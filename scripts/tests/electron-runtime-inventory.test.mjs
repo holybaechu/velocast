@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,7 +23,15 @@ test("native artifact verifies Electron runtime identity and every staged hash",
   };
   const renderer = join(root, "velocast-renderer.exe");
   writeFileSync(renderer, "renderer");
-  const paths = ["velocast-renderer.exe", "electron-host/media-client.cjs", "electron-host/media-runtime.cjs", "electron-host/node_modules/mediabunny/package.json", "electron-host/node_modules/mediabunny/LICENSE"];
+  const paths = [
+    "velocast-renderer.exe",
+    "electron-host/media-client.cjs",
+    "electron-host/media-runtime.cjs",
+    "electron-host/node_modules/mediabunny/package.json",
+    "electron-host/node_modules/mediabunny/LICENSE",
+    "electron-host/node_modules/@mediabunny/server/package.json",
+    "electron-host/node_modules/node-av/package.json",
+  ];
   for (const path of paths.slice(1)) {
     mkdirSync(join(root, path, ".."), { recursive: true });
     writeFileSync(join(root, path), "fixture");
@@ -25,7 +39,9 @@ test("native artifact verifies Electron runtime identity and every staged hash",
   const files = paths.map((path) => ({
     path,
     size: readFileSync(join(root, path)).length,
-    sha256: createHash("sha256").update(readFileSync(join(root, path))).digest("hex"),
+    sha256: createHash("sha256")
+      .update(readFileSync(join(root, path)))
+      .digest("hex"),
   }));
   const manifest = {
     schema: "velocast-electron-runtime-v1",
@@ -44,9 +60,10 @@ test("native artifact verifies Electron runtime identity and every staged hash",
     rendererCapabilities: {
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 2,
+      electronHostProtocolVersion: 3,
       videoEncoderBackend: "webcodecs",
       mediaRuntime: "mediabunny",
+      supportedMediaBackends: ["webcodecs", "native"],
     },
     files,
   };

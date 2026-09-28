@@ -43,9 +43,22 @@ pub(crate) fn validate_codec(metadata: &Value, codec: &str) -> anyhow::Result<()
             "h264" => matches!(actual, "avc" | "h264"),
             "hevc" => matches!(actual, "hevc" | "h265"),
             "av1" => actual == "av1",
+            "vp8" => actual == "vp8",
+            "vp9" => actual == "vp9",
+            "prores" => matches!(actual, "prores" | "prores-422"),
             _ => false,
         },
         "output.codec_mismatch: requested {codec}, received {actual}"
+    );
+    Ok(())
+}
+pub(crate) fn validate_container(metadata: &Value, container: &str) -> anyhow::Result<()> {
+    let actual = metadata["container"]
+        .as_str()
+        .context("output.missing_container")?;
+    ensure!(
+        actual == container,
+        "output.container_mismatch: requested {container}, received {actual}"
     );
     Ok(())
 }
@@ -76,13 +89,31 @@ mod tests {
     #[test]
     fn validation_counts_real_packets_and_rebased_time() {
         let c = fixture();
-        let mut m = serde_json::json!({"video":{"width":640,"height":360,"frameCount":30,"firstTimestamp":0,"duration":1.0,"codec":"avc"}});
+        let mut m = serde_json::json!({"container":"mp4","video":{"width":640,"height":360,"frameCount":30,"firstTimestamp":0,"duration":1.0,"codec":"avc"}});
         validate_video(&m, &c, 30).unwrap();
         validate_codec(&m, "h264").unwrap();
+        validate_container(&m, "mp4").unwrap();
+        assert!(validate_container(&m, "mov").is_err());
         m["video"]["frameCount"] = serde_json::json!(29);
         assert!(validate_video(&m, &c, 30).is_err());
         m["video"]["frameCount"] = serde_json::json!(30);
         m["video"]["firstTimestamp"] = serde_json::json!(1);
         assert!(validate_video(&m, &c, 30).is_err());
+    }
+    #[test]
+    fn output_codec_names_cover_the_supported_logical_formats() {
+        let mut metadata = serde_json::json!({"video":{"codec":"avc"}});
+        for (requested, actual) in [
+            ("h264", "avc"),
+            ("hevc", "hevc"),
+            ("av1", "av1"),
+            ("vp8", "vp8"),
+            ("vp9", "vp9"),
+            ("prores", "prores"),
+        ] {
+            metadata["video"]["codec"] = serde_json::json!(actual);
+            validate_codec(&metadata, requested).unwrap();
+            assert!(validate_codec(&metadata, "unknown").is_err());
+        }
     }
 }

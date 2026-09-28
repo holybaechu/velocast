@@ -5,11 +5,16 @@ import {
 } from "./media-runtime.js";
 import { lstat, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import type { RendererAudioCodec, RendererContainer } from "@velocast/core";
 
 export interface SourceOutputOptions {
-  /** Final MP4 path. Existing bytes are replaced only after the new file passes validation. */
+  /** Final supported-container path. Existing bytes are replaced only after validation. */
   output: string;
-  /** Render an MP4 to the owned staging path; it may already contain audio. */
+  /** Explicit final format; otherwise inferred from the output path extension. */
+  container?: RendererContainer;
+  /** Selected mux audio codec, forwarded when separate audio is added. */
+  audioCodec?: RendererAudioCodec;
+  /** Render the requested container to the owned staging path; it may already contain audio. */
   renderVideo: (videoPath: string, signal: AbortSignal) => Promise<void>;
   /** Render finished audio after video evaluation, or return null to retain existing audio or silence. */
   renderAudio: (
@@ -49,9 +54,9 @@ export async function renderSourceOutput(
 ): Promise<string> {
   const media = options.mediaRunner ?? runMediaOperation;
   const output = resolve(options.output);
-  if (extname(output).toLowerCase() !== ".mp4") {
-    throw new Error("Source output must be an MP4 path");
-  }
+  const extension = `.${options.container ?? extname(output).slice(1).toLowerCase()}`;
+  if (![".mp4", ".mov", ".webm", ".mkv"].includes(extension))
+    throw new Error("Source output must use .mp4, .mov, .webm, or .mkv");
   const signal = options.signal ?? new AbortController().signal;
   signal.throwIfAborted();
 
@@ -59,9 +64,9 @@ export async function renderSourceOutput(
   const stage = await mkdtemp(
     join(dirname(output), `.${basename(output)}.velocast-`),
   );
-  const video = join(stage, "video.mp4");
+  const video = join(stage, `video${extension}`);
   const audio = join(stage, "audio.wav");
-  const muxed = join(stage, "muxed.mp4");
+  const muxed = join(stage, `muxed${extension}`);
   try {
     signal.throwIfAborted();
     await options.renderVideo(video, signal);
@@ -99,6 +104,7 @@ export async function renderSourceOutput(
           videoPath: video,
           audioPath: audioSource,
           outputPath: muxed,
+          ...(options.audioCodec ? { audioCodec: options.audioCodec } : {}),
         },
         { signal },
       );

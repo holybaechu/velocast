@@ -585,7 +585,7 @@ async function dispatch(command) {
         height: metadata.height,
         pixelFormat: metadata.pixelFormat,
         captureBackend: "electron_shared_texture",
-        cpuReadback: false,
+        cpuReadback: webcodecsEncoder.config.backend === "native",
       };
     }
     case "webcodecs-finish": {
@@ -772,7 +772,7 @@ app
     }
     await writeLine({
       event: "ready",
-      version: 2,
+      version: 3,
       pid: process.pid,
       surfaceMode,
       asyncPaintInvalidation: !software,

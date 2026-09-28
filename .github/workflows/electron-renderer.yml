@@ -88,6 +88,18 @@ jobs:
       - name: Validate authored footage and audio (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/verify-footage-native.mjs "$CARGO_TARGET_DIR/debug/velocast-renderer" "$RUNNER_TEMP/footage-native"
+      - name: Validate native Mediabunny formats (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          export VELOCAST_WEBCODECS_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
+          xvfb-run -a node --test packages/electron-host/test/native-media.integration.test.cjs
+          xvfb-run -a node scripts/verify-media-formats.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/media-formats"
+      - name: Validate native Mediabunny formats (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          export VELOCAST_WEBCODECS_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
+          node --test packages/electron-host/test/native-media.integration.test.cjs
+          node scripts/verify-media-formats.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/media-formats"
       - name: Validate authored footage and audio (macOS)
         if: runner.os == 'macOS'
         run: node scripts/verify-footage-native.mjs "$CARGO_TARGET_DIR/debug/velocast-renderer" "$RUNNER_TEMP/footage-native"
@@ -102,5 +114,6 @@ jobs:
             ${{ runner.temp }}/electron-portable
             ${{ runner.temp }}/footage-native/verification.json
             ${{ runner.temp }}/electron-cargo-tree.txt
+            ${{ runner.temp }}/media-formats/results.json
             ${{ runner.temp }}/aac-timing.log
             ${{ runner.temp }}/aac-timing.json

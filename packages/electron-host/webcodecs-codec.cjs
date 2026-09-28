@@ -53,7 +53,7 @@ function encoderConfig({
       "webcodecs.unsupported_config: geometry, frame rate or bitrate exceeds AVC level 5.2",
     );
   if (
-    !["auto", "h264", "hevc", "av1"].includes(codec) ||
+    !["auto", "h264", "hevc", "av1", "vp8", "vp9"].includes(codec) ||
     !["prefer-hardware", "prefer-software", "no-preference"].includes(
       hardwareAcceleration,
     )
@@ -65,7 +65,11 @@ function encoderConfig({
         ? "hvc1.1.6.L153.B0"
         : codec === "av1"
           ? "av01.0.13M.08"
-          : `avc1.4200${level?.[0] ?? "34"}`,
+          : codec === "vp8"
+            ? "vp8"
+            : codec === "vp9"
+              ? "vp09.00.41.08"
+              : `avc1.4200${level?.[0] ?? "34"}`,
     width,
     height,
     framerate: fps,
@@ -75,7 +79,7 @@ function encoderConfig({
     hardwareAcceleration,
     ...(codec === "hevc"
       ? { hevc: { format: "hevc" } }
-      : codec === "av1"
+      : ["av1", "vp8", "vp9"].includes(codec)
         ? {}
         : { avc: { format: "avc" } }),
   };

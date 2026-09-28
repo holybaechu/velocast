@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { stageMediaDependencies } from "./media-runtime-dependencies.mjs";
 import { createHash } from "node:crypto";
 import {
   cpSync,
@@ -149,7 +150,9 @@ export function packageElectronRuntime(options) {
     if (!statSync(file).isFile())
       throw new Error(`runtime.input_missing: ${file}`);
   const dependencySet = collectDependencies(roots, {
-    searchDirs: [...new Set([...roots.map(dirname), ...(options.dllDirs ?? [])])],
+    searchDirs: [
+      ...new Set([...roots.map(dirname), ...(options.dllDirs ?? [])]),
+    ],
     readImports: options.readImports,
   });
   const arch = options.arch ?? process.arch;
@@ -160,9 +163,10 @@ export function packageElectronRuntime(options) {
   const capabilities = options.probeCapabilities(roots[0]);
   if (
     capabilities.defaultBrowserHost !== "electron" ||
-    capabilities.electronHostProtocolVersion !== 2 ||
+    capabilities.electronHostProtocolVersion !== 3 ||
     capabilities.videoEncoderBackend !== "webcodecs" ||
     capabilities.mediaRuntime !== "mediabunny" ||
+    !capabilities.supportedMediaBackends?.includes("native") ||
     JSON.stringify(capabilities.browserHosts) !== '["electron"]'
   )
     throw new Error(
@@ -183,7 +187,9 @@ export function packageElectronRuntime(options) {
   for (const entry of readdirSync(host, { withFileTypes: true })) {
     if (
       entry.isFile() &&
-      (entry.name.endsWith(".cjs") || entry.name.endsWith(".html") || entry.name === "package.json")
+      (entry.name.endsWith(".cjs") ||
+        entry.name.endsWith(".html") ||
+        entry.name === "package.json")
     )
       cpSync(
         join(host, entry.name),
@@ -191,18 +197,11 @@ export function packageElectronRuntime(options) {
         { force: false, errorOnExist: true },
       );
   }
-  const mediaPackage = resolve(options.mediabunny);
-  const mediaOutput = join(output, "electron-host", "node_modules", "mediabunny");
-  for (const name of ["package.json", "LICENSE", "dist/bundles/mediabunny.node.cjs", "dist/bundles/mediabunny.cjs"]) {
-    if (!existsSync(join(mediaPackage, name)))
-      throw new Error(`runtime.input_missing: ${mediaPackage}/${name}`);
-  }
-  mkdirSync(join(mediaOutput, "dist", "bundles"), { recursive: true });
-  for (const name of ["package.json", "LICENSE", "dist/bundles/mediabunny.node.cjs", "dist/bundles/mediabunny.cjs"])
-    cpSync(join(mediaPackage, name), join(mediaOutput, name), {
-      force: false,
-      errorOnExist: true,
-    });
+  const mediaDependencies = stageMediaDependencies({
+    host,
+    output: join(output, "electron-host"),
+    mediabunny: options.mediabunny,
+  });
   if (options.licenses)
     cpSync(resolve(options.licenses), join(output, "native-licenses"), {
       recursive: true,
@@ -210,8 +209,16 @@ export function packageElectronRuntime(options) {
       errorOnExist: true,
     });
   const files = inventoryFiles(output);
-  if (files.some(({ path }) => /^(ffmpeg|ffprobe)(\.exe)?$|^(avcodec|avformat|avutil|swresample)-\d+\.dll$/i.test(path)))
-    throw new Error("runtime.retired_media_dependency: standalone media tools or native codec libraries are not allowed");
+  if (
+    files.some(({ path }) =>
+      /^(ffmpeg|ffprobe)(\.exe)?$|^(avcodec|avformat|avutil|swresample)-\d+\.dll$/i.test(
+        path,
+      ),
+    )
+  )
+    throw new Error(
+      "runtime.retired_media_dependency: standalone media tools or native codec libraries are not allowed",
+    );
   if (
     files.some((file) =>
       /(^|\/)libcef\.(dll|so)$|Chromium Embedded Framework|(^|\/)cef[-_]/i.test(
@@ -238,6 +245,7 @@ export function packageElectronRuntime(options) {
     mediaClient: "electron-host/media-client.cjs",
     mediaBundle: "electron-host/media-runtime.cjs",
     mediaPackage: "electron-host/node_modules/mediabunny",
+    mediaDependencies,
     rendererCapabilities: capabilities,
     electronVersion: readFileSync(join(electron, "version"), "utf8").trim(),
     dependencyGraph: dependencySet.graph,

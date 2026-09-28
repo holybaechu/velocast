@@ -17,6 +17,10 @@ export type {
   RendererConcurrency,
   RendererAcceleration,
   RendererAssemblyMode,
+  RendererVideoCodec,
+  RendererContainer,
+  RendererAudioCodec,
+  RendererMediaBackend,
 } from "./types.js";
 export type { BrowserProtocolOptions } from "./browser-protocol.js";
 export { defineConfig } from "./config.js";

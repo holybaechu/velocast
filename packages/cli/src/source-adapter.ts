@@ -26,6 +26,10 @@ import { parseOutputFrame } from "./output-request.js";
 import { resolveCliInputPropsPath, resolveCliOutputPath } from "./paths.js";
 import { assertSourceConfig, resolveSourceEntry } from "./render-source.js";
 import { renderSourceOutput } from "./source-output.js";
+import {
+  resolveRendererAudioCodec,
+  resolveRendererContainer,
+} from "./renderer-options.js";
 
 type NativeExecutor = (
   request: RenderRequest,
@@ -111,10 +115,16 @@ export async function executeSourceJob(
         request.output,
         dependencies.pathOptions,
       );
-      const extension = request.kind === "frame" ? ".png" : ".mp4";
-      if (extname(result.outputPath).toLowerCase() !== extension)
+      const extension = extname(result.outputPath).toLowerCase();
+      if (
+        request.kind === "frame"
+          ? extension !== ".png"
+          : ![".mp4", ".mov", ".webm", ".mkv"].includes(extension)
+      )
         throw new Error(
-          `source.output_invalid: ${request.kind} output must use ${extension}`,
+          request.kind === "frame"
+            ? "source.output_invalid: frame output must use .png"
+            : "source.output_invalid: composition output must use .mp4, .mov, .webm, or .mkv",
         );
       assertDiagnosticPaths(request, result.outputPath, dependencies);
     }
@@ -186,6 +196,14 @@ export async function executeSourceJob(
     const prepared = source;
     const override =
       request.kind === "frame" ? prepared.renderFrame : prepared.renderVideo;
+    if (
+      request.kind === "composition" &&
+      prepared.renderVideo &&
+      extname(result.outputPath!).toLowerCase() !== ".mp4"
+    )
+      throw new Error(
+        "source.output_unsupported: source-owned video callbacks currently require .mp4 output",
+      );
     if (override) assertReferenceOptions(request);
     else if (!prepared.url)
       throw new Error(
@@ -248,6 +266,14 @@ export async function executeSourceJob(
     if (request.kind === "composition") {
       await (dependencies.renderSourceOutput ?? renderSourceOutput)({
         output: result.outputPath!,
+        container: resolveRendererContainer(
+          request.config,
+          request.options?.container,
+        ),
+        audioCodec: resolveRendererAudioCodec(
+          request.config,
+          request.options?.audioCodec,
+        ),
         signal,
         renderVideo: async (path, videoSignal) => {
           if (prepared.renderVideo)

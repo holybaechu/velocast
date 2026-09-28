@@ -11,6 +11,7 @@
     "electron": "44.4.5"
   },
   "dependencies": {
+    "@mediabunny/server": "1.60.0",
     "mediabunny": "1.60.0"
   }
 }

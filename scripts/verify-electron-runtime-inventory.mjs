@@ -25,14 +25,16 @@ export function verifyElectronRuntimeInventory(root, files, expected) {
     runtime.mediaClient !== "electron-host/media-client.cjs" ||
     runtime.mediaBundle !== "electron-host/media-runtime.cjs" ||
     runtime.mediaPackage !== "electron-host/node_modules/mediabunny" ||
-    runtime.ffmpeg !== undefined || runtime.ffprobe !== undefined
+    runtime.ffmpeg !== undefined ||
+    runtime.ffprobe !== undefined
   )
     fail("runtime entrypoints differ");
   if (
     runtime.rendererCapabilities?.defaultBrowserHost !== "electron" ||
-    runtime.rendererCapabilities?.electronHostProtocolVersion !== 2 ||
+    runtime.rendererCapabilities?.electronHostProtocolVersion !== 3 ||
     runtime.rendererCapabilities?.videoEncoderBackend !== "webcodecs" ||
     runtime.rendererCapabilities?.mediaRuntime !== "mediabunny" ||
+    !runtime.rendererCapabilities?.supportedMediaBackends?.includes("native") ||
     JSON.stringify(runtime.rendererCapabilities?.browserHosts) !==
       '["electron"]'
   )
@@ -43,6 +45,8 @@ export function verifyElectronRuntimeInventory(root, files, expected) {
     "electron-host/media-runtime.cjs",
     "electron-host/node_modules/mediabunny/package.json",
     "electron-host/node_modules/mediabunny/LICENSE",
+    "electron-host/node_modules/@mediabunny/server/package.json",
+    "electron-host/node_modules/node-av/package.json",
   ])
     if (!runtime.files.some((file) => file.path === path))
       fail(`media runtime file missing: ${path}`);

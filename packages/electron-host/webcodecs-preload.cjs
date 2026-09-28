@@ -3,8 +3,8 @@
 // This preload belongs only to the trusted empty encoder window. Composition
 // pages remain sandboxed, without a preload or access to these IPC channels.
 const { ipcRenderer, sharedTexture } = require("electron/renderer");
-const { CodecSession } = require("./webcodecs-codec.cjs");
-const session = new CodecSession(VideoEncoder, VideoFrame);
+const { MediaSession } = require("./media-session.cjs");
+const session = new MediaSession();
 const reply = (id, result) =>
   ipcRenderer.send("velocast:webcodecs:result", { id, ...result });
 const failure = (id, error) =>

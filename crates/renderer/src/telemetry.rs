@@ -6,6 +6,7 @@ pub enum RenderModeLabel {
     CompositionInspection,
     FramePng,
     ReferenceWebCodecs,
+    ReferenceNative,
     ParallelSegments,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

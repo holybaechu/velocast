@@ -2,6 +2,19 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const mb = require("mediabunny");
+const { containerFor } = require("./media-settings.cjs");
+function outputFormat(container) {
+  const Format = {
+    mp4: mb.Mp4OutputFormat,
+    mov: mb.MovOutputFormat,
+    webm: mb.WebMOutputFormat,
+    mkv: mb.MkvOutputFormat,
+  }[container];
+  if (!Format) throw new Error("media.invalid_container");
+  return new Format(
+    ["mp4", "mov"].includes(container) ? { fastStart: false } : {},
+  );
+}
 
 function absolute(file) {
   if (typeof file !== "string" || !path.isAbsolute(file))
@@ -42,7 +55,8 @@ function inputFile(file) {
     }),
   });
 }
-function outputFile(file) {
+function outputFile(file, container) {
+  const format = outputFormat(containerFor(file, container));
   const fd = fs.openSync(absolute(file), "wx", 0o600);
   let closed = false;
   const close = () => {
@@ -52,7 +66,7 @@ function outputFile(file) {
     }
   };
   const output = new mb.Output({
-    format: new mb.Mp4OutputFormat({ fastStart: false }),
+    format,
     target: new mb.StreamTarget(
       new WritableStream({
         write({ data, position }) {
@@ -103,8 +117,19 @@ async function probe({
     const result = {
       path: file,
       bytes: fs.statSync(file).size,
-      duration: await input.computeDuration(),
+      duration: await input.computeDuration(undefined, { metadataOnly: false }),
     };
+    const format = await input.getFormat();
+    result.container =
+      format === mb.QTFF
+        ? "mov"
+        : format === mb.WEBM
+          ? "webm"
+          : format === mb.MATROSKA
+            ? "mkv"
+            : format === mb.MP4
+              ? "mp4"
+              : format.name;
     result.videoTrackCount = (await input.getVideoTracks()).length;
     result.audioTrackCount = (await input.getAudioTracks()).length;
     const video = await input.getPrimaryVideoTrack();
@@ -172,11 +197,43 @@ async function probe({
         codec: await audio.getCodec(),
         sampleRate: await audio.getSampleRate(),
         channels: await audio.getNumberOfChannels(),
-        duration: await audio.computeDuration(),
+        duration: await audioDuration(audio),
       };
+    if (result.audio)
+      result.duration = Math.max(result.duration, result.audio.duration);
     return result;
   } finally {
     input.dispose();
   }
 }
-module.exports = { mb, absolute, inputFile, outputFile, probe };
+// Matroska SimpleBlocks can omit the final audio packet's duration. Read the
+// final decoded sample rather than truncating audio at that packet's start.
+async function audioDuration(track) {
+  const duration = await track.computeDuration({ metadataOnly: false });
+  const last = await new mb.EncodedPacketSink(track).getPacket(Infinity);
+  if (!last || last.duration > 0 || !(await track.canDecode())) return duration;
+  // Some native audio decoders require earlier packets to establish their
+  // block size. Stream the track with bounded sample ownership instead of
+  // seeking into an isolated final FLAC/AAC packet.
+  let end = duration;
+  for await (const sample of new mb.AudioSampleSink(track).samples()) {
+    try {
+      end = Math.max(
+        end,
+        sample.timestamp + sample.numberOfFrames / sample.sampleRate,
+      );
+    } finally {
+      sample.close();
+    }
+  }
+  return end;
+}
+module.exports = {
+  mb,
+  absolute,
+  inputFile,
+  outputFile,
+  outputFormat,
+  probe,
+  audioDuration,
+};

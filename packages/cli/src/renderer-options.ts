@@ -1,7 +1,11 @@
 import type {
   Config,
+  RendererAudioCodec,
   RendererAcceleration,
+  RendererContainer,
   RendererConcurrency,
+  RendererMediaBackend,
+  RendererVideoCodec,
 } from "@velocast/core";
 import {
   defaultRendererAcceleration,
@@ -147,7 +151,7 @@ export function resolveRendererBitrate(
 function validateRendererCodec(
   value: unknown,
   errorMessage: string,
-): string | undefined {
+): RendererVideoCodec | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -156,21 +160,30 @@ function validateRendererCodec(
     throw new Error(errorMessage);
   }
 
-  const normalized = value.trim();
+  const trimmed = value.trim().toLowerCase();
+  const normalized = trimmed === "h265" ? "hevc" : trimmed;
   if (!normalized) {
     throw new Error(errorMessage);
   }
 
   if (/^(h264|hevc|av1)_vaapi$/i.test(normalized)) {
     throw new Error(
-      `encoder.codec_unavailable: ${normalized} is no longer supported; select h264, hevc, or av1`,
+      `encoder.codec_unavailable: ${normalized} is no longer supported; select a logical video codec`,
     );
   }
 
-  return normalized;
+  if (!["h264", "hevc", "av1", "vp8", "vp9", "prores"].includes(normalized)) {
+    throw new Error(
+      `${errorMessage}; expected h264, hevc, av1, vp8, vp9, or prores`,
+    );
+  }
+
+  return normalized as RendererVideoCodec;
 }
 
-export function parseCliCodec(value: string | undefined): string | undefined {
+export function parseCliCodec(
+  value: string | undefined,
+): RendererVideoCodec | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -185,12 +198,111 @@ export function parseCliCodec(value: string | undefined): string | undefined {
 export function resolveRendererCodec(
   config: Config,
   cliValue?: string,
-): string | undefined {
+): RendererVideoCodec | undefined {
   return (
     parseCliCodec(cliValue) ??
     validateRendererCodec(
       config.renderer?.codec,
       "renderer.codec must be a non-empty string",
+    )
+  );
+}
+
+function validateChoice<T extends string>(
+  value: unknown,
+  choices: readonly T[],
+  errorMessage: string,
+): T | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !choices.includes(value as T))
+    throw new Error(`${errorMessage}; expected ${choices.join(", ")}`);
+  return value as T;
+}
+
+function resolveChoice<T extends string>(
+  configValue: unknown,
+  cliValue: string | undefined,
+  choices: readonly T[],
+  cliError: string,
+  configError: string,
+): T | undefined {
+  return (
+    validateChoice(cliValue?.trim(), choices, cliError) ??
+    validateChoice(configValue, choices, configError)
+  );
+}
+
+export function resolveRendererContainer(
+  config: Config,
+  cliValue?: string,
+): RendererContainer | undefined {
+  return resolveChoice(
+    config.renderer?.container,
+    cliValue,
+    ["mp4", "mov", "webm", "mkv"] as const,
+    "--container must be mp4, mov, webm, or mkv",
+    "renderer.container must be mp4, mov, webm, or mkv",
+  );
+}
+
+export function resolveRendererAudioCodec(
+  config: Config,
+  cliValue?: string,
+): RendererAudioCodec | undefined {
+  return resolveChoice(
+    config.renderer?.audioCodec,
+    cliValue,
+    [
+      "auto",
+      "aac",
+      "opus",
+      "mp3",
+      "flac",
+      "vorbis",
+      "pcm-s16",
+      "pcm-s24",
+      "pcm-f32",
+    ] as const,
+    "--audio-codec must be auto, aac, opus, mp3, flac, vorbis, pcm-s16, pcm-s24, or pcm-f32",
+    "renderer.audioCodec must be auto, aac, opus, mp3, flac, vorbis, pcm-s16, pcm-s24, or pcm-f32",
+  );
+}
+
+export function resolveRendererMediaBackend(
+  config: Config,
+  cliValue?: string,
+): RendererMediaBackend | undefined {
+  return resolveChoice(
+    config.renderer?.mediaBackend,
+    cliValue,
+    ["auto", "webcodecs", "native"] as const,
+    "--media-backend must be auto, webcodecs, or native",
+    "renderer.mediaBackend must be auto, webcodecs, or native",
+  );
+}
+
+function validateVideoProfile(
+  value: unknown,
+  errorMessage: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "")
+    throw new Error(errorMessage);
+  return value.trim();
+}
+
+export function resolveRendererVideoProfile(
+  config: Config,
+  cliValue?: string,
+): string | undefined {
+  return (
+    validateVideoProfile(
+      cliValue,
+      "--video-profile must be a non-empty string",
+    ) ??
+    validateVideoProfile(
+      config.renderer?.videoProfile,
+      "renderer.videoProfile must be a non-empty string",
     )
   );
 }
@@ -290,8 +402,9 @@ export function resolveRendererPixelFormat(
   config: Config,
   cliValue: string | undefined,
   acceleration: RendererAcceleration,
+  codec?: RendererVideoCodec,
 ): string {
-  const defaultPixelFormat = defaultRendererPixelFormat(acceleration);
+  const defaultPixelFormat = defaultRendererPixelFormat(acceleration, codec);
   const rawValue: unknown =
     cliValue !== undefined
       ? cliValue

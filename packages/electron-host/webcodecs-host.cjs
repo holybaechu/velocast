@@ -4,6 +4,7 @@ const { BrowserWindow, ipcMain, sharedTexture } = require("electron/main");
 const fs = require("node:fs");
 const path = require("node:path");
 const { mb, absolute, outputFile, probe } = require("./media-io.cjs");
+const { mediaSettings } = require("./media-settings.cjs");
 const {
   encoderConfig,
   frameTiming,
@@ -108,16 +109,21 @@ class WebCodecsHost {
 
   async open(settings, audio) {
     if (this.settings) throw new Error("webcodecs.already_open");
-    encoderConfig(settings);
+    const selected = mediaSettings(settings);
     this.settings = settings;
     this.audio = audio;
     this.file = absolute(settings.outputPath);
     this.videoFile = audio
-      ? path.join(this.directory, "encoded-video.mp4")
+      ? path.join(this.directory, `encoded-video.${selected.container}`)
       : this.file;
     await this.initialize();
-    const config = await this.command("open", settings);
-    this.sink = outputFile(this.videoFile);
+    const config = await this.command("open", {
+      ...settings,
+      outputPath: this.videoFile,
+    });
+    this.config = config;
+    if (config.backend === "native") return config;
+    this.sink = outputFile(this.videoFile, selected.container);
     this.source = new mb.EncodedVideoPacketSource(
       config.logicalCodec === "h264" ? "avc" : config.logicalCodec,
     );
@@ -144,7 +150,7 @@ class WebCodecsHost {
   async encode(texture, index) {
     let imported;
     try {
-      if (!this.sink || this.finished || index !== this.frames)
+      if (!this.config || this.finished || index !== this.frames)
         throw new Error("webcodecs.invalid_sequence");
       const id = ++this.sequence;
       let releaseDone;
@@ -183,6 +189,16 @@ class WebCodecsHost {
         .finally(() => imported.release());
       const [result] = await Promise.all([packet, transferred]);
       const timing = frameTiming(index, this.settings.fps);
+      if (this.config.backend === "native") {
+        this.validateAcknowledgement(result, index, timing);
+        const releaseWait = this.wait(++this.sequence);
+        const releasePending = this.pending;
+        released.then(() => releasePending.resolve());
+        await releaseWait;
+        this.frames++;
+        this.colorSpace = result.colorSpace;
+        return result;
+      }
       if (
         result.index !== index ||
         result.timestamp !== timing.timestamp ||
@@ -227,22 +243,30 @@ class WebCodecsHost {
   }
 
   async finish() {
-    if (!this.sink || this.finished)
+    if (!this.config || this.finished)
       throw new Error("webcodecs.invalid_finish");
     const result = await this.command("finish");
     if (result.frames !== this.frames || !this.frames)
       throw new Error("webcodecs.frame_count_mismatch");
-    this.source.close();
-    await this.sink.output.finalize();
-    this.sink.close();
+    if (this.sink) {
+      this.source.close();
+      await this.sink.output.finalize();
+      this.sink.close();
+    }
     const metadata = this.audio
       ? await this.command("media-operation", {
           kind: "mux-audio-plan",
           videoPath: this.videoFile,
           outputPath: this.file,
           audio: this.audio,
+          audioCodec: this.settings.audioCodec,
+          container: this.config.container,
+          fps: this.settings.fps,
+          mediaBackend: this.config.backend,
         })
-      : await probe({ path: this.file });
+      : this.config.backend === "native"
+        ? result
+        : await probe({ path: this.file });
     if (
       metadata.video?.frameCount !== this.frames ||
       metadata.video.width !== this.settings.width ||
@@ -255,12 +279,14 @@ class WebCodecsHost {
       ...metadata,
       frames: this.frames,
       colorSpace: this.colorSpace,
+      backend: this.config.backend,
+      pixelFormat: this.config.pixelFormat,
     };
   }
 
   async encodeBitmap(data, index) {
     if (
-      !this.sink ||
+      !this.config ||
       this.finished ||
       index !== this.frames ||
       data.byteLength !== this.settings.width * this.settings.height * 4
@@ -273,6 +299,12 @@ class WebCodecsHost {
       height: this.settings.height,
     });
     const timing = frameTiming(index, this.settings.fps);
+    if (this.config.backend === "native") {
+      this.validateAcknowledgement(result, index, timing);
+      this.frames++;
+      this.colorSpace = result.colorSpace;
+      return result;
+    }
     if (
       result.index !== index ||
       result.timestamp !== timing.timestamp ||
@@ -303,13 +335,26 @@ class WebCodecsHost {
     };
   }
 
+  validateAcknowledgement(result, index, timing) {
+    if (
+      result.index !== index ||
+      result.timestamp !== timing.timestamp ||
+      result.duration !== timing.duration ||
+      result.frames !== index + 1
+    )
+      throw new Error("media.invalid_acknowledgement");
+  }
+
   dispose() {
     this.pending?.reject(new Error("webcodecs.closed"));
     ipcMain.off("velocast:webcodecs:result", this.onResult);
     this.sink?.close();
-    if (!this.finished && this.sink) fs.rmSync(this.videoFile, { force: true });
     if (this.window && !this.window.isDestroyed()) this.window.destroy();
     this.window = null;
+    if (!this.finished && this.config) {
+      // Destroying the trusted utility releases native encoder/file resources.
+      fs.rmSync(this.videoFile, { force: true, maxRetries: 8, retryDelay: 50 });
+    }
   }
 }
 

@@ -9,9 +9,10 @@ describe("renderer defaults", () => {
     expect(defaultRendererAcceleration).toBe("auto");
   });
 
-  it("keeps hardware and software pixel format defaults centralized", () => {
-    expect(defaultRendererPixelFormat("required")).toBe("nv12");
-    expect(defaultRendererPixelFormat("auto")).toBe("nv12");
-    expect(defaultRendererPixelFormat("off")).toBe("yuv444p");
+  it("uses broad 8-bit defaults and a 10-bit ProRes default", () => {
+    expect(defaultRendererPixelFormat("required")).toBe("yuv420p");
+    expect(defaultRendererPixelFormat("auto")).toBe("yuv420p");
+    expect(defaultRendererPixelFormat("off")).toBe("yuv420p");
+    expect(defaultRendererPixelFormat("off", "prores")).toBe("yuv422p10le");
   });
 });

@@ -194,6 +194,28 @@ mod tests {
     }
 
     #[test]
+    fn media_options_round_trip_without_changing_legacy_jobs() {
+        let base = json!({"mode":"composition","serve_url":"http://localhost","output":"movie.mov","codec":"prores"});
+        let legacy: RenderJob = serde_json::from_value(base.clone()).unwrap();
+        assert!(legacy.container.is_none());
+        assert!(legacy.audio_codec.is_none());
+        assert!(legacy.media_backend.is_none());
+        assert!(legacy.video_profile.is_none());
+        let mut extended = base;
+        extended["container"] = json!("mov");
+        extended["audio_codec"] = json!("pcm-s24");
+        extended["media_backend"] = json!("native");
+        extended["video_profile"] = json!("hq");
+        let job: RenderJob = serde_json::from_value(extended.clone()).unwrap();
+        let wire = serde_json::to_value(&job).unwrap();
+        for key in ["container", "audio_codec", "media_backend", "video_profile"] {
+            assert_eq!(wire[key], extended[key]);
+        }
+        let round_trip: RenderJob = serde_json::from_value(wire).unwrap();
+        assert_eq!(round_trip, job);
+    }
+
+    #[test]
     fn parses_url_job_as_tagged_variant() {
         let job: RenderJob = serde_json::from_str(
             r##"{

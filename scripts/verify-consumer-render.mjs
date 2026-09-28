@@ -22,9 +22,10 @@ requireValue(probe.video.frameCount === 240, "expected 240 decoded frames");
 requireValue(Math.abs(probe.video.duration - 4) <= 1 / 60, "unexpected duration");
 for (const key of ["frames_expected", "frames_rendered", "frames_encoded"])
   requireValue(report[key] === 240, `expected ${key}=240`);
-requireValue(report.conversion_backend === "chromium_webcodecs", "unexpected conversion backend");
-requireValue(report.encoder_backend === "electron_webcodecs_h264", "unexpected encoder backend");
-requireValue(["electron_shared_texture", "electron_software_bgra"].includes(report.capture_backend), "unexpected capture backend");
+requireValue(report.conversion_backend === "mediabunny_native", "unexpected conversion backend");
+requireValue(report.encoder_backend === "electron_native_h264", "unexpected encoder backend");
+requireValue(report.cpu_readback_frames === 240, "native frame readbacks were not reported");
+requireValue(["electron_shared_texture", "electron_bitmap"].includes(report.capture_backend), "unexpected capture backend");
 if (args.get("--compare")) {
   const other = resolve(args.get("--compare"));
   const second = await runMediaOperation({ kind: "probe", path: other, frames: true });

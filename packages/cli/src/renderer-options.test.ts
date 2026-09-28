@@ -6,12 +6,16 @@ import {
   parseCliBitrate,
   parseCliConcurrency,
   parseCliCodec,
+  resolveRendererAudioCodec,
   resolveRendererAcceleration,
   resolveRendererAssemblyMode,
   resolveRendererBitrate,
   resolveRendererCodec,
+  resolveRendererContainer,
   resolveRendererConcurrency,
+  resolveRendererMediaBackend,
   resolveRendererPixelFormat,
+  resolveRendererVideoProfile,
 } from "./renderer-options.js";
 
 describe("parseCliConcurrency", () => {
@@ -177,6 +181,8 @@ describe("parseCliCodec", () => {
   it("trims CLI codec values", () => {
     expect(parseCliCodec(" hevc ")).toBe("hevc");
     expect(parseCliCodec(" av1 ")).toBe("av1");
+    expect(parseCliCodec(" H265 ")).toBe("hevc");
+    expect(parseCliCodec(" H264 ")).toBe("h264");
   });
 
   it("rejects blank CLI codec", () => {
@@ -224,15 +230,17 @@ describe("resolveRendererBitrate", () => {
 
 describe("resolveRendererCodec", () => {
   it("rejects blank renderer codecs", () => {
-    expect(() => resolveRendererCodec({ renderer: { codec: " " } })).toThrow(
-      "renderer.codec must be a non-empty string",
-    );
+    expect(() =>
+      resolveRendererCodec({ renderer: { codec: " " } } as unknown as Config),
+    ).toThrow("renderer.codec must be a non-empty string");
   });
 
   it("trims configured renderer codecs", () => {
-    expect(resolveRendererCodec({ renderer: { codec: " hevc " } })).toBe(
-      "hevc",
-    );
+    expect(
+      resolveRendererCodec({
+        renderer: { codec: " hevc " },
+      } as unknown as Config),
+    ).toBe("hevc");
   });
 
   it("uses config codec when CLI codec is absent", () => {
@@ -243,6 +251,68 @@ describe("resolveRendererCodec", () => {
     expect(resolveRendererCodec({ renderer: { codec: "hevc" } }, " av1 ")).toBe(
       "av1",
     );
+  });
+
+  it("accepts only the advertised logical video codecs", () => {
+    for (const codec of ["h264", "hevc", "av1", "vp8", "vp9", "prores"])
+      expect(parseCliCodec(codec)).toBe(codec);
+    expect(() => parseCliCodec("mjpeg")).toThrow(
+      "expected h264, hevc, av1, vp8, vp9, or prores",
+    );
+  });
+});
+
+describe("media format options", () => {
+  it("resolves format options with CLI-over-config precedence", () => {
+    const config: Config = {
+      renderer: {
+        container: "mov",
+        audioCodec: "aac",
+        mediaBackend: "webcodecs",
+        videoProfile: "prores_ks",
+      },
+    };
+    expect(resolveRendererContainer(config, "webm")).toBe("webm");
+    expect(resolveRendererAudioCodec(config, "flac")).toBe("flac");
+    expect(resolveRendererMediaBackend(config, "native")).toBe("native");
+    expect(resolveRendererVideoProfile(config, "prores_4444")).toBe(
+      "prores_4444",
+    );
+  });
+
+  it("uses configured values and leaves runtime-inferred defaults omitted", () => {
+    expect(resolveRendererContainer({ renderer: { container: "mkv" } })).toBe(
+      "mkv",
+    );
+    expect(
+      resolveRendererAudioCodec({ renderer: { audioCodec: "pcm-f32" } }),
+    ).toBe("pcm-f32");
+    expect(
+      resolveRendererMediaBackend({ renderer: { mediaBackend: "native" } }),
+    ).toBe("native");
+    expect(resolveRendererContainer({})).toBeUndefined();
+    expect(resolveRendererAudioCodec({})).toBeUndefined();
+    expect(resolveRendererMediaBackend({})).toBeUndefined();
+  });
+
+  it("rejects invalid enumerated options and blank video profiles", () => {
+    expect(() => resolveRendererContainer({}, "avi")).toThrow(
+      "--container must be",
+    );
+    expect(() => resolveRendererAudioCodec({}, "pcm-s8")).toThrow(
+      "--audio-codec must be",
+    );
+    expect(() => resolveRendererMediaBackend({}, "ffmpeg")).toThrow(
+      "--media-backend must be",
+    );
+    expect(() => resolveRendererVideoProfile({}, " ")).toThrow(
+      "--video-profile must be a non-empty string",
+    );
+    expect(() =>
+      resolveRendererContainer({
+        renderer: { container: "avi" },
+      } as unknown as Config),
+    ).toThrow("renderer.container must be");
   });
 });
 
@@ -301,9 +371,9 @@ describe("resolveRendererAcceleration", () => {
 });
 
 describe("resolveRendererPixelFormat", () => {
-  it("uses a GPU-compatible auto default while retaining explicit quality requests", () => {
-    expect(resolveRendererPixelFormat({}, undefined, "auto")).toBe("nv12");
-    expect(resolveRendererPixelFormat({}, undefined, "off")).toBe("yuv444p");
+  it("uses broad defaults while retaining explicit pixel format requests", () => {
+    expect(resolveRendererPixelFormat({}, undefined, "auto")).toBe("yuv420p");
+    expect(resolveRendererPixelFormat({}, undefined, "off")).toBe("yuv420p");
     expect(
       resolveRendererPixelFormat(
         { renderer: { pixelFormat: "yuv444p" } },
@@ -313,8 +383,16 @@ describe("resolveRendererPixelFormat", () => {
     ).toBe("yuv444p");
   });
 
-  it("defaults to nv12 for required acceleration", () => {
-    expect(resolveRendererPixelFormat({}, undefined, "required")).toBe("nv12");
+  it("defaults to yuv420p for required acceleration", () => {
+    expect(resolveRendererPixelFormat({}, undefined, "required")).toBe(
+      "yuv420p",
+    );
+  });
+
+  it("uses a 10-bit 4:2:2 default for ProRes", () => {
+    expect(resolveRendererPixelFormat({}, undefined, "off", "prores")).toBe(
+      "yuv422p10le",
+    );
   });
 
   it("accepts yuv420p for required acceleration", () => {
@@ -398,8 +476,8 @@ it.each(["h264_vaapi", "hevc_vaapi", "av1_vaapi"])(
   "rejects retired codec %s in CLI and config before launch",
   (codec) => {
     expect(() => parseCliCodec(codec)).toThrow("encoder.codec_unavailable");
-    expect(() => resolveRendererCodec({ renderer: { codec } })).toThrow(
-      "encoder.codec_unavailable",
-    );
+    expect(() =>
+      resolveRendererCodec({ renderer: { codec } } as unknown as Config),
+    ).toThrow("encoder.codec_unavailable");
   },
 );

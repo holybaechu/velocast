@@ -224,7 +224,7 @@ await cp(join(root, "packages/core/dist"), join(source, "core"), {
 });
 await writeFile(
   config,
-  `export default ${JSON.stringify({ entry: "source/index.html", renderer: { binary: renderer, snapshotRoot: "source", acceleration: "auto", concurrency: 1, assembly: "reference", codec: "h264", pixelFormat: "yuv420p", bitrate: "8M" } })};\n`,
+  `export default ${JSON.stringify({ entry: "source/index.html", renderer: { binary: renderer, snapshotRoot: "source", mediaBackend: "webcodecs", acceleration: "auto", concurrency: 1, assembly: "reference", codec: "h264", pixelFormat: "yuv420p", bitrate: "8M" } })};\n`,
 );
 await writeFile(
   join(source, "index.html"),
@@ -367,6 +367,7 @@ await gate("failure-preserves-output", async () => {
           serve_url: pathToFileURL(join(source, "index.html")).href,
           output: video,
           codec: "h264",
+          media_backend: "webcodecs",
           acceleration: "auto",
           pixel_format: "yuv420p",
           event_log_path: events,
@@ -375,13 +376,10 @@ await gate("failure-preserves-output", async () => {
       {
         env: {
           ...env,
-          VELOCAST_ELECTRON_BINARY: require(
+          VELOCAST_ELECTRON_BINARY: mediaOptions.electronBinary ?? require(
             join(root, "packages/electron-host/node_modules/electron"),
           ),
-          VELOCAST_ELECTRON_HOST_SCRIPT: join(
-            root,
-            "packages/electron-host/main.cjs",
-          ),
+          VELOCAST_ELECTRON_HOST_SCRIPT: join(runtimeHost, "main.cjs"),
         },
         windowsHide: true,
         stdio: ["ignore", "ignore", "pipe"],
@@ -472,7 +470,7 @@ if(process.env.VELOCAST_ELECTRON_SURFACE_MODE==="bitmap"){
   fs.writeFileSync(${JSON.stringify(marker)},crypto.createHash("sha256").update(fs.readFileSync(${JSON.stringify(video)})).digest("hex"));
   require(${JSON.stringify(realHost)});
 }else if(process.env.VELOCAST_ELECTRON_SURFACE_MODE==="webcodecs"){
-  process.stdout.write(JSON.stringify({event:"ready",version:2,pid:process.pid})+"\\n");
+  process.stdout.write(JSON.stringify({event:"ready",version:3,pid:process.pid})+"\\n");
   const input=fs.createReadStream(null,{fd:0,autoClose:true});let pending="";
   input.on("data",data=>{pending+=data.toString();const end=pending.indexOf("\\n");if(end<0)return;
     const request=JSON.parse(pending.slice(0,end));process.stdout.write(JSON.stringify({id:request.id,ok:false,error:"capture.shared_texture_unavailable: acceptance fixture"})+"\\n");input.pause();});
@@ -483,7 +481,7 @@ if(process.env.VELOCAST_ELECTRON_SURFACE_MODE==="bitmap"){
   await command(renderer, ["--job-json", JSON.stringify({
     mode: "composition", composition_id: "static",
     serve_url: pathToFileURL(join(source, "index.html")).href,
-    output: video, report_path: telemetry, codec: "h264",
+    output: video, report_path: telemetry, codec: "h264", media_backend: "webcodecs",
     acceleration: "auto", pixel_format: "yuv420p", assembly: "reference", concurrency: 1,
   })], { environment: { ...env, VELOCAST_ELECTRON_BINARY: electronBinary,
     VELOCAST_ELECTRON_HOST_SCRIPT: wrapper } });
