@@ -30,6 +30,11 @@ const software = surfaceMode === "software";
 const bitmap = surfaceMode === "bitmap";
 const cpuBitmap = bitmap && process.env.VELOCAST_ELECTRON_CPU_BITMAP === "1";
 const webcodecs = surfaceMode === "webcodecs" || bitmap;
+// Electron's capability status is usable only after its first GPU info update.
+let gpuInfoAvailable = false;
+app.on("gpu-info-update", () => {
+  gpuInfoAvailable = true;
+});
 let webcodecsEncoder = null;
 // Older protocol-1 controllers do not provide an owned profile directory.
 // Keep their existing startup behavior; updated controllers always isolate it.
@@ -251,7 +256,7 @@ function needsAsyncBitmapPaint() {
 }
 
 function gpuCompositorFailure() {
-  if (!bitmap || cpuBitmap) return null;
+  if (!bitmap || cpuBitmap || !gpuInfoAvailable) return null;
   const status = app.getGPUFeatureStatus().gpu_compositing;
   return status === "disabled_software" || status === "unavailable_software"
     ? new Error(`capture.gpu_compositor_unavailable: ${status}`)

@@ -49,6 +49,304 @@ jobs:
           sudo chown root:root "$sandbox"
           sudo chmod 4755 "$sandbox"
       - run: pnpm build
+      - name: Diagnose native 4K codec initialization (Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          export VELOCAST_WEBCODECS_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
+          export VELOCAST_CODEC_PROBE_ROOT="$GITHUB_WORKSPACE"
+          cat > "$RUNNER_TEMP/probe-native-codec-context.cjs" <<'NODE'
+          "use strict";
+
+          // Temporary diagnostic: isolate native codec initialization from capture/Rust.
+          const fs = require("node:fs");
+          const os = require("node:os");
+          const path = require("node:path");
+          const { spawn } = require("node:child_process");
+          const { createRequire } = require("node:module");
+          const root = process.env.VELOCAST_CODEC_PROBE_ROOT
+            ? path.resolve(process.env.VELOCAST_CODEC_PROBE_ROOT)
+            : path.resolve(__dirname, "..");
+          const hostRequire = createRequire(
+            path.join(root, "packages/electron-host/package.json"),
+          );
+          const cases = ["main-auto", "renderer-auto", "renderer-thread1"];
+
+          function mark(stage, extra = {}) {
+            fs.appendFileSync(
+              process.env.VELOCAST_MEDIA_TRACE,
+              JSON.stringify({
+                stage,
+                pid: process.pid,
+                context: process.type ?? "node",
+                ...extra,
+              }) + "\n",
+            );
+          }
+
+          async function runNative(settings) {
+            mark("probe-start", { case: settings.name });
+            if (settings.name === "renderer-thread1") {
+              const native = createRequire(hostRequire.resolve("@mediabunny/server"))(
+                "node-av",
+              );
+              const original = native.CodecContext.prototype.open2;
+              native.CodecContext.prototype.open2 = function (...args) {
+                this.threadCount = 1;
+                mark("probe-thread-override", {
+                  threadCount: this.threadCount,
+                  width: this.width,
+                  height: this.height,
+                });
+                return Reflect.apply(original, this, args);
+              };
+            }
+            const { NativeMediaSession } = hostRequire("./media-session.cjs");
+            const session = new NativeMediaSession();
+            try {
+              mark("probe-open-before");
+              const config = await session.open({
+                width: 3840,
+                height: 2160,
+                fps: 60,
+                bitrate: 16000000,
+                codec: "h264",
+                container: "mp4",
+                mediaBackend: "native",
+                pixelFormat: "yuv420p",
+                outputPath: settings.outputPath,
+              });
+              mark("probe-open-after", { backend: config.backend });
+              const pixels = Buffer.alloc(3840 * 2160 * 4, 64);
+              for (let i = 3; i < pixels.length; i += 4) pixels[i] = 255;
+              mark("probe-encode-before", { bytes: pixels.length });
+              const encoded = await session.encodeBitmap(pixels, 0);
+              mark("probe-encode-after", { frames: encoded.frames });
+              const finished = await session.finish();
+              mark("probe-finish", { frames: finished.frames });
+              return {
+                frames: finished.frames,
+                width: finished.video?.width,
+                height: finished.video?.height,
+              };
+            } catch (error) {
+              mark("probe-error", { error: String(error?.stack ?? error) });
+              await session.cancel().catch(() => {});
+              throw error;
+            }
+          }
+
+          async function electronWorker() {
+            const { app, BrowserWindow, ipcMain } = require("electron/main");
+            const settings = JSON.parse(process.env.VELOCAST_CODEC_PROBE_SETTINGS);
+            const profile = path.join(settings.scratch, "profile");
+            fs.mkdirSync(profile);
+            hostRequire("./profile-directory.cjs").configureProfileDirectory(
+              app,
+              profile,
+            );
+            await app.whenReady();
+            const finish = (result, exitCode) => {
+              fs.writeFileSync(settings.resultPath, JSON.stringify(result));
+              app.exit(exitCode);
+            };
+            if (settings.name === "main-auto") {
+              try {
+                finish({ status: "passed", result: await runNative(settings) }, 0);
+              } catch (error) {
+                finish({ status: "failed", error: String(error?.stack ?? error) }, 1);
+              }
+              return;
+            }
+            const preload = path.join(settings.scratch, "preload.cjs");
+            fs.writeFileSync(
+              preload,
+              `"use strict";
+          const {ipcRenderer}=require("electron/renderer");
+          require(${JSON.stringify(__filename)}).runNative(JSON.parse(process.env.VELOCAST_CODEC_PROBE_SETTINGS))
+           .then(result=>ipcRenderer.send("codec-probe-result",{status:"passed",result}),
+           error=>ipcRenderer.send("codec-probe-result",{status:"failed",error:String(error?.stack??error)}));
+          `,
+            );
+            const html = path.join(settings.scratch, "empty.html");
+            fs.writeFileSync(
+              html,
+              "<!doctype html><title>Native codec diagnostic</title>",
+            );
+            const window = new BrowserWindow({
+              show: false,
+              webPreferences: {
+                preload,
+                sandbox: false,
+                nodeIntegration: false,
+                contextIsolation: true,
+                backgroundThrottling: false,
+              },
+            });
+            ipcMain.on("codec-probe-result", (event, result) => {
+              if (event.sender !== window.webContents) return;
+              finish(result, result.status === "passed" ? 0 : 1);
+            });
+            window.webContents.on("render-process-gone", (_event, details) => {
+              mark("probe-renderer-gone", details);
+              finish({ status: "crashed", details }, 1);
+            });
+            window.webContents.on("preload-error", (_event, _file, error) => {
+              finish({ status: "failed", error: String(error?.stack ?? error) }, 1);
+            });
+            await window.loadFile(html);
+          }
+
+          function inside(parent, child) {
+            const relative = path.relative(parent, child);
+            return (
+              relative !== "" &&
+              relative !== ".." &&
+              !relative.startsWith(`..${path.sep}`) &&
+              !path.isAbsolute(relative)
+            );
+          }
+
+          async function coordinator() {
+            if (process.argv.length !== 4 || process.argv[2] !== "--output")
+              throw new Error(
+                "Usage: node scripts/probe-native-codec-context.cjs --output NEW-TEMP-DIRECTORY",
+              );
+            const output = path.resolve(process.argv[3]);
+            const temporaryRoots = [os.tmpdir(), process.env.RUNNER_TEMP]
+              .filter(Boolean)
+              .map((directory) => fs.realpathSync(directory));
+            if (
+              !temporaryRoots.some((directory) => inside(directory, output)) ||
+              inside(root, output)
+            )
+              throw new Error(
+                "Diagnostic output must be a new directory inside the OS temporary directory and outside the repository",
+              );
+            fs.mkdirSync(output, { recursive: false });
+            const scratch = fs.mkdtempSync(
+              path.join(os.tmpdir(), "velocast-codec-context-"),
+            );
+            const electron =
+              process.env.VELOCAST_WEBCODECS_TEST_BINARY || hostRequire("electron");
+            const report = { platform: process.platform, electron, cases: [] };
+            const reportPath = path.join(output, "results.json");
+            const persist = () =>
+              fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
+            persist();
+            try {
+              for (const name of cases) {
+                const directory = path.join(scratch, name);
+                fs.mkdirSync(directory);
+                const settings = {
+                  name,
+                  scratch: directory,
+                  resultPath: path.join(directory, "result.json"),
+                  outputPath: path.join(directory, "frame.mp4"),
+                };
+                const trace = path.join(output, `${name}.jsonl`);
+                const stdoutPath = path.join(output, `${name}.stdout.log`);
+                const stderrPath = path.join(output, `${name}.stderr.log`);
+                fs.writeFileSync(trace, "");
+                fs.writeFileSync(stdoutPath, "");
+                fs.writeFileSync(stderrPath, "");
+                const env = {
+                  ...process.env,
+                  VELOCAST_CODEC_PROBE_SETTINGS: JSON.stringify(settings),
+                  VELOCAST_MEDIA_TRACE: trace,
+                };
+                delete env.ELECTRON_RUN_AS_NODE;
+                const child = spawn(electron, [__filename], {
+                  env,
+                  windowsHide: true,
+                  detached: process.platform !== "win32",
+                  stdio: ["ignore", "pipe", "pipe"],
+                });
+                child.stdout.on("data", (data) => fs.appendFileSync(stdoutPath, data));
+                child.stderr.on("data", (data) => fs.appendFileSync(stderrPath, data));
+                let timedOut = false;
+                const terminate = () => {
+                  if (!child.pid) return;
+                  if (process.platform === "win32")
+                    return spawn(
+                      "taskkill.exe",
+                      ["/PID", String(child.pid), "/T", "/F"],
+                      { windowsHide: true, stdio: "ignore" },
+                    );
+                  try {
+                    process.kill(-child.pid, "SIGKILL");
+                  } catch (error) {
+                    if (error.code !== "ESRCH") throw error;
+                  }
+                };
+                const timer = setTimeout(() => {
+                  timedOut = true;
+                  terminate();
+                }, 60000);
+                const result = await new Promise((resolve) => {
+                  child.once("error", (error) => resolve({ error: String(error) }));
+                  child.once("close", (exitCode, signal) =>
+                    resolve({ exitCode, signal }),
+                  );
+                });
+                clearTimeout(timer);
+                if (process.platform !== "win32") terminate();
+                let details;
+                if (fs.existsSync(settings.resultPath))
+                  details = JSON.parse(fs.readFileSync(settings.resultPath, "utf8"));
+                const entry = {
+                  name,
+                  ...result,
+                  timedOut,
+                  details,
+                  trace,
+                  stdoutPath,
+                  stderrPath,
+                };
+                report.cases.push(entry);
+                persist();
+                console.log(JSON.stringify(entry));
+              }
+            } finally {
+              const resolved = fs.realpathSync(scratch);
+              if (
+                !inside(fs.realpathSync(os.tmpdir()), resolved) ||
+                inside(root, resolved) ||
+                !path.basename(resolved).startsWith("velocast-codec-context-")
+              )
+                throw new Error(
+                  "Refusing diagnostic scratch cleanup outside its owned temporary path",
+                );
+              fs.rmSync(resolved, {
+                recursive: true,
+                force: true,
+                maxRetries: 10,
+                retryDelay: 100,
+              });
+            }
+            process.exitCode = report.cases.every(
+              (entry) => entry.exitCode === 0 && entry.details?.status === "passed",
+            )
+              ? 0
+              : 1;
+          }
+
+          module.exports = { runNative };
+          if (
+            (process.versions.electron &&
+              process.type === "browser" &&
+              process.env.VELOCAST_CODEC_PROBE_SETTINGS) ||
+            (!process.versions.electron && require.main === module)
+          ) {
+            const run = process.versions.electron ? electronWorker : coordinator;
+            run().catch((error) => {
+              console.error(error);
+              process.exitCode = 1;
+              if (process.versions.electron) require("electron/main").app.exit(1);
+            });
+          }
+          NODE
+          xvfb-run -a node "$RUNNER_TEMP/probe-native-codec-context.cjs" --output "$RUNNER_TEMP/native-codec-context"
       - name: Probe AAC impulse timing (macOS)
         id: aac_timing
         if: runner.os == 'macOS'
@@ -158,5 +456,6 @@ jobs:
             ${{ runner.temp }}/native-capture-stderr.log
             ${{ runner.temp }}/native-capture-stdout.log
             ${{ runner.temp }}/native-capture-input.jsonl
+            ${{ runner.temp }}/native-codec-context
             ${{ runner.temp }}/aac-timing.log
             ${{ runner.temp }}/aac-timing.json

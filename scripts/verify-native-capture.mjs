@@ -169,11 +169,16 @@ const requireHost = createRequire(
 const { createMediaSession } = requireHost("./media-client.cjs");
 const electronBinary =
   process.env.VELOCAST_ELECTRON_BINARY ?? requireHost("electron");
+const hostScript =
+  process.env.VELOCAST_ELECTRON_HOST_SCRIPT ??
+  join(root, "packages/electron-host/main.cjs");
+if (!isAbsolute(hostScript))
+  throw new Error("VELOCAST_ELECTRON_HOST_SCRIPT must be an absolute path");
 const env = {
   ...process.env,
   VELOCAST_RENDERER_BINARY: renderer,
   VELOCAST_ELECTRON_BINARY: electronBinary,
-  VELOCAST_ELECTRON_HOST_SCRIPT: join(root, "packages/electron-host/main.cjs"),
+  VELOCAST_ELECTRON_HOST_SCRIPT: hostScript,
 };
 delete env.ELECTRON_RUN_AS_NODE;
 const run = promisify(execFile);
