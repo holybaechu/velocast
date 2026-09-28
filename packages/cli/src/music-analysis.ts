@@ -1,4 +1,7 @@
-import { spawn } from "node:child_process";
+import { runMediaOperation, type MediaProbe } from "./media-runtime.js";
+import { mediaWorkspace } from "./media-workspace.js";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { writeJsonOutput } from "./atomic-json-output.js";
@@ -26,96 +29,10 @@ export interface MusicAnalysis {
   };
 }
 
-interface ProcessResult {
-  stdout: Buffer;
-  stderr: string;
-}
-
-async function runBounded(
-  command: string,
-  args: string[],
-  maxBytes: number,
-  options: { timeoutMs: number; signal?: AbortSignal },
-): Promise<ProcessResult> {
-  return new Promise((resolveResult, reject) => {
-    const child = spawn(command, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    const chunks: Buffer[] = [];
-    const errors: Buffer[] = [];
-    let size = 0;
-    let errorSize = 0;
-    let forcedError: Error | undefined;
-    let closed = false;
-    const stop = (error: Error) => {
-      if (!forcedError) forcedError = error;
-      child.kill();
-    };
-    const timeout = setTimeout(
-      () =>
-        stop(
-          new Error(
-            `audio.analysis_timeout: ${command} exceeded ${options.timeoutMs}ms`,
-          ),
-        ),
-      options.timeoutMs,
-    );
-    const abort = () =>
-      stop(
-        new Error("audio.analysis_cancelled", {
-          cause: options.signal?.reason,
-        }),
-      );
-    options.signal?.addEventListener("abort", abort, { once: true });
-    if (options.signal?.aborted) abort();
-    child.once("error", (error) =>
-      stop(
-        new Error(`audio.tool_failed: ${command}: ${error.message}`, {
-          cause: error,
-        }),
-      ),
-    );
-    child.stdout.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > maxBytes) {
-        stop(
-          new Error(`audio.analysis_limit: decoder exceeded ${maxBytes} bytes`),
-        );
-        return;
-      }
-      chunks.push(chunk);
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      const remaining = 64 * 1024 - errorSize;
-      if (remaining > 0) {
-        const bounded = chunk.subarray(0, remaining);
-        errors.push(bounded);
-        errorSize += bounded.length;
-      }
-    });
-    child.once("close", (code, signal) => {
-      if (closed) return;
-      closed = true;
-      clearTimeout(timeout);
-      options.signal?.removeEventListener("abort", abort);
-      const stderr = Buffer.concat(errors).toString("utf8").trim();
-      if (forcedError) reject(forcedError);
-      else if (code !== 0)
-        reject(
-          new Error(
-            `audio.tool_failed: ${command} exited ${code ?? signal}: ${stderr}`,
-          ),
-        );
-      else resolveResult({ stdout: Buffer.concat(chunks), stderr });
-    });
-  });
-}
-
 function samplesFromBuffer(buffer: Buffer): Float32Array {
   if (buffer.length % 4)
     throw new Error(
-      "audio.invalid_decode: FFmpeg returned partial float samples",
+      "audio.invalid_decode: WebCodecs returned partial float samples",
     );
   const samples = new Float32Array(buffer.length / 4);
   for (let index = 0; index < samples.length; index++) {
@@ -151,8 +68,6 @@ function round(value: number, digits = 6): number {
 export async function analyzeMusic(
   input: string,
   options: {
-    ffmpeg?: string;
-    ffprobe?: string;
     maxDurationSeconds?: number;
     sampleRate?: number;
     signal?: AbortSignal;
@@ -187,66 +102,38 @@ export async function analyzeMusic(
     throw new Error(
       "audio.invalid_timeout: timeout must be 1000..600000 milliseconds",
     );
-  let sourceDurationSeconds: number | null = null;
-  try {
-    const probe = await runBounded(
-      options.ffprobe ?? "ffprobe",
-      [
-        "-v",
-        "error",
-        "-protocol_whitelist",
-        "file,pipe",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=nw=1:nk=1",
-        source,
-      ],
-      4096,
-      {
-        timeoutMs: Math.min(options.timeoutMs ?? 30_000, 30_000),
-        signal: options.signal,
-      },
-    );
-    const parsed = Number(probe.stdout.toString("utf8").trim());
-    if (Number.isFinite(parsed) && parsed >= 0) sourceDurationSeconds = parsed;
-  } catch (error) {
-    if (
-      options.signal?.aborted ||
-      (error instanceof Error &&
-        (error.message.startsWith("audio.analysis_timeout") ||
-          error.message.startsWith("audio.analysis_cancelled")))
-    )
-      throw error;
-    // Duration is advisory; the bounded decoder remains authoritative.
-  }
-  const maxBytes = Math.ceil(sampleRate * maxDurationSeconds * 4) + 4096;
-  const decoded = await runBounded(
-    options.ffmpeg ?? "ffmpeg",
-    [
-      "-v",
-      "error",
-      "-protocol_whitelist",
-      "file,pipe",
-      "-t",
-      String(maxDurationSeconds),
-      "-i",
-      source,
-      "-map",
-      "0:a:0",
-      "-vn",
-      "-ac",
-      "1",
-      "-ar",
-      String(sampleRate),
-      "-f",
-      "f32le",
-      "pipe:1",
-    ],
-    maxBytes,
-    { timeoutMs: options.timeoutMs ?? 120_000, signal: options.signal },
+  const runtimeOptions = {
+    signal: options.signal,
+    timeoutMs: options.timeoutMs ?? 120_000,
+  };
+  const probe = await runMediaOperation<MediaProbe>(
+    { kind: "probe", path: source },
+    runtimeOptions,
   );
-  const samples = samplesFromBuffer(decoded.stdout);
+  const sourceDurationSeconds = probe.audio?.duration ?? probe.duration;
+  const workspace = await mediaWorkspace();
+  let samples: Float32Array;
+  try {
+    const outputPath = join(workspace.path, "audio.f32");
+    await runMediaOperation(
+      {
+        kind: "decode-audio",
+        path: source,
+        outputPath,
+        sampleRate,
+        channels: 1,
+        duration: maxDurationSeconds,
+        format: "f32",
+      },
+      runtimeOptions,
+    );
+    const bytes = await readFile(outputPath);
+    if (bytes.length > Math.ceil(sampleRate * maxDurationSeconds) * 4)
+      throw new Error("audio.analysis_limit: decoder exceeded sample budget");
+    samples = samplesFromBuffer(bytes);
+  } finally {
+    await workspace.close();
+  }
   if (!samples.length)
     throw new Error("audio.no_samples: source decoded to no audio samples");
   const hop = 512;
@@ -322,8 +209,6 @@ export async function analyzeMusic(
 
 export interface AnalyzeMusicCommandOptions {
   output: string;
-  ffmpeg?: string;
-  ffprobe?: string;
   maxDuration?: string | number;
   json?: boolean;
   overwrite?: boolean;
@@ -335,8 +220,6 @@ export async function analyzeMusicCommand(
   options: AnalyzeMusicCommandOptions,
 ): Promise<MusicAnalysis> {
   const report = await analyzeMusic(input, {
-    ffmpeg: options.ffmpeg,
-    ffprobe: options.ffprobe,
     maxDurationSeconds:
       options.maxDuration === undefined
         ? undefined

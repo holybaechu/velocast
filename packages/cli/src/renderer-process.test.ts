@@ -86,7 +86,10 @@ describe("runRenderer", () => {
               outputApiVersion: 1,
               browserHosts: ["electron"],
               defaultBrowserHost: "electron",
-              electronHostProtocolVersion: 1,
+              electronHostProtocolVersion: 2,
+              videoEncoderBackend: "webcodecs",
+              mediaRuntime: "mediabunny",
+              hardwareAccelerationGuarantee: false,
             }),
             stderr: "",
           }),
@@ -723,11 +726,11 @@ describe("runRenderer", () => {
           "hardware encoder unavailable: accelerated rendering is required, but no compatible GPU backend is available on this platform.",
         backend_diagnostics: [
           {
-            backend: "windows_d3d11_mf",
+            backend: "webcodecs",
             available: false,
             unavailable_code: "platform.device_unavailable",
             unavailable_reason:
-              "platform.device_unavailable: Windows D3D11 device unavailable",
+              "platform.device_unavailable: WebCodecs codec unavailable",
           },
         ],
       }),
@@ -755,7 +758,7 @@ describe("runRenderer", () => {
     expect(warnings).toEqual([
       [
         "Renderer warning: renderer completed using fallback path: hardware encoder unavailable: accelerated rendering is required, but no compatible GPU backend is available on this platform.",
-        "Backend diagnostics: windows_d3d11_mf unavailable: platform.device_unavailable: Windows D3D11 device unavailable\n",
+        "Backend diagnostics: webcodecs unavailable: platform.device_unavailable: WebCodecs codec unavailable\n",
       ].join("\n"),
     ]);
   });

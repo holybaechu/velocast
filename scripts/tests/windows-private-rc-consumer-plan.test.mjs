@@ -19,13 +19,10 @@ test("private RC plan isolates runtime resolution and cannot publish", () => {
     "VELOCAST_ARTIFACT_DIR",
     "CARGO_TARGET_DIR",
     "CEF_PATH",
-    "FFMPEG_PATH",
-    "VCPKG_ROOT",
-    "LIBCLANG_PATH",
   ])
     assert.ok(plan.minimalEnvironment.mustBeAbsent.includes(name), name);
   assert.match(plan.minimalEnvironment.set.PATH, /NODE_EXE/);
-  assert.doesNotMatch(plan.minimalEnvironment.set.PATH, /vcpkg|cargo|ffmpeg/i);
+  assert.doesNotMatch(plan.minimalEnvironment.set.PATH, /vcpkg|cargo/i);
 });
 
 test("private RC plan covers release and preview acceptance boundaries", () => {
@@ -38,7 +35,7 @@ test("private RC plan covers release and preview acceptance boundaries", () => {
     "frame-output",
     "full-240-frame-output",
     "deterministic-repeat",
-    "software-fallback",
+    "software-preference",
     "preview-session",
   ])
     assert.ok(commands.has(id), id);

@@ -13,6 +13,8 @@ export default defineConfig({
     ],
   },
   test: {
+    // Each media integration worker can own an Electron/Chrome process tree.
+    maxWorkers: 4,
     exclude: [...configDefaults.exclude, ".tmp-*/**"],
   },
 });

@@ -63,8 +63,6 @@ export interface InitCommandOptions {
   template?: ProjectTemplate;
   audio?: string;
   lyrics?: string;
-  ffmpeg?: string;
-  ffprobe?: string;
 }
 export interface InitCommandDependencies {
   pathOptions?: InvocationPathOptions;
@@ -75,8 +73,6 @@ export interface CreateProjectOptions extends InvocationPathOptions {
   template?: ProjectTemplate;
   audio?: string;
   lyrics?: string;
-  ffmpeg?: string;
-  ffprobe?: string;
 }
 
 interface PreparedLyricsTemplate {
@@ -109,13 +105,11 @@ async function prepareLyricsTemplate(
       "init.audio_too_large: supplied audio exceeds the 256 MiB snapshot limit",
     );
   const analysis = await analyzeMusic(audioSource, {
-    ffmpeg: options.ffmpeg,
-    ffprobe: options.ffprobe,
   });
   const durationSeconds = analysis.decoded.sourceDurationSeconds;
   if (durationSeconds === null || analysis.decoded.truncated)
     throw new Error(
-      "init.audio_duration_unverified: FFprobe must report a source duration within the 900-second analysis bound",
+      "init.audio_duration_unverified: The media runtime must report a source duration within the 900-second analysis bound",
     );
   const durationFrames = Math.max(1, Math.ceil(durationSeconds * 60));
   let timedText = importTimedText("[]", "json");
@@ -341,8 +335,6 @@ export async function initCommand(
     template: options.template,
     audio: options.audio,
     lyrics: options.lyrics,
-    ffmpeg: options.ffmpeg,
-    ffprobe: options.ffprobe,
   });
   const write =
     dependencies.write ?? ((text: string) => process.stdout.write(text));

@@ -16,10 +16,13 @@ rounded absolute frame boundaries.
 
 Native rendering resolves media against the frozen input snapshot. It fetches
 bounded immutable source bytes, selects the first audio stream, resamples and
-mixes to exact-duration stereo PCM, then encodes AAC into the MP4 while copying
-the existing video packets. Source errors, mux failures, and cancellation before
-publication preserve the previous completed output. Native output currently
-targets stereo AAC in MP4.
+mixes to exact-duration stereo PCM, then encodes native AAC when available or
+native Opus in MP4 at 48 kHz when AAC is unavailable, while copying the existing
+video packets. The render CLI selects the available audio codec automatically;
+if neither is available, it reports `media.audio_encoder_unavailable`. Source errors, mux
+failures, and cancellation before publication preserve the previous completed
+output. Native output targets stereo audio in MP4, with the actual codec
+recorded in output metadata.
 
 Preview uses the same plan through the [Web Audio clock](preview-audio-clock.md).
 The TypeScript PCM mixer is a reference oracle for tests; it is not the native

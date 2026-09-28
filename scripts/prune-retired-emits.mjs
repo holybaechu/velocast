@@ -7,7 +7,7 @@ import console from "node:console";
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const retired = Object.freeze({
   core: ["registry", "dom-discovery", "composition-definitions"],
-  cli: ["job", "remotion-command", "linux-cef-runtime"],
+  cli: ["job", "remotion-command", "linux-cef-runtime", "audio-plan-ffmpeg"],
   "remotion-compat": ["upstream-browser"],
 });
 const emitSuffixes = [".js", ".js.map", ".d.ts", ".d.ts.map"];

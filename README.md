@@ -5,24 +5,26 @@ Edit a web composition, inspect an exact frame or short range, preview the motio
 then render a video. The common engine is framework-independent; **React is the
 first official authoring helper**. You do not select an internal adapter to use it.
 
-Electron is the browser host on every platform. Windows retains native D3D11
-capture and GPU encoding; Linux and macOS use software capture and FFmpeg.
+Electron is the browser host on every platform. Chromium WebCodecs encodes video,
+and Mediabunny handles media containers and local audio/video I/O.
 Windows is the first product target. The checked-in
 [release manifest](release/velocast-release.json) has no published native
 artifact. Native rendering currently requires a local source build or a
 separately prepared runtime. See the [Electron renderer guide](docs/electron-renderer.md)
 for platform limits and [Windows runtime preparation](docs/windows-runtime-candidate-prep.md).
 
-An opt-in [Electron sharedTexture + WebCodecs experiment](docs/experimental-webcodecs.md)
-adds serial H.264 encoding inside Chromium. It currently has Windows validation;
-macOS/Linux GPU execution and actual hardware selection remain unverified.
+The [WebCodecs rendering guide](docs/webcodecs.md) explains the default path.
+Chromium may use hardware encoding, but actual hardware selection is not guaranteed.
 
 See [PRODUCT.md](PRODUCT.md) for product goals and scope, the
 [documentation index](docs/README.md) for technical guides, and
 [architecture](docs/architecture.md) for implementation boundaries.
 
 Current authoring packages require **browser protocol 4** and a matching rebuilt
-native renderer.
+native renderer. Prepared runtimes require **Electron host protocol 2**. Existing
+native runtime bundles must be rebuilt for the WebCodecs and Mediabunny host.
+The former experimental encoder environment variable is no longer needed;
+`--acceleration required` now fails because WebCodecs cannot prove hardware use.
 
 ## Author → inspect → preview → render
 
@@ -59,7 +61,7 @@ velocast init my-lyrics-video --template lyrics --audio song.wav --lyrics captio
 
 The initializer copies the audio into the project, validates and preserves the
 supplied cue text, measures bounded PCM energy/onset candidates, derives the
-60 fps composition duration from FFprobe, and declares audio with
+60 fps composition duration from decoded media metadata, and declares audio with
 `createMediaTimeline`. It rejects cues beyond the measured audio duration.
 
 `init` creates the official static React starter in a missing or empty directory.
@@ -185,7 +187,7 @@ output currently requires one reference worker. Complete video output has separa
 multi-worker routes.
 
 `frame` intentionally creates one PNG using software capture. It does not insert
-PNG intermediates into the ordinary GPU video pipeline. `--json` reports request,
+PNG intermediates into the ordinary video pipeline. `--json` reports request,
 session/source identity, output metadata, and structured errors. A previous
 completed output is preserved on failure before publication. See the
 [public output contract](docs/public-output-api.md).
@@ -225,17 +227,16 @@ Useful public options, also available as corresponding `renderer` config fields:
 | ------------------------------- | ------------------------------------------------------------------------- |
 | `--codec h264`                  | Logical codec; HEVC and AV1 also have backend-specific availability       |
 | `--bitrate 64M`                 | Requested video bitrate, not a guarantee of achieved bitrate              |
-| `--acceleration required`       | Fail rather than silently switch to CPU video capture                     |
-| `--acceleration auto`           | Default: try the eligible GPU route; report any software fallback         |
-| `--acceleration off`            | Explicit software BGRA video route                                        |
-| `--pixel-format nv12`           | GPU-compatible format; default for `auto`/`required`                      |
+| `--acceleration required`       | Unsupported: WebCodecs cannot guarantee hardware acceleration            |
+| `--acceleration auto`           | Default: prefer hardware when Chromium can use it                         |
+| `--acceleration off`            | Prefer software encoding; Chromium makes the final choice                 |
+| `--pixel-format yuv420p`        | Opaque SDR 8-bit video output                                              |
 | `--concurrency 8`               | Explicit complete-render worker count; `auto` is also accepted            |
 | `--assembly segments`           | Complete-render segment assembly; `reference` selects the reference route |
 | `--report renders/report.json`  | Renderer telemetry, including actual backends and fallback facts          |
 | `--events renders/events.jsonl` | Structured renderer event log                                             |
 
-Options override configuration. The software default pixel format is `yuv444p`;
-explicit format requests remain binding. Not every codec/format/backend combination
+Options override configuration. Explicit format requests remain binding. Not every codec/format/backend combination
 is supported. For a live page there is also `render-url <url> --selector <selector>`;
 a live URL is not the same immutable-input guarantee as the static snapshot path.
 
@@ -292,7 +293,7 @@ The normalized schema is `{schemaVersion: 1, sourceFormat, cues}`; each cue has 
 string `id`, finite `startSeconds`, `endSeconds`, and `text`. Cue starts are
 ordered and every interval satisfies `0 <= startSeconds < endSeconds`.
 
-Analyze real local audio with bounded FFmpeg decoding:
+Analyze real local audio with bounded media decoding:
 
 ```sh
 velocast analyze-audio song.wav --output src/music-analysis.json --max-duration 900 --overwrite
@@ -303,20 +304,11 @@ candidates measured from PCM. These candidates are not claims about tempo,
 meter, downbeats, transcription, or lyric timing; verify them while listening.
 Neither command downloads media or packages a personal source asset.
 
-## Windows GPU path
-
-The Windows H.264 route is Electron shared texture → owned GPU copies →
-rounded full-range BT.601/centered-chroma shader → NV12 hardware encoder input.
-Compressed H.264 metadata filtering and muxing are normal CPU work; the video
-conversion does not read uncompressed GPU frames back to the CPU. HEVC/AV1 retain
-the legacy VideoProcessor default. See [GPU color path and limits](docs/windows-gpu-color-path.md).
-
 ## Develop from this repository
 
 Prerequisites: a supported Node.js version from [package.json](package.json),
 the package's pnpm version, Rust stable, and Git. Native Windows builds
-additionally need the MSVC C++ toolchain, CMake, Ninja, the pinned FFmpeg
-development dependencies, and libclang for bindgen.
+additionally need the MSVC C++ toolchain.
 
 ```sh
 pnpm install
@@ -325,27 +317,25 @@ pnpm build
 node packages/cli/dist/bin.js init ../my-video
 ```
 
-The direct built CLI can scaffold without a native runtime. Prepare the Windows
-FFmpeg and D3D11 dependencies, then build the renderer:
+The direct built CLI can scaffold without a native runtime. Build the renderer:
 
 ```powershell
-.\scripts\setup-accelerated-rendering.ps1
-.\.velocast\accelerated-env.ps1
-pwsh -NoProfile -File scripts/build-electron-renderer.ps1 -Test
-$env:VELOCAST_RENDERER_BINARY = (Resolve-Path target/electron/release/velocast-renderer.exe).Path
+$rendererTarget = Join-Path $env:TEMP ('velocast-renderer-' + [guid]::NewGuid().ToString('N'))
+pwsh -NoProfile -File scripts/build-electron-renderer.ps1 -TargetDirectory $rendererTarget -Test
+$env:VELOCAST_RENDERER_BINARY = Join-Path $rendererTarget 'release/velocast-renderer.exe'
 pnpm velocast doctor --json
 pnpm velocast render product-hero --config apps/playground/velocast.config.ts --output renders/product-hero.mp4
 ```
 
 The workspace installation supplies pinned Electron through the private
 `@velocast/electron-host` package. The CLI discovers that host for source builds;
-prepared runtimes supply their own bundled host and media tools. No browser
+prepared runtimes supply their own bundled host and Mediabunny. No browser
 selection flag is needed. `VELOCAST_RENDERER_BINARY` or `renderer.binary` can
 select a compatible prepared runtime. A bare executable without its runtime
 dependencies is insufficient.
 
 On Linux and macOS, use `cargo build -p velocast-renderer --release` with Rust,
-FFmpeg CLI tools, and the installed Electron host. Linux also needs Electron's
+the installed Electron host. Linux also needs Electron's
 system libraries and a display or Xvfb. The removed Vulkan, VAAPI, DRM, and CEF
 development dependencies are no longer required.
 

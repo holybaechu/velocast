@@ -1,3 +1,4 @@
+import { withMediaRuntimeContext } from "./media-runtime.js";
 import { createHash } from "node:crypto";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -6,9 +7,14 @@ import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import type { Config } from "@velocast/core";
 import { BROWSER_PROTOCOL_VERSION } from "./generated/renderer-contracts.js";
-import { launchCdpBrowser, type CdpBrowser } from "./browser-cdp.js";
+import {
+  launchCdpBrowser,
+  cleanupBrowserResources,
+  type CdpBrowser,
+} from "./browser-cdp.js";
 import { createInputSnapshot } from "./input-snapshot.js";
 import {
+  getInvocationCwd,
   resolveCliInputPropsPath,
   resolveCliOutputPath,
   type InvocationPathOptions,
@@ -367,6 +373,24 @@ export async function auditComposition(
   compositionId: string,
   options: AgentAuditOptions = {},
 ): Promise<AgentAuditReport> {
+  const env = options.env
+    ? { ...process.env, ...options.env }
+    : { ...process.env };
+  return withMediaRuntimeContext(
+    {
+      configuredBinary: config.renderer?.binary,
+      cwd: getInvocationCwd(options),
+      env,
+    },
+    () => auditCompositionInContext(config, compositionId, options),
+  );
+}
+
+async function auditCompositionInContext(
+  config: Config,
+  compositionId: string,
+  options: AgentAuditOptions,
+): Promise<AgentAuditReport> {
   const source = resolveCompositionRenderSource(config, options);
   if (!source.snapshotRoot || source.kind !== "entry")
     throw new Error(
@@ -395,6 +419,7 @@ export async function auditComposition(
       )
     : undefined;
   let browser: CdpBrowser | undefined;
+  let primaryFailure: { error: unknown } | undefined;
   try {
     browser = await launchCdpBrowser("about:blank", {
       executable: options.browser,
@@ -629,13 +654,18 @@ export async function auditComposition(
         "Automatic text checks inspect at most 200 visible elements with direct text per frame and warn unless --strict is set.",
       ],
     };
+  } catch (error) {
+    primaryFailure = { error };
+    throw error;
   } finally {
-    await browser?.close();
-    try {
-      await media?.close();
-    } finally {
-      await snapshot.close();
-    }
+    await cleanupBrowserResources(
+      [
+        async () => browser?.close(),
+        async () => media?.close(),
+        () => snapshot.close(),
+      ],
+      primaryFailure,
+    );
   }
 }
 

@@ -15,18 +15,18 @@ const input = (
     available: true,
     gpuCaptureSupported: true,
   },
-  ffmpegPresent: true,
-  softwareFallbackAvailable: true,
+
+  webCodecsAvailable: true,
   requiredGpuBackends: [
-    { backend: "h264_mf", available: true, packetWriterAvailable: true },
+    { backend: "webcodecs", available: true, packetWriterAvailable: true },
   ],
   ...overrides,
 });
 describe("Electron doctor report", () => {
   it("reports a supported Windows encoder and software fallback", () => {
     expect(buildDoctorReport(input())).toMatchObject({
-      requiredGpu: { available: true, backend: "h264_mf" },
-      softwareFallback: { available: true },
+      requiredGpu: { available: true, backend: "webcodecs" },
+      webCodecs: { available: true },
     });
   });
   it.each(["linux", "darwin"] as const)(
@@ -44,8 +44,8 @@ describe("Electron doctor report", () => {
         }),
       );
       expect(report.requiredGpu.available).toBe(false);
-      expect(report.requiredGpu.reason).toContain("Windows");
-      expect(report.softwareFallback.available).toBe(true);
+      expect(report.requiredGpu.reason).toContain("hardware-only guarantee");
+      expect(report.webCodecs.available).toBe(true);
     },
   );
   it("missing browser files block both capture routes before encoder checks", () => {
@@ -66,27 +66,27 @@ describe("Electron doctor report", () => {
         reason: "missing Electron",
       },
     ]);
-    expect(report.softwareFallback.available).toBe(false);
+    expect(report.webCodecs.available).toBe(false);
   });
   it("missing native renderer cannot advertise software readiness", () => {
     const report = buildDoctorReport(input({ rendererBinary: undefined }));
     expect(report.requiredGpu.diagnostics?.[0]?.code).toBe(
       "renderer.binary_unavailable",
     );
-    expect(report.softwareFallback.available).toBe(false);
+    expect(report.webCodecs.available).toBe(false);
   });
   it("retains each Windows backend diagnostic and packet writer requirement", () => {
     const report = buildDoctorReport(
       input({
         requiredGpuBackends: [
           {
-            backend: "h264_mf",
+            backend: "webcodecs",
             available: false,
             unavailableCode: "encoder.codec_unavailable",
             reason: "encoder missing",
           },
           {
-            backend: "h264_nvenc",
+            backend: "webcodecs",
             available: false,
             reason: "hardware missing",
           },
@@ -102,7 +102,7 @@ describe("Electron doctor report", () => {
         input({
           requiredGpuBackends: [
             {
-              backend: "h264_mf",
+              backend: "webcodecs",
               available: true,
               packetWriterAvailable: false,
             },

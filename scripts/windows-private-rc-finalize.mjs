@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const args = parseArgs(process.argv.slice(2));
-for (const name of ["root", "state", "ffprobe", "host-requirements", "output"])
+for (const name of ["root", "state", "runtime", "host-requirements", "output"])
   if (!args[name]) throw new Error(`missing --${name}`);
 const root = resolve(args.root);
+const runtime = resolve(args.runtime);
+const require = createRequire(import.meta.url);
+const { runMediaOperation } = require(join(runtime, "electron-host/media-client.cjs"));
 const state = JSON.parse(readFileSync(resolve(args.state), "utf8"));
 const hostRequirements = JSON.parse(
   readFileSync(resolve(args["host-requirements"]), "utf8"),
@@ -57,15 +60,24 @@ const videos = [
     step: "pnpm-clip-caption-music",
   },
 ];
-const videoEvidence = videos.map((video) => verifyVideo(video));
-const repeat = verifyVideo({
+const videoEvidence = await Promise.all(videos.map((video) => verifyVideo(video)));
+const repeat = await verifyVideo({
   ...videos[0],
   role: "original-lyrics-repeat",
   path: join(root, "evidence/npm-original-lyrics-repeat.mp4"),
   step: "npm-original-lyrics-repeat",
 });
-if (repeat.sha256 !== videoEvidence[0].sha256)
-  throw new Error("original lyrics deterministic repeat hash differs");
+const mediaOptions = {
+  electronBinary: join(runtime, "electron/electron.exe"),
+  hostScript: join(runtime, "electron-host/main.cjs"),
+};
+const [firstFrames, repeatFrames] = await Promise.all([
+  runMediaOperation({ kind: "frame-hashes", path: videos[0].path, maxFrames: videos[0].frames }, mediaOptions),
+  runMediaOperation({ kind: "frame-hashes", path: repeat.path, maxFrames: videos[0].frames }, mediaOptions),
+]);
+if (firstFrames.frameCount !== videos[0].frames || repeatFrames.frameCount !== videos[0].frames ||
+    JSON.stringify(firstFrames.hashes) !== JSON.stringify(repeatFrames.hashes))
+  throw new Error("original lyrics deterministic decoded frames differ");
 for (const name of [
   "preview-browser.json",
   "negative-corrupt-archive.json",
@@ -98,7 +110,7 @@ const output = {
     npmRender: true,
     pnpmRender: true,
     deterministicRepeat: true,
-    softwarePath: true,
+    softwarePreference: true,
     previewFrame: true,
     previewRange: true,
     sourceRefresh: true,
@@ -109,7 +121,7 @@ const output = {
     offlineEmptyCache: true,
   },
   notRunInThisGate: [
-    "automatic-software-fallback",
+    "hardware-encoder-selection-proof",
     "stale-source-version-rejection",
     "watch-command-child-cleanup",
   ],
@@ -121,25 +133,12 @@ const output = {
 };
 writeFileSync(resolve(args.output), `${JSON.stringify(output, null, 2)}\n`);
 
-function verifyVideo(video) {
+async function verifyVideo(video) {
   if (!existsSync(video.path)) throw new Error(`video missing: ${video.path}`);
-  const result = spawnSync(
-    resolve(args.ffprobe),
-    [
-      "-v",
-      "error",
-      "-count_frames",
-      "-show_streams",
-      "-show_format",
-      "-of",
-      "json",
-      video.path,
-    ],
-    { encoding: "utf8", windowsHide: true, timeout: 120_000 },
-  );
-  if (result.status !== 0)
-    throw new Error(`ffprobe failed: ${result.stderr || result.error}`);
-  const probe = JSON.parse(result.stdout);
+  const probe = await runMediaOperation({ kind: "probe", path: video.path, frames: true }, {
+    electronBinary: join(runtime, "electron/electron.exe"),
+    hostScript: join(runtime, "electron-host/main.cjs"),
+  });
   const attempt = state.steps[video.step].attempts.at(-1);
   const cliResult = JSON.parse(readFileSync(attempt.stdout.path, "utf8"));
   if (
@@ -149,12 +148,12 @@ function verifyVideo(video) {
     throw new Error(
       `source range mismatch: ${video.role}: ${JSON.stringify(cliResult.request?.range)}`,
     );
-  const visual = probe.streams.find((stream) => stream.codec_type === "video");
-  const audio = probe.streams.find((stream) => stream.codec_type === "audio");
+  const visual = probe.video;
+  const audio = probe.audio;
   if (
-    Number(visual?.nb_read_frames) !== video.frames ||
-    visual?.avg_frame_rate !== video.fps ||
-    audio?.sample_rate !== video.audioRate
+    visual?.frameCount !== video.frames ||
+    Math.abs(visual.duration - video.frames / Number(video.fps.split("/")[0])) > 1 / Number(video.fps.split("/")[0]) ||
+    audio?.sampleRate !== Number(video.audioRate)
   )
     throw new Error(`video metadata mismatch: ${video.role}`);
   return {
@@ -162,15 +161,14 @@ function verifyVideo(video) {
     bytes: readFileSync(video.path).length,
     sha256: sha256(video.path),
     video: {
-      codec: visual.codec_name,
-      pixelFormat: visual.pix_fmt,
-      frames: Number(visual.nb_read_frames),
-      fps: visual.avg_frame_rate,
+      codec: visual.codec,
+      frames: visual.frameCount,
+      fps: video.fps,
       duration: Number(visual.duration),
     },
     audio: {
-      codec: audio.codec_name,
-      sampleRate: Number(audio.sample_rate),
+      codec: audio.codec,
+      sampleRate: audio.sampleRate,
       channels: audio.channels,
       duration: Number(audio.duration),
     },

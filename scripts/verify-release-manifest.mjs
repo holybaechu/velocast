@@ -49,6 +49,12 @@ for (const id of requiredTargets) {
   assert(target && typeof target === "object", `${id} is missing`);
   assert(target.runtimeFiles?.length > 0, `${id} runtime inventory is empty`);
   assert(
+    !target.runtimeFiles.some((path) =>
+      /(^|\/)(ffmpeg|ffprobe)(\.exe)?$|^(avcodec|avformat|avutil|swresample)-\d+\.dll$|^native-licenses\//i.test(path),
+    ),
+    `${id} declares a retired external media binary or native dependency`,
+  );
+  assert(
     target.nativeFiles?.length > 0,
     `${id} native file inventory is empty`,
   );
@@ -329,16 +335,16 @@ function validateWindowsCandidate(target, candidate) {
   );
   for (const required of [
     "velocast-renderer.exe",
-    "ffmpeg.exe",
-    "ffprobe.exe",
+    "electron-host/media-client.cjs",
+    "electron-host/media-runtime.cjs",
+    "electron-host/node_modules/mediabunny/package.json",
+    "electron-host/node_modules/mediabunny/LICENSE",
     "electron/electron.exe",
     "electron/LICENSE",
     "electron/LICENSES.chromium.html",
     "electron-host/main.cjs",
     "electron-host/profile-directory.cjs",
     "electron-runtime.json",
-    "ffmpeg.exe",
-    "ffprobe.exe",
   ])
     assert(
       target.runtimeFiles.includes(required),

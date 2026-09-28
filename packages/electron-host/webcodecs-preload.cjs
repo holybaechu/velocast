@@ -17,7 +17,29 @@ ipcRenderer.on(
       const result =
         method === "open"
           ? await session.open(settings)
-          : await session.finish();
+          : method === "bitmap"
+            ? await session.encode(
+                {
+                  getVideoFrame: () =>
+                    new VideoFrame(settings.data, {
+                      format: "BGRA",
+                      codedWidth: settings.width,
+                      codedHeight: settings.height,
+                      timestamp: 0,
+                      colorSpace: {
+                        primaries: "bt709",
+                        transfer: "iec61966-2-1",
+                        matrix: "rgb",
+                        fullRange: true,
+                      },
+                    }),
+                  release() {},
+                },
+                settings.index,
+              )
+            : method === "media-operation"
+              ? await require("./media-runtime.cjs").runMediaOperation(settings)
+              : await session.finish();
       reply(id, { result });
     } catch (error) {
       failure(id, error);

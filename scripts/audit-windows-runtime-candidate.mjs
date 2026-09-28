@@ -63,8 +63,10 @@ for (const name of [
   "velocast-renderer.exe",
   "electron/electron.exe",
   "electron-host/main.cjs",
-  "ffmpeg.exe",
-  "ffprobe.exe",
+  "electron-host/media-client.cjs",
+  "electron-host/media-runtime.cjs",
+  "electron-host/node_modules/mediabunny/package.json",
+  "electron-host/node_modules/mediabunny/LICENSE",
 ])
   if (!paths.has(name)) throw new Error(`candidate.audit_required: ${name}`);
 if (
@@ -73,7 +75,9 @@ if (
   throw new Error("candidate.audit_cef_files: CEF files are forbidden");
 if (
   manifest.rendererCapabilities?.defaultBrowserHost !== "electron" ||
-  manifest.rendererCapabilities?.electronHostProtocolVersion !== 1 ||
+  manifest.rendererCapabilities?.electronHostProtocolVersion !== 2 ||
+  manifest.rendererCapabilities?.videoEncoderBackend !== "webcodecs" ||
+  manifest.rendererCapabilities?.mediaRuntime !== "mediabunny" ||
   JSON.stringify(manifest.rendererCapabilities?.browserHosts) !== '["electron"]'
 )
   throw new Error(

@@ -50,6 +50,7 @@ it.each([false, true])(
         { event_log_path: eventPath },
         {
           signal: controller.signal,
+          terminationGraceMs: 3_000,
           resolveProcessEnv: () => process.env,
           spawnRenderer: (binary, _args, options) => {
             const child = spawn(
@@ -89,6 +90,7 @@ it("publishes a per-process marker for timeout as well as an AbortSignal", async
       { event_log_path: eventPath },
       {
         timeoutMs: 200,
+        terminationGraceMs: 3_000,
         resolveProcessEnv: () => process.env,
         spawnRenderer: (binary, _args, options) => {
           const child = spawn(

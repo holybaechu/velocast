@@ -14,22 +14,20 @@ describe("extractKnownRendererError", () => {
     ).toBe("frame 0 timed out waiting for accelerated paint");
   });
 
-  it("extracts exact ffmpeg exit messages from renderer output", () => {
+  it("extracts exact media host exit messages from renderer output", () => {
     expect(
       extractKnownRendererError(
-        "thread main failed\nError: ffmpeg exited with code 234\n",
+        "thread main failed\nError: media.host_failed: Electron utility exited with code 234\n",
       ),
-    ).toBe("ffmpeg exited with code 234");
+    ).toBe("media.host_failed: Electron utility exited with code 234");
   });
 
   it("extracts segment remux failure messages from renderer output", () => {
     expect(
       extractKnownRendererError(
-        "INFO muxing segments\nError: ffmpeg segment remux failed with code 1: Invalid data found when processing input\n",
+        "INFO muxing segments\nError: media.invalid_container: invalid data found when reading segment\n",
       ),
-    ).toBe(
-      "ffmpeg segment remux failed with code 1: Invalid data found when processing input",
-    );
+    ).toBe("media.invalid_container: invalid data found when reading segment");
   });
 
   it("extracts required GPU benchmark validation failures from renderer output", () => {
@@ -132,54 +130,44 @@ describe("extractKnownRendererError", () => {
     ).toBe("frame 168 matched frame 0 in renders/out.mp4");
   });
 
-  it("extracts ffmpeg encoder initialization failures from renderer output", () => {
+  it("extracts webcodecs encoder initialization failures from renderer output", () => {
     expect(
       extractKnownRendererError(
-        "INFO renderer starting\nError: ffmpeg encoder initialization failed: failed to spawn ffmpeg with d3d11va encoder\n",
+        "INFO renderer starting\nError: encoder.webcodecs_open_failed: codec h264 is unavailable\n",
       ),
-    ).toBe(
-      "ffmpeg encoder initialization failed: failed to spawn ffmpeg with d3d11va encoder",
-    );
+    ).toBe("encoder.webcodecs_open_failed: codec h264 is unavailable");
   });
 
-  it("preserves ffmpeg encoder initialization failure details without earlier logs", () => {
+  it("preserves webcodecs encoder initialization failure details without earlier logs", () => {
     expect(
       extractKnownRendererError(
         [
           "INFO renderer starting",
-          "DEBUG probing D3D11 device",
-          "Error: ffmpeg encoder initialization failed: ffmpeg exited before accepting hardware frames",
+          "DEBUG probing VideoEncoder",
+          "Error: encoder.webcodecs_open_failed: VideoEncoder configure failed",
           "stderr:",
-          "Unknown encoder 'h264_nvenc'",
-          "Install FFmpeg with D3D11 hardware encoder support.",
+          "Unsupported logical codec 'hevc'",
+          "Install a current compatible Electron runtime.",
           "",
         ].join("\n"),
       ),
     ).toBe(
       [
-        "ffmpeg encoder initialization failed: ffmpeg exited before accepting hardware frames",
+        "encoder.webcodecs_open_failed: VideoEncoder configure failed",
         "stderr:",
-        "Unknown encoder 'h264_nvenc'",
-        "Install FFmpeg with D3D11 hardware encoder support.",
+        "Unsupported logical codec 'hevc'",
+        "Install a current compatible Electron runtime.",
       ].join("\n"),
     );
   });
 
-  it("preserves D3D11 dependency setup guidance from renderer output", () => {
+  it("preserves WebCodecs runtime installation diagnostics", () => {
     expect(
       extractKnownRendererError(
-        [
-          "INFO renderer starting",
-          "Error: D3D11 accelerated rendering dependencies are missing.",
-          "Run: .\\scripts\\setup-accelerated-rendering.ps1",
-          "",
-        ].join("\n"),
+        "INFO renderer starting\nError: runtime.electron_missing: install the matching Electron WebCodecs runtime\n",
       ),
     ).toBe(
-      [
-        "D3D11 accelerated rendering dependencies are missing.",
-        "Run: .\\scripts\\setup-accelerated-rendering.ps1",
-      ].join("\n"),
+      "runtime.electron_missing: install the matching Electron WebCodecs runtime",
     );
   });
 
@@ -189,14 +177,14 @@ describe("extractKnownRendererError", () => {
         [
           "INFO renderer starting",
           "Error: accelerated rendering is required, but no compatible GPU backend is available on this platform.",
-          "Backend cause: acceleration.required_unavailable: no required GPU backend is available (windows_d3d11_mf unavailable: platform.device_unavailable: Windows D3D11 device unavailable)",
+          "Backend cause: acceleration.required_unavailable: no required GPU backend is available (webcodecs unavailable: platform.device_unavailable: WebCodecs codec unavailable)",
           "",
         ].join("\n"),
       ),
     ).toBe(
       [
         "accelerated rendering is required, but no compatible GPU backend is available on this platform.",
-        "Backend cause: acceleration.required_unavailable: no required GPU backend is available (windows_d3d11_mf unavailable: platform.device_unavailable: Windows D3D11 device unavailable)",
+        "Backend cause: acceleration.required_unavailable: no required GPU backend is available (webcodecs unavailable: platform.device_unavailable: WebCodecs codec unavailable)",
       ].join("\n"),
     );
   });
@@ -242,7 +230,9 @@ describe("extractKnownRendererError", () => {
       extractKnownRendererError(
         "INFO renderer\nError: electron.host_error: ERR_CONNECTION_REFUSED (http://127.0.0.1:4545/)\n",
       ),
-    ).toBe("electron.host_error: ERR_CONNECTION_REFUSED (http://127.0.0.1:4545/)");
+    ).toBe(
+      "electron.host_error: ERR_CONNECTION_REFUSED (http://127.0.0.1:4545/)",
+    );
   });
 
   it("extracts composition paint timeout errors from renderer output", () => {
@@ -272,10 +262,10 @@ describe("extractKnownRendererError", () => {
   it("extracts Windows shared-texture capture probe errors from renderer output", () => {
     expect(
       extractKnownRendererError(
-        "Error: capture.d3d11_unavailable: Electron shared texture unavailable\n",
+        "Error: capture.shared_texture_unavailable: Electron shared texture unavailable\n",
       ),
     ).toBe(
-      "capture.d3d11_unavailable: Electron shared texture unavailable",
+      "capture.shared_texture_unavailable: Electron shared texture unavailable",
     );
   });
 
@@ -317,13 +307,13 @@ describe("extractRendererSuccessWarning", () => {
         [
           "hardware encoder unavailable; falling back to software BGRA stdin",
           "renderer completed using fallback path: hardware encoder unavailable: accelerated rendering is required, but no compatible GPU backend is available on this platform.",
-          "Backend cause: acceleration.required_unavailable: no required GPU backend is available (windows_d3d11_mf unavailable: platform.device_unavailable: Windows D3D11 device unavailable)",
+          "Backend cause: acceleration.required_unavailable: no required GPU backend is available (webcodecs unavailable: platform.device_unavailable: WebCodecs codec unavailable)",
         ].join("\n"),
       ),
     ).toBe(
       [
         "renderer completed using fallback path: hardware encoder unavailable: accelerated rendering is required, but no compatible GPU backend is available on this platform.",
-        "Backend cause: acceleration.required_unavailable: no required GPU backend is available (windows_d3d11_mf unavailable: platform.device_unavailable: Windows D3D11 device unavailable)",
+        "Backend cause: acceleration.required_unavailable: no required GPU backend is available (webcodecs unavailable: platform.device_unavailable: WebCodecs codec unavailable)",
       ].join("\n"),
     );
   });
@@ -338,14 +328,14 @@ describe("extractRendererReportSuccessWarning", () => {
           "hardware encoder unavailable: accelerated rendering is required, but no compatible GPU backend is available on this platform.",
         backend_diagnostics: [
           {
-            backend: "windows_d3d11_mf",
+            backend: "webcodecs",
             available: false,
             unavailable_code: "platform.device_unavailable",
             unavailable_reason:
-              "platform.device_unavailable: Windows D3D11 device unavailable",
+              "platform.device_unavailable: WebCodecs codec unavailable",
           },
           {
-            backend: "software_bgra_ffmpeg",
+            backend: "electron_webcodecs_h264",
             available: true,
           },
         ],
@@ -353,7 +343,7 @@ describe("extractRendererReportSuccessWarning", () => {
     ).toBe(
       [
         "renderer completed using fallback path: hardware encoder unavailable: accelerated rendering is required, but no compatible GPU backend is available on this platform.",
-        "Backend diagnostics: windows_d3d11_mf unavailable: platform.device_unavailable: Windows D3D11 device unavailable",
+        "Backend diagnostics: webcodecs unavailable: platform.device_unavailable: WebCodecs codec unavailable",
       ].join("\n"),
     );
   });

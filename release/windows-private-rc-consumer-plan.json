@@ -55,12 +55,9 @@
       "CEF_PATH",
       "VELOCAST_CEF_RUNTIME_DIR",
       "VELOCAST_LINUX_RENDERER_RUNTIME_DIR",
-      "VELOCAST_LINUX_RENDERER_RUNTIME_SOURCE_DIR",
-      "FFMPEG_PATH",
-      "VCPKG_ROOT",
-      "LIBCLANG_PATH"
+      "VELOCAST_LINUX_RENDERER_RUNTIME_SOURCE_DIR"
     ],
-    "reason": "The installed CLI must acquire its own verified Electron artifact and prepend that artifact to child PATH; no repository, Rust, LLVM, vcpkg, or machine FFmpeg path may satisfy runtime resolution."
+    "reason": "The installed CLI must acquire and verify its Electron and Mediabunny runtime without resolving media tools from the machine or repository."
   },
   "privateManifest": {
     "releaseChannel": "private-rc",
@@ -96,68 +93,175 @@
     {
       "id": "fresh-setup",
       "environment": "minimal",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "setup", "--json"],
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "setup",
+        "--json"
+      ],
       "expect": "source download; archive copied from the local file URL into an empty verified cache"
     },
     {
       "id": "versions-after-setup",
       "environment": "minimal",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "versions", "--json"],
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "versions",
+        "--json"
+      ],
       "expect": "target win32-x64 and artifactStatus verified"
     },
     {
       "id": "cached-setup",
       "environment": "minimal",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "setup", "--json"],
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "setup",
+        "--json"
+      ],
       "expect": "source cache and the same artifact directory/hash"
     },
     {
       "id": "offline-setup",
       "environment": "minimal plus VELOCAST_OFFLINE=1",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "setup", "--json"],
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "setup",
+        "--json"
+      ],
       "expect": "source cache; no network request"
     },
     {
       "id": "concurrent-setup",
       "environment": "two minimal processes sharing a new CACHE_ROOT",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "setup", "--json"],
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "setup",
+        "--json"
+      ],
       "expect": "both succeed with one promoted cache entry and no stale lock/partial directory"
     },
     {
       "id": "composition-discovery",
       "environment": "minimal",
       "cwd": "<PROJECT_ROOT>",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "compositions", "--config", "<CONFIG>", "--json"]
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "compositions",
+        "--config",
+        "<CONFIG>",
+        "--json"
+      ]
     },
     {
       "id": "frame-output",
       "environment": "minimal",
       "cwd": "<PROJECT_ROOT>",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "frame", "<COMPOSITION>", "--config", "<CONFIG>", "--frame", "12", "--output", "<EVIDENCE_ROOT>/frame-12.png", "--json"]
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "frame",
+        "<COMPOSITION>",
+        "--config",
+        "<CONFIG>",
+        "--frame",
+        "12",
+        "--output",
+        "<EVIDENCE_ROOT>/frame-12.png",
+        "--json"
+      ]
     },
     {
       "id": "full-240-frame-output",
       "environment": "minimal",
       "cwd": "<PROJECT_ROOT>",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "render", "<COMPOSITION>", "--config", "<CONFIG>", "--output", "<EVIDENCE_ROOT>/full.mp4", "--concurrency", "1", "--assembly", "reference", "--report", "<EVIDENCE_ROOT>/full.report.json", "--events", "<EVIDENCE_ROOT>/full.events.jsonl", "--json"]
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "render",
+        "<COMPOSITION>",
+        "--config",
+        "<CONFIG>",
+        "--output",
+        "<EVIDENCE_ROOT>/full.mp4",
+        "--concurrency",
+        "1",
+        "--assembly",
+        "reference",
+        "--report",
+        "<EVIDENCE_ROOT>/full.report.json",
+        "--events",
+        "<EVIDENCE_ROOT>/full.events.jsonl",
+        "--json"
+      ]
     },
     {
       "id": "deterministic-repeat",
       "environment": "minimal",
       "cwd": "<PROJECT_ROOT>",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "render", "<COMPOSITION>", "--config", "<CONFIG>", "--output", "<EVIDENCE_ROOT>/repeat.mp4", "--concurrency", "1", "--assembly", "reference", "--report", "<EVIDENCE_ROOT>/repeat.report.json", "--json"]
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "render",
+        "<COMPOSITION>",
+        "--config",
+        "<CONFIG>",
+        "--output",
+        "<EVIDENCE_ROOT>/repeat.mp4",
+        "--concurrency",
+        "1",
+        "--assembly",
+        "reference",
+        "--report",
+        "<EVIDENCE_ROOT>/repeat.report.json",
+        "--json"
+      ]
     },
     {
-      "id": "software-fallback",
+      "id": "software-preference",
       "environment": "minimal",
       "cwd": "<PROJECT_ROOT>",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "render", "<COMPOSITION>", "--config", "<CONFIG>", "--output", "<EVIDENCE_ROOT>/software.mp4", "--acceleration", "off", "--concurrency", "1", "--assembly", "reference", "--report", "<EVIDENCE_ROOT>/software.report.json", "--json"]
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "render",
+        "<COMPOSITION>",
+        "--config",
+        "<CONFIG>",
+        "--output",
+        "<EVIDENCE_ROOT>/software.mp4",
+        "--acceleration",
+        "off",
+        "--concurrency",
+        "1",
+        "--assembly",
+        "reference",
+        "--report",
+        "<EVIDENCE_ROOT>/software.report.json",
+        "--json"
+      ]
     },
     {
       "id": "preview-session",
       "environment": "minimal",
       "cwd": "<PROJECT_ROOT>",
-      "argv": ["<NODE_EXE>", "<CLI_JS>", "preview", "--config", "<CONFIG>", "--port", "0", "--json", "--output-directory", "<EVIDENCE_ROOT>/preview-output"],
+      "argv": [
+        "<NODE_EXE>",
+        "<CLI_JS>",
+        "preview",
+        "--config",
+        "<CONFIG>",
+        "--port",
+        "0",
+        "--json",
+        "--output-directory",
+        "<EVIDENCE_ROOT>/preview-output"
+      ],
       "expect": "browser frame/range output, source refresh guard, watch-child cleanup, and session shutdown evidence"
     }
   ],
@@ -195,7 +299,10 @@
       "end": 1060,
       "reason": "Representative four-second range includes known lyric transitions near frames 847 and 887 while preserving the 13,488-frame source identity."
     },
-    "packageManagers": ["npm", "pnpm"],
+    "packageManagers": [
+      "npm",
+      "pnpm"
+    ],
     "requiredScenarios": [
       "scriptsDisabled",
       "freshSetup",
@@ -205,7 +312,7 @@
       "npmRender",
       "pnpmRender",
       "deterministicRepeat",
-      "softwareFallback"
+      "softwarePreference"
     ],
     "extraPreviewScenarios": [
       "previewFrame",

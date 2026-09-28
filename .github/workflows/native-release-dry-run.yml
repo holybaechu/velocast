@@ -15,6 +15,10 @@ permissions:
 jobs:
   foundation:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/velocast-cargo
+      TURBO_CACHE_DIR: ${{ runner.temp }}/velocast-turbo-cache
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -22,18 +26,31 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      - name: Install Electron display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install the pinned Electron runtime
+        run: node packages/electron-host/node_modules/electron/install.js
+      - name: Configure Electron sandbox helper
+        run: |
+          sandbox="$(node -p "require('node:path').join(require('node:path').dirname(require('./packages/electron-host/node_modules/electron')), 'chrome-sandbox')")"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
       - run: pnpm release:verify
       - run: pnpm release:test
       - run: pnpm contracts:check
       - run: pnpm check-types
-      - run: pnpm test
+      - run: xvfb-run -a pnpm test
 
   native:
     if: inputs.execute_native
     needs: foundation
     runs-on: [self-hosted, velocast, windows, x64]
     env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/velocast-cargo
+      TURBO_CACHE_DIR: ${{ runner.temp }}/velocast-turbo-cache
       VELOCAST_RELEASE_TARGET: win32-x64
       VELOCAST_RELEASE_MODE: "1"
       VELOCAST_AUTHENTICODE_CERTIFICATE: ${{ secrets.VELOCAST_AUTHENTICODE_CERTIFICATE }}
@@ -72,6 +89,9 @@ jobs:
     if: inputs.execute_native
     needs: native
     runs-on: ubuntu-24.04
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/velocast-cargo
+      TURBO_CACHE_DIR: ${{ runner.temp }}/velocast-turbo-cache
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -80,14 +100,23 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: node packages/electron-host/node_modules/electron/install.js
+      - name: Install Electron display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
+      - name: Configure Electron sandbox helper
+        run: |
+          sandbox="$(node -p "require('node:path').join(require('node:path').dirname(require('./packages/electron-host/node_modules/electron')), 'chrome-sandbox')")"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
       - uses: actions/download-artifact@v8
         with:
           pattern: velocast-*
           path: ${{ runner.temp }}/velocast-evidence
           merge-multiple: true
       - run: >-
-          node scripts/assemble-release-manifest.mjs
+          xvfb-run -a node scripts/assemble-release-manifest.mjs
           --target win32-x64
           --evidence-dir ${{ runner.temp }}/velocast-evidence
           --output ${{ runner.temp }}/velocast-release-dry-run.json

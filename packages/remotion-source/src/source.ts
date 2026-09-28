@@ -7,7 +7,7 @@ import {
 export interface RemotionSourceOptions {
   /** Remotion's unchanged registerRoot() entry file. Resolved relative to the config. */
   entry: string;
-  /** Native uses Velocast capture; reference uses Remotion's renderer. */
+  /** Native uses Velocast capture; reference captures the original browser page and assembles it with WebCodecs. */
   backend?: "native" | "reference";
   browserExecutable?: string;
   workDirectory?: string;
@@ -106,7 +106,7 @@ export function remotionSource(options: RemotionSourceOptions): SourceAdapter {
               renderAudio: async (outputPath: string, signal: AbortSignal) => {
                 signal.throwIfAborted();
                 const audio = await prepared.renderAudio(
-                  outputPath.replace(/\.wav$/i, ".aac"),
+                  outputPath.replace(/\.(aac|m4a)$/i, ".wav"),
                 );
                 signal.throwIfAborted();
                 return audio;

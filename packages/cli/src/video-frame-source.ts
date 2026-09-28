@@ -1,29 +1,29 @@
-import {
-  spawn as spawnProcess,
-  type ChildProcess,
-  type SpawnOptions,
-} from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { lstat, readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import {
   buildVideoPtsIndex,
-  parseVideoStreamHeader,
   findVideoFrame,
-  videoSeekTimestamp,
   type VideoPtsIndex,
   type VideoPtsLimits,
   type VideoTimeBase,
 } from "./video-pts.js";
 import {
   acquireMediaProcess,
-  createSequentialVideoDecoder,
   maximumLiveMediaProcesses,
-  videoNormalizationFilters,
-  type SequentialDecoder,
+  markMediaProcessActive,
+  markMediaProcessIdle,
 } from "./video-frame-decoder.js";
-
+import {
+  runMediaOperation,
+  createMediaSession,
+  type MediaSession,
+  type MediaSessionFactory,
+  type MediaProbe,
+  type MediaRunner,
+} from "./media-runtime.js";
+import { mediaWorkspace } from "./media-workspace.js";
 export { videoPixelChecksum } from "./video-frame-decoder.js";
 
 export interface VideoFrameSourceLimits extends VideoPtsLimits {
@@ -32,7 +32,7 @@ export interface VideoFrameSourceLimits extends VideoPtsLimits {
   maxLogBytes?: number;
   maxCacheBytes?: number;
   maxQueuedRequests?: number;
-  /** Warm sequential cursors retained per source; defaults to and is capped at four. */
+  /** Compatibility ceiling; the media runtime shares one persistent seekable decoder per source. */
   maxDecoderCursors?: number;
   /** Index distance to preceding keyframe; actual decode work is timeout-bounded. */
   maxKeyframeDistanceFrames?: number;
@@ -43,8 +43,6 @@ export interface VideoFrameSourceOptions {
   /** Caller-owned immutable snapshot copy, never a live development asset. */
   path: string;
   sourceHash: string;
-  ffmpegPath?: string;
-  ffprobePath?: string;
   limits?: VideoFrameSourceLimits;
   signal?: AbortSignal;
 }
@@ -57,11 +55,8 @@ export interface VideoToolEvent {
   terminated: boolean;
 }
 export interface VideoFrameSourceDependencies {
-  spawn?: (
-    binary: string,
-    args: readonly string[],
-    options: SpawnOptions,
-  ) => ChildProcess;
+  mediaRunner?: MediaRunner;
+  mediaSessionFactory?: MediaSessionFactory;
   onCommand?: (event: VideoToolEvent) => void;
 }
 export interface DecodedVideoFrame {
@@ -136,127 +131,6 @@ async function fingerprint(path: string): Promise<string> {
   return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(":");
 }
 
-interface CaptureOptions {
-  env?: NodeJS.ProcessEnv;
-  signal: AbortSignal;
-  stdoutLimit: number;
-  stderrLimit: number;
-  timeoutMs: number;
-  exactBytes?: number;
-}
-async function capture(
-  binary: string,
-  args: string[],
-  options: CaptureOptions,
-  dependencies: VideoFrameSourceDependencies,
-): Promise<{ stdout: Buffer; stderr: string; elapsedMs: number }> {
-  const release = await acquireMediaProcess(options.signal);
-  const started = performance.now();
-  let child: ChildProcess | undefined;
-  try {
-    checkAbort(options.signal);
-    child = (dependencies.spawn ?? spawnProcess)(binary, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-      ...(options.env ? { env: options.env } : {}),
-    });
-    if (!child.stdout || !child.stderr)
-      throw new Error("video.process_failed: tool pipes unavailable");
-    const fixed =
-      options.exactBytes === undefined
-        ? undefined
-        : Buffer.alloc(options.exactBytes);
-    const chunks: Buffer[] = [];
-    let bytes = 0,
-      logBytes = 0,
-      stderr = "",
-      failure: Error | undefined,
-      terminated = false;
-    const stop = (error: Error) => {
-      if (!failure) failure = error;
-      terminated = true;
-      child!.kill("SIGKILL");
-    };
-    const abort = () => stop(cancelled(options.signal));
-    options.signal.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(
-      () =>
-        stop(
-          new Error(
-            "video.process_timeout: media tool exceeded its time budget",
-          ),
-        ),
-      options.timeoutMs,
-    );
-    child.stdout.on("data", (chunk: Buffer) => {
-      if (failure) return;
-      if (bytes + chunk.length > options.stdoutLimit) {
-        stop(
-          new Error("video.output_limit: tool output exceeded its byte budget"),
-        );
-        return;
-      }
-      if (fixed) chunk.copy(fixed, bytes);
-      else chunks.push(chunk);
-      bytes += chunk.length;
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      if (failure) return;
-      if (logBytes + chunk.length > options.stderrLimit) {
-        stop(
-          new Error(
-            "video.log_limit: tool diagnostics exceeded their byte budget",
-          ),
-        );
-        return;
-      }
-      stderr += chunk.toString("utf8");
-      logBytes += chunk.length;
-    });
-    let exitStatus: number | null = null;
-    try {
-      exitStatus = await new Promise<number | null>((done) => {
-        child!.once("error", (error) => {
-          failure = error;
-        });
-        child!.once("close", (code) => done(code));
-      });
-    } finally {
-      clearTimeout(timer);
-      options.signal.removeEventListener("abort", abort);
-    }
-    const elapsedMs = performance.now() - started;
-    dependencies.onCommand?.({
-      command: [binary, ...args],
-      exitStatus,
-      stdoutBytes: bytes,
-      stderr,
-      elapsedMs,
-      terminated,
-    });
-    if (failure) throw failure;
-    checkAbort(options.signal);
-    if (exitStatus !== 0)
-      throw new Error(
-        `video.process_failed: tool exited ${exitStatus}: ${stderr.trim()}`,
-      );
-    if (fixed && bytes !== fixed.length)
-      throw new Error(
-        "video.frame_missing: decoder did not return exactly one complete RGBA frame",
-      );
-    return { stdout: fixed ?? Buffer.concat(chunks, bytes), stderr, elapsedMs };
-  } finally {
-    if (child && child.exitCode === null && child.signalCode === null) {
-      const joined = new Promise<void>((resolve) =>
-        child!.once("close", () => resolve()),
-      );
-      child.kill("SIGKILL");
-      await joined;
-    }
-    release();
-  }
-}
-
 export async function openVideoFrameSource(
   options: VideoFrameSourceOptions,
   dependencies: VideoFrameSourceDependencies = {},
@@ -295,82 +169,68 @@ export async function openVideoFrameSource(
       );
   };
   await checkSource();
-  const processOptions = {
-    env: options.env,
-    signal: lifetime,
-    stdoutLimit: limit(limits.maxIndexBytes, 16 * 1024 * 1024, "maxIndexBytes"),
-    stderrLimit: limit(limits.maxLogBytes, 1024 * 1024, "maxLogBytes"),
-    timeoutMs: limit(limits.processTimeoutMs, 60_000, "processTimeoutMs"),
-  };
-  const allocationLimit = String(
-    limit(limits.maxFrameBytes, 32 * 1024 * 1024, "maxFrameBytes") * 2,
-  );
-  const header = await capture(
-    options.ffprobePath ?? "ffprobe",
-    [
-      "-v",
-      "error",
-      "-max_alloc",
-      allocationLimit,
-      "-protocol_whitelist",
-      "file,pipe",
-      "-format_whitelist",
-      "mov,matroska,webm",
-      "-threads",
-      "1",
-      "-select_streams",
-      "v:0",
-      "-show_streams",
-      "-show_entries",
-      "stream=codec_name,width,height,pix_fmt,time_base,start_pts,duration_ts,color_transfer,color_primaries,color_space,color_range,field_order:stream_tags=rotate:stream_side_data=side_data_type,rotation,displaymatrix",
-      "-of",
-      "json",
-      path,
-    ],
-    {
-      ...processOptions,
-      stdoutLimit: Math.min(processOptions.stdoutLimit, 64 * 1024),
-    },
-    dependencies,
-  );
-  const headerValue = JSON.parse(header.stdout.toString("utf8"));
-  if (!Array.isArray(headerValue.streams) || headerValue.streams.length !== 1)
-    throw new Error(
-      "video.invalid_probe: exactly one selected video stream is required",
+  const media = dependencies.mediaRunner ?? runMediaOperation;
+  const timeoutMs = limit(limits.processTimeoutMs, 60_000, "processTimeoutMs");
+  const releaseProbe = await acquireMediaProcess(lifetime);
+  let probe: MediaProbe;
+  try {
+    probe = await media<MediaProbe>(
+      {
+        kind: "probe",
+        path,
+        frames: true,
+        maxFrames: limits.maxFrames ?? 250000,
+        maxIndexBytes: limits.maxIndexBytes ?? 16 * 1024 * 1024,
+        maxFrameBytes: limits.maxFrameBytes ?? 32 * 1024 * 1024,
+      },
+      { signal: lifetime, timeoutMs, env: options.env },
     );
-  parseVideoStreamHeader(headerValue.streams[0], limits);
-  await checkSource();
-  const probe = await capture(
-    options.ffprobePath ?? "ffprobe",
-    [
-      "-v",
-      "error",
-      "-max_alloc",
-      allocationLimit,
-      "-protocol_whitelist",
-      "file,pipe",
-      "-format_whitelist",
-      "mov,matroska,webm",
-      "-threads",
-      "1",
-      "-select_streams",
-      "v:0",
-      "-show_frames",
-      "-show_streams",
-      "-show_entries",
-      "stream=codec_name,width,height,pix_fmt,time_base,start_pts,duration_ts,color_transfer,color_primaries,color_space,color_range,field_order:stream_tags=rotate:stream_side_data=side_data_type,rotation,displaymatrix:frame=pts,best_effort_timestamp,key_frame,duration,pkt_duration,interlaced_frame",
-      "-of",
-      "json",
-      path,
-    ],
-    processOptions,
-    dependencies,
-  );
-  await checkSource();
+  } finally {
+    releaseProbe();
+  }
+  if (
+    Buffer.byteLength(JSON.stringify(probe)) >
+    limit(limits.maxIndexBytes, 16 * 1024 * 1024, "maxIndexBytes")
+  )
+    throw new Error("video.index_limit: media index exceeds byte budget");
+  const video = probe.video;
+  if (!video?.frames)
+    throw new Error(
+      "video.invalid_probe: selected video stream and PTS index required",
+    );
+  const color = video.colorSpace;
+  const transfer =
+    color?.transfer === "pq"
+      ? "smpte2084"
+      : color?.transfer === "hlg"
+        ? "arib-std-b67"
+        : (color?.transfer ?? "unknown");
   const metadata = buildVideoPtsIndex(
-    JSON.parse(probe.stdout.toString("utf8")),
+    {
+      streams: [
+        {
+          codec_name: video.codec === "avc" ? "h264" : video.codec,
+          width: video.codedWidth,
+          height: video.codedHeight,
+          pix_fmt: "rgba",
+          time_base: `${video.timeBase.numerator}/${video.timeBase.denominator}`,
+          tags: { rotate: -video.rotation },
+          color_transfer: transfer,
+          color_primaries: video.colorSpace?.primaries,
+          color_space:
+            color?.matrix === "bt2020-ncl" ? "bt2020nc" : color?.matrix,
+          color_range: video.colorSpace?.fullRange ? "pc" : "tv",
+        },
+      ],
+      frames: video.frames.map((frame) => ({
+        pts: frame.pts,
+        key_frame: frame.keyframe ? 1 : 0,
+        duration: frame.duration,
+      })),
+    },
     limits,
   );
+  await checkSource();
   const cacheBudget = limit(
     limits.maxCacheBytes,
     metadata.frameBytes * 4,
@@ -394,108 +254,54 @@ export async function openVideoFrameSource(
     4,
     "maxDecoderCursors",
   );
-  interface Cursor {
-    decoder: SequentialDecoder;
-    nextIndex?: number;
-  }
-  const cursors: Cursor[] = [];
-  const createCursor = (): Cursor => ({
-    decoder: createSequentialVideoDecoder({
-      binary: options.ffmpegPath ?? "ffmpeg",
-      env: options.env,
-      metadata,
-      maxDecodeFrames,
-      maxLogBytes: processOptions.stderrLimit,
-      timeoutMs: processOptions.timeoutMs,
-      signal: lifetime,
-      spawn: dependencies.spawn,
-      onCommand: dependencies.onCommand,
-      args(startFrameIndex, outputFrameIndex) {
-        const keyframe = metadata.frames[startFrameIndex]!,
-          outputFrame = metadata.frames[outputFrameIndex]!,
-          base = metadata.timeBase,
-          filter = [
-            `settb=expr=${base.numerator}/${base.denominator}`,
-            `select=gte(pts\\,${outputFrame.pts})`,
-            ...videoNormalizationFilters(metadata),
-          ].join(",");
-        const args = [
-          "-hide_banner",
-          "-nostdin",
-          "-nostats",
-          "-loglevel",
-          "info",
-          "-max_alloc",
-          allocationLimit,
-          "-copyts",
-          "-protocol_whitelist",
-          "file,pipe",
-          "-format_whitelist",
-          "mov,matroska,webm",
-          "-threads",
-          "1",
-          "-noautorotate",
-        ];
-        if (startFrameIndex > 0)
-          args.push(
-            "-seek_timestamp",
-            "1",
-            "-noaccurate_seek",
-            "-ss",
-            videoSeekTimestamp(keyframe.pts, base),
-          );
-        args.push(
-          "-i",
-          path,
-          "-map",
-          "0:v:0",
-          "-an",
-          "-sn",
-          "-dn",
-          "-vf",
-          filter,
-          "-fps_mode",
-          "passthrough",
-          "-filter_threads",
-          "1",
-          "-threads",
-          "1",
-          "-f",
-          "rawvideo",
-          "-pix_fmt",
-          "rgba",
-          "pipe:1",
-        );
-        return args;
-      },
-    }),
-  });
-  const cursorFor = (frameIndex: number): Cursor => {
-    const sequential = cursors
-      .filter(
-        (cursor) =>
-          cursor.nextIndex !== undefined &&
-          frameIndex >= cursor.nextIndex &&
-          frameIndex - cursor.nextIndex <= 8,
-      )
-      .sort(
-        (left, right) =>
-          frameIndex - left.nextIndex! - (frameIndex - right.nextIndex!),
-      )[0];
-    if (sequential) return sequential;
-    const reset = cursors.find((cursor) => cursor.nextIndex === undefined);
-    if (reset) return reset;
-    if (cursors.length < maxDecoderCursors) {
-      const cursor = createCursor();
-      cursors.push(cursor);
-      return cursor;
+  const sessionId = Symbol("video source");
+  const createSession =
+    dependencies.mediaSessionFactory ??
+    (dependencies.mediaRunner
+      ? async () => ({ run: media, close: async () => {} })
+      : createMediaSession);
+  let session: MediaSession | undefined,
+    releaseSession: (() => void) | undefined;
+  let sessionClosing = Promise.resolve();
+  const stopSession = (): Promise<void> => {
+    markMediaProcessActive(sessionId);
+    const stopping = session,
+      release = releaseSession;
+    session = undefined;
+    releaseSession = undefined;
+    if (stopping)
+      sessionClosing = sessionClosing.then(async () => {
+        try {
+          await stopping.close();
+        } finally {
+          release?.();
+        }
+      });
+    return sessionClosing;
+  };
+  const closeOnAbort = () => {
+    void stopSession().catch(() => {});
+  };
+  lifetime.addEventListener("abort", closeOnAbort, { once: true });
+  const getSession = async (signal: AbortSignal): Promise<MediaSession> => {
+    markMediaProcessActive(sessionId);
+    await sessionClosing;
+    checkAbort(signal);
+    if (!session) {
+      const release = await acquireMediaProcess(signal);
+      try {
+        session = await createSession({
+          signal: lifetime,
+          timeoutMs,
+          env: options.env,
+        });
+        releaseSession = release;
+      } catch (error) {
+        release();
+        throw error;
+      }
     }
-    return cursors.reduce((nearest, cursor) =>
-      Math.abs(frameIndex - cursor.nextIndex!) <
-      Math.abs(frameIndex - nearest.nextIndex!)
-        ? cursor
-        : nearest,
-    );
+    return session;
   };
   let tail = Promise.resolve(),
     closed = false,
@@ -536,13 +342,60 @@ export async function openVideoFrameSource(
             throw new Error(
               "video.seek_limit: selected frame is too far from an indexed keyframe",
             );
-          const cursor = cursorFor(frame.index);
+          const decoder = await getSession(requestSignal);
+          const workspace = await mediaWorkspace();
           try {
-            rgba = await cursor.decoder.decode(frame.index, requestSignal);
-            cursor.nextIndex = frame.index + 1;
+            const outputPath = join(workspace.path, "frame.rgba");
+            const result = await decoder.run<{
+              timestamp: number;
+              width: number;
+              height: number;
+              normalization?: string;
+            }>(
+              {
+                kind: "frame",
+                path,
+                timestamp: frame.seconds,
+                outputPath,
+                format: "rgba",
+              },
+              { signal: requestSignal, timeoutMs, env: options.env },
+            );
+            if (
+              Math.round(
+                (result.timestamp * metadata.timeBase.denominator) /
+                  metadata.timeBase.numerator,
+              ) !== frame.pts
+            )
+              throw new Error(
+                "video.frame_pts_mismatch: decoded presentation timestamp differs from selected frame",
+              );
+            if (
+              metadata.normalization === "hdr-to-sdr-bt709" &&
+              result.normalization !== "hdr-to-sdr-bt709"
+            )
+              throw new Error(
+                "video.unsupported_color: decoder did not verify the requested HDR normalization",
+              );
+            rgba = await readFile(outputPath);
+            if (
+              rgba.length !== metadata.frameBytes ||
+              result.width !== metadata.width ||
+              result.height !== metadata.height
+            )
+              throw new Error(
+                "video.frame_missing: decoder did not return exactly one complete RGBA frame",
+              );
           } catch (error) {
-            cursor.nextIndex = undefined;
+            await stopSession();
+            if (requestSignal.aborted) throw cancelled(requestSignal);
             throw error;
+          } finally {
+            await workspace.close();
+            if (session)
+              markMediaProcessIdle(sessionId, () => {
+                void stopSession().catch(() => {});
+              });
           }
           await checkSource();
           checkAbort(requestSignal);
@@ -577,7 +430,8 @@ export async function openVideoFrameSource(
         owner.abort();
         cache.clear();
         closePromise = tail.then(async () => {
-          await Promise.all(cursors.map((cursor) => cursor.decoder.close()));
+          await stopSession();
+          lifetime.removeEventListener("abort", closeOnAbort);
           cache.clear();
         });
       }
@@ -589,7 +443,7 @@ export async function openVideoFrameSource(
       cacheHits: hits,
       decodedFrames: decoded,
       pendingRequests: pending,
-      decoderCursors: cursors.length,
+      decoderCursors: session ? 1 : 0,
       maxDecoderCursors,
       maxLiveMediaProcesses: maximumLiveMediaProcesses,
       closed,

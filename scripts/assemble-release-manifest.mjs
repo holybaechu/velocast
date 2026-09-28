@@ -101,7 +101,7 @@ for (const id of selectedIds) {
     "npmRender",
     "pnpmRender",
     "deterministicRepeat",
-    "softwareFallback",
+    "softwarePreference",
   ];
   if (
     consumer.status !== "PASS" ||
@@ -124,7 +124,7 @@ for (const id of selectedIds) {
       throw new Error(`release.render_evidence_missing: ${manager}/${id}`);
     }
     const verifyArgs = [
-      join(repoRoot, "scripts", "verify-consumer-render.py"),
+      join(repoRoot, "scripts", "verify-consumer-render.mjs"),
       "--video",
       video,
       "--report",
@@ -139,7 +139,7 @@ for (const id of selectedIds) {
       }
       verifyArgs.push("--compare", repeat);
     }
-    execFileSync(pythonCommand(), verifyArgs, {
+    execFileSync(process.execPath, verifyArgs, {
       cwd: repoRoot,
       stdio: "inherit",
     });
@@ -305,8 +305,4 @@ function requirementsSha256(requirements) {
       }),
     )
     .digest("hex");
-}
-
-function pythonCommand() {
-  return process.platform === "win32" ? "python.exe" : "python3";
 }

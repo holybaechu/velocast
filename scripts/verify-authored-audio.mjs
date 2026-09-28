@@ -90,7 +90,7 @@ const env = { ...process.env, TEMP: join(directory, "cache"), TMP: join(director
 async function render(name, snapshot, extra = {}, expectedFailure = false) {
   const output = join(directory, `${name}.mp4`);
   const job = { mode: "composition", composition_id: "audio-hero", serve_url: snapshot.url,
-    render_session: snapshot.session, output, codec: "libx264", acceleration: "off",
+    render_session: snapshot.session, output, codec: "h264", acceleration: "off",
     concurrency: 1, assembly_mode: "reference", report_path: join(directory, `${name}.report.json`),
     result_path: join(directory, `${name}.result.json`), ...extra };
   const completed = events.findLast((event) => event.name === name && event.exitStatus === 0 && !event.error);

@@ -2,14 +2,13 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, appendFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 
 const projectPath = process.env.VELOCAST_PREVIEW_GATE_PROJECT;
-const ffmpeg = process.env.VELOCAST_PREVIEW_GATE_FFMPEG_BIN;
 const cliPath = process.env.VELOCAST_PREVIEW_GATE_CLI;
-if (!projectPath || !ffmpeg || !cliPath)
+if (!projectPath || !cliPath)
   throw new Error(
-    "Set VELOCAST_PREVIEW_GATE_PROJECT, VELOCAST_PREVIEW_GATE_CLI, and VELOCAST_PREVIEW_GATE_FFMPEG_BIN to an installed external consumer",
+    "Set VELOCAST_PREVIEW_GATE_PROJECT and VELOCAST_PREVIEW_GATE_CLI to an installed external consumer",
   );
 const project = new URL(`file:///${resolve(projectPath).replaceAll("\\", "/")}/`);
 const authoredPath = join(projectPath, "dist/index.html");
@@ -21,7 +20,7 @@ const config = process.env.VELOCAST_PREVIEW_GATE_CONFIG ??
     : "velocast.config.ts");
 const server = spawn(process.execPath, [cli, "preview", "--config", config, "--port", "0", "--json", "--input-props-file", "props.json", "--output-directory", "../output"], {
   cwd: projectPath,
-  env: { ...process.env, INIT_CWD: projectPath, PATH: `${ffmpeg};${process.env.PATH}` },
+  env: { ...process.env, INIT_CWD: projectPath },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let serverLog = "";
@@ -117,5 +116,8 @@ try {
   server.kill();
   await wait(1000);
   await writeFile(authoredPath, authoredBefore);
-  await rm(profile, { recursive: true, force: true }).catch(() => {});
+  const ownedProfile = resolve(profile);
+  if (ownedProfile.startsWith(resolve(tmpdir()) + sep) &&
+      basename(ownedProfile).startsWith("velocast-official-preview-"))
+    await rm(ownedProfile, { recursive: true, force: true }).catch(() => {});
 }

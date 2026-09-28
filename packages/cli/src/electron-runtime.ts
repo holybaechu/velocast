@@ -53,8 +53,8 @@ export function inspectElectronRuntime(
     const native = file(record.renderer);
     if (realpathSync(native) !== realpathSync(renderer))
       throw new Error("manifest names a different renderer");
-    file(record.ffmpeg);
-    file(record.ffprobe);
+    file(record.mediaClient);
+    file(record.mediaBundle);
     return {
       root,
       renderer: native,

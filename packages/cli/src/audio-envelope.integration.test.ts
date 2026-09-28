@@ -2,13 +2,11 @@ import { expect, it } from "vitest";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
 import { sliceAudioPlan, type AudioPlan } from "@velocast/core";
-import { buildAudioPlanFfmpegCommand } from "./audio-plan-ffmpeg.js";
 import { renderAudioPlanPcm } from "./audio-plan-render.js";
 import { mixAudioPlanPcm } from "./audio-pcm-reference.js";
 
-it("real FFmpeg sample fades/ducking match PCM oracle and full-versus-range samples", async () => {
+it("real WebCodecs sample fades/ducking match PCM oracle and full-versus-range samples", async () => {
   const root = await mkdtemp(join(tmpdir(), "velocast-envelope-"));
   try {
     const source = join(root, "input.wav");
@@ -84,12 +82,6 @@ it("real FFmpeg sample fades/ducking match PCM oracle and full-versus-range samp
       ],
     };
     const largePath = join(root, "large-production.f32");
-    expect(
-      buildAudioPlanFfmpegCommand(large, {
-        outputPath: largePath,
-        channelCount: 2,
-      }).filterGraph.length,
-    ).toBeGreaterThan(32767);
     await renderAudioPlanPcm(large, { outputPath: largePath, channelCount: 2 });
     const largeBytes = await readFile(largePath);
     const largeReference = mixAudioPlanPcm(
@@ -110,15 +102,9 @@ it("real FFmpeg sample fades/ducking match PCM oracle and full-versus-range samp
     expect(largeError).toBeLessThan(1e-7);
     const outputs: Buffer[] = [];
     for (const [index, selected] of [plan, range, dense].entries()) {
-      const command = buildAudioPlanFfmpegCommand(selected, {
-        outputPath: join(root, `${index}.f32`),
-        channelCount: 2,
-      });
-      const result = spawnSync("ffmpeg", [...command.args], {
-        encoding: "utf8",
-      });
-      expect(result.status, result.stderr).toBe(0);
-      const output = await readFile(command.outputPath);
+      const outputPath = join(root, `${index}.f32`);
+      await renderAudioPlanPcm(selected, { outputPath, channelCount: 2 });
+      const output = await readFile(outputPath);
       outputs.push(output);
       const reference = mixAudioPlanPcm(
         selected,
@@ -151,4 +137,4 @@ it("real FFmpeg sample fades/ducking match PCM oracle and full-versus-range samp
     expect(dirname(resolve(root))).toBe(resolve(tmpdir()));
     await rm(root, { recursive: true, force: true });
   }
-});
+}, 120_000);

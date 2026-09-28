@@ -1,7 +1,7 @@
 # Original Remotion projects as Velocast sources
 
 `@velocast/remotion-source` loads an original project's installed Remotion,
-bundler, renderer, React, and React DOM through a Node source adapter.
+bundler, React, and React DOM through a Node source adapter.
 Original `registerRoot`, `Composition`, hooks, sequences, media, and
 `calculateMetadata` run upstream.
 
@@ -26,13 +26,15 @@ velocast frame MyVideo --frame 42 --output renders/frame.png
 velocast render MyVideo --output renders/video.mp4 --input-props-file props.json
 ```
 
-Discovery and inspection use upstream metadata without a native renderer.
-For upstream reference capture, set `backend: "reference"` in
-`remotionSource(...)`. The native path uses normal renderer settings. Reference
-capture rejects options it cannot honor.
+Discovery and inspection use Velocast's browser session to read original
+Remotion metadata without a native renderer. For source-owned Chrome or Edge
+reference capture, set `backend: "reference"` in `remotionSource(...)`.
+That route captures PNG frames through CDP, then encodes the video with
+WebCodecs. The native path uses normal renderer settings. Reference capture
+rejects options it cannot honor.
 
-The project's `remotion`, `@remotion/bundler`, and `@remotion/renderer`
-versions must match exactly. React and React DOM must resolve to one shared
+The project's `remotion` and `@remotion/bundler` versions must match exactly.
+React and React DOM must resolve to one shared
 installation. The source package resolves from the entry project and rejects
 fallback to Velocast's dependency tree. Only one upstream Remotion version
 can load per Node process.
@@ -43,12 +45,20 @@ version profiles are checked before use. The separate
 `@velocast/remotion` package is a bounded JSX compatibility bridge with its
 own pinned dependencies.
 
-The adapter prepares the original bundle and media server. Its browser bridge
-drives upstream frames and readiness while the common Velocast output
-coordinator handles capture and publication. Native full video output performs
-a separate upstream audio pass and copies finished AAC into the result.
-Reference capture renders video and audio together. Failure before publication
-preserves a previous completed output.
+The adapter prepares the original bundle and a local media server. Velocast's
+browser bridge selects compositions and captures frames; it does not launch
+Remotion's rendering compositor. The original Remotion packages remain the
+authoring and bundling inputs. Offthread video frames use Velocast's source
+decoder. Mounted audio declarations are collected into a frozen sample plan;
+the audio renderer writes a WAV intermediate for Mediabunny to encode
+and mux with the WebCodecs video. Both source capture backends include audio.
+Failure before publication preserves a
+previous completed output.
+
+Audio transforms such as `playbackRate` other than 1 or `toneFrequency` are
+rejected with `remotion.audio_transform_unsupported`. Preprocess the source
+audio for the intended pitch or tempo, then use `playbackRate={1}`. The audio
+intermediate format is WAV.
 
 Source adapters currently support discovery, inspection, PNG frames, and
 complete MP4 output. Public frame ranges and the Velocast preview UI are not

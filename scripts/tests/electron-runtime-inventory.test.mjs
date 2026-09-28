@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,13 +17,16 @@ test("native artifact verifies Electron runtime identity and every staged hash",
   };
   const renderer = join(root, "velocast-renderer.exe");
   writeFileSync(renderer, "renderer");
-  const files = [
-    {
-      path: "velocast-renderer.exe",
-      size: 8,
-      sha256: createHash("sha256").update(readFileSync(renderer)).digest("hex"),
-    },
-  ];
+  const paths = ["velocast-renderer.exe", "electron-host/media-client.cjs", "electron-host/media-runtime.cjs", "electron-host/node_modules/mediabunny/package.json", "electron-host/node_modules/mediabunny/LICENSE"];
+  for (const path of paths.slice(1)) {
+    mkdirSync(join(root, path, ".."), { recursive: true });
+    writeFileSync(join(root, path), "fixture");
+  }
+  const files = paths.map((path) => ({
+    path,
+    size: readFileSync(join(root, path)).length,
+    sha256: createHash("sha256").update(readFileSync(join(root, path))).digest("hex"),
+  }));
   const manifest = {
     schema: "velocast-electron-runtime-v1",
     status: expected.status,
@@ -35,12 +38,15 @@ test("native artifact verifies Electron runtime identity and every staged hash",
     renderer: "velocast-renderer.exe",
     electron: "electron/electron.exe",
     hostScript: "electron-host/main.cjs",
-    ffmpeg: "ffmpeg.exe",
-    ffprobe: "ffprobe.exe",
+    mediaClient: "electron-host/media-client.cjs",
+    mediaBundle: "electron-host/media-runtime.cjs",
+    mediaPackage: "electron-host/node_modules/mediabunny",
     rendererCapabilities: {
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 1,
+      electronHostProtocolVersion: 2,
+      videoEncoderBackend: "webcodecs",
+      mediaRuntime: "mediabunny",
     },
     files,
   };
@@ -59,7 +65,7 @@ test("native artifact verifies Electron runtime identity and every staged hash",
       }),
     /identity or provenance differs/,
   );
-  manifest.files = [{ ...files[0], sha256: "0".repeat(64) }];
+  manifest.files = [{ ...files[0], sha256: "0".repeat(64) }, ...files.slice(1)];
   writeMarker();
   assert.throws(
     () => verifyElectronRuntimeInventory(root, files, expected),

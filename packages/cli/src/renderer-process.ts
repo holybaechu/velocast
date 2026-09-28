@@ -925,22 +925,35 @@ export async function terminateRendererProcess(
     return;
   }
   if (process.platform === "win32" && child.pid !== undefined) {
+    const pid = child.pid;
     await new Promise<void>((resolve, reject) => {
-      const killer = spawn(
-        "taskkill",
-        ["/pid", String(child.pid), "/t", "/f"],
-        {
-          stdio: "ignore",
-          windowsHide: true,
-        },
-      );
-      killer.once("error", reject);
-      killer.once("exit", (code) => {
-        if (code === 0 || rendererProcessHasExited(child)) {
+      const killer = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      let launchError: Error | undefined;
+      killer.once("error", (error) => {
+        launchError = error;
+      });
+      killer.once("close", (code) => {
+        if (rendererProcessHasExited(child) || (code === 0 && !launchError)) {
           resolve();
           return;
         }
-        reject(new Error(`taskkill exited with code ${code ?? -1}`));
+        // Windows can observe the process disappearing before libuv delivers
+        // the renderer's exit event. Inspect only our PID, without a signal;
+        // permission failures do not establish that the process is gone.
+        try {
+          process.kill(pid, 0);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+            resolve();
+            return;
+          }
+        }
+        reject(
+          launchError ?? new Error(`taskkill exited with code ${code ?? -1}`),
+        );
       });
     });
     return;

@@ -58,7 +58,7 @@ describe("remotionSource", () => {
   });
 
   it("prepares native capture and delegates audio to Remotion", async () => {
-    const renderAudio = vi.fn().mockResolvedValue("C:/tmp/audio.aac");
+    const renderAudio = vi.fn().mockResolvedValue("C:/tmp/audio.wav");
     const close = vi.fn().mockResolvedValue(undefined);
     host.prepare.mockResolvedValue({
       composition,
@@ -76,8 +76,8 @@ describe("remotionSource", () => {
     expect(prepared.renderVideo).toBeUndefined();
     await expect(
       prepared.renderAudio!("C:/tmp/audio.wav", new AbortController().signal),
-    ).resolves.toBe("C:/tmp/audio.aac");
-    expect(renderAudio).toHaveBeenCalledWith("C:/tmp/audio.aac");
+    ).resolves.toBe("C:/tmp/audio.wav");
+    expect(renderAudio).toHaveBeenCalledWith("C:/tmp/audio.wav");
     await prepared.close();
     expect(close).toHaveBeenCalledOnce();
   });

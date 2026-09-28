@@ -16,7 +16,10 @@ const caps = {
   outputApiVersion: 1,
   browserHosts: ["electron"],
   defaultBrowserHost: "electron",
-  electronHostProtocolVersion: 1,
+  electronHostProtocolVersion: 2,
+  videoEncoderBackend: "webcodecs",
+  mediaRuntime: "mediabunny",
+  hardwareAccelerationGuarantee: false,
 };
 function fixture(platform: NodeJS.Platform = "win32") {
   const cwd = mkdtempSync(join(tmpdir(), "velocast-discovery-"));

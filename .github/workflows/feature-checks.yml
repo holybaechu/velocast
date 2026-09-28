@@ -19,6 +19,10 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2022]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/velocast-cargo
+      TURBO_CACHE_DIR: ${{ runner.temp }}/velocast-turbo-cache
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -27,17 +31,23 @@ jobs:
           node-version: 24
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install media test tools (Linux)
+      - name: Install Electron display dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
-      - name: Install media test tools (Windows)
-        if: runner.os == 'Windows'
-        run: choco install ffmpeg --yes --no-progress
-      - name: Verify media test tools
-        run: |
-          ffmpeg -version
-          ffprobe -version
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm check:fast
+      - name: Install the pinned Electron runtime
+        run: node packages/electron-host/node_modules/electron/install.js
+      - name: Configure Electron's Linux sandbox helper
+        if: runner.os == 'Linux'
+        run: |
+          sandbox="$(node -p "require('node:path').join(require('node:path').dirname(require('./packages/electron-host/node_modules/electron')), 'chrome-sandbox')")"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
+      - name: Run feature checks with a display (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm check:fast
+      - name: Run feature checks (Windows)
+        if: runner.os == 'Windows'
+        run: pnpm check:fast

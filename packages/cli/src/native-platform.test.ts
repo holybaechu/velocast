@@ -5,21 +5,6 @@ import {
   resolveNativeRendererPlatform,
 } from "./native-platform.js";
 
-const windowsD3D11FfmpegEncoders = [
-  "h264_amf",
-  "h264_nvenc",
-  "h264_qsv",
-  "h264_mf",
-  "hevc_amf",
-  "hevc_nvenc",
-  "hevc_qsv",
-  "hevc_mf",
-  "av1_amf",
-  "av1_nvenc",
-  "av1_qsv",
-  "av1_mf",
-];
-
 describe("native renderer platform descriptors", () => {
   it("describes the packaged Linux x64 renderer in one place", () => {
     const platform = resolveNativeRendererPlatform("linux", "x64");
@@ -33,37 +18,22 @@ describe("native renderer platform descriptors", () => {
     });
     expect(
       platform?.requiredGpuBackends.map((backend) => backend.backend),
-    ).toEqual([]);
+    ).toEqual(["webcodecs"]);
     expect(
       platform?.requiredGpuBackends.map(
         (backend) => backend.packetWriterImplemented,
       ),
-    ).toEqual([]);
+    ).toEqual([true]);
   });
 
-  it("describes Windows D3D11 FFmpeg hardware encoder probes", () => {
+  it("describes WebCodecs without claiming a hardware guarantee", () => {
     const platform = resolveNativeRendererPlatform("win32", "x64");
-
-    expect(platform).toMatchObject({
-      id: "win32-x64",
-      executableName: "velocast-renderer.exe",
-    });
-    expect(
-      platform?.requiredGpuBackends.map((backend) => backend.backend),
-    ).toEqual(windowsD3D11FfmpegEncoders);
-    expect(
-      platform?.requiredGpuBackends.map((backend) => backend.ffmpegEncoder),
-    ).toEqual(windowsD3D11FfmpegEncoders);
-    expect(
-      platform?.requiredGpuBackends.map(
-        (backend) => backend.packetWriterImplemented,
-      ),
-    ).toEqual(windowsD3D11FfmpegEncoders.map(() => true));
-    expect(
-      platform?.requiredGpuBackends.some(
-        (backend) => backend.unavailableReason !== undefined,
-      ),
-    ).toBe(false);
+    expect(platform?.requiredGpuBackends).toEqual([
+      expect.objectContaining({
+        backend: "webcodecs",
+        packetWriterImplemented: true,
+      }),
+    ]);
   });
 
   it("keeps native platform ids unique", () => {

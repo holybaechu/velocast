@@ -52,8 +52,7 @@ export interface DoctorProbeInput {
   requiredGpuPrerequisites?: DoctorGpuPrerequisite[];
   requiredGpuBackends?: DoctorRequiredGpuBackendProbe[];
   displayVariablesUnset?: boolean;
-  ffmpegPresent: boolean;
-  softwareFallbackAvailable: boolean;
+  webCodecsAvailable: boolean;
   requiredGpuPacketWriterAvailable?: boolean;
 }
 
@@ -68,8 +67,10 @@ export interface DoctorReport {
     reason?: string;
     diagnostics?: DoctorRequiredGpuDiagnostic[];
   };
-  softwareFallback: {
+  webCodecs: {
     available: boolean;
+    hardwareAcceleration: "preference";
+    hardwareOnlyGuarantee: false;
     reason?: string;
   };
 }
@@ -81,12 +82,21 @@ export function buildDoctorReport(input: DoctorProbeInput): DoctorReport {
     arch: input.arch,
     rendererBinary: input.rendererBinary,
     requiredGpu,
-    softwareFallback:
-      input.softwareFallbackAvailable &&
+    webCodecs:
+      input.webCodecsAvailable &&
       !!input.rendererBinary &&
       input.browserRuntime?.available === true
-        ? { available: true }
-        : { available: false, reason: "software fallback unavailable" },
+        ? {
+            available: true,
+            hardwareAcceleration: "preference",
+            hardwareOnlyGuarantee: false,
+          }
+        : {
+            available: false,
+            hardwareAcceleration: "preference",
+            hardwareOnlyGuarantee: false,
+            reason: "WebCodecs runtime unavailable",
+          },
   };
 }
 
@@ -123,7 +133,7 @@ function requiredGpuStatus(
     !input.browserRuntime.gpuCaptureSupported
   ) {
     const reason =
-      "Electron native GPU capture is currently implemented on Windows; software capture is available on this platform";
+      "WebCodecs cannot verify a hardware-only guarantee; use acceleration auto or off with a logical codec";
     return {
       available: false,
       reason,

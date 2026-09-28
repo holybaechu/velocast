@@ -9,5 +9,8 @@
   },
   "devDependencies": {
     "electron": "44.4.5"
+  },
+  "dependencies": {
+    "mediabunny": "1.60.0"
   }
 }

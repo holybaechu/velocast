@@ -17,10 +17,9 @@ afterEach(async () => {
 async function project(
   options: {
     version?: string;
-    rendererVersion?: string;
+    bundlerVersion?: string;
     reactVersion?: string;
     reactDomVersion?: string;
-    missingCapability?: boolean;
     duplicateReact?: boolean;
     importError?: string;
   } = {},
@@ -31,8 +30,7 @@ async function project(
   const reactVersion = options.reactVersion ?? "18.3.1";
   const packages = {
     remotion: version,
-    "@remotion/bundler": version,
-    "@remotion/renderer": options.rendererVersion ?? version,
+    "@remotion/bundler": options.bundlerVersion ?? version,
     react: reactVersion,
     "react-dom": options.reactDomVersion ?? reactVersion,
   };
@@ -50,13 +48,6 @@ async function project(
     options.importError
       ? `throw new TypeError(${JSON.stringify(options.importError)});`
       : "exports.bundle = () => 'project-local';",
-  );
-  await writeFile(
-    join(directory, "node_modules/@remotion/renderer/index.js"),
-    `
-    for (const name of ['openBrowser','makeCancelSignal','getCompositions','selectComposition','renderMedia',${options.missingCapability ? "" : "'renderStill'"}]) exports[name] = () => {};
-    exports.RenderInternals = { serveStatic() {}, makeDownloadMap() {} };
-  `,
   );
   const modern = version !== "4.0.244";
   await writeFile(
@@ -109,7 +100,7 @@ it.each([
 );
 
 it("rejects mismatched Remotion packages before loading their code", async () => {
-  const entry = await project({ rendererVersion: "4.0.529" });
+  const entry = await project({ bundlerVersion: "4.0.529" });
   expect(() => loadProjectRemotionRuntime(entry)).toThrow(
     "Remotion packages must have matching versions",
   );
@@ -125,11 +116,9 @@ it.each(["4.0.245", "4.0.530", "5.0.0", "4.0.529-beta.1"])(
   },
 );
 
-it("reports missing capabilities in otherwise matching installations", async () => {
-  const entry = await project({ missingCapability: true });
-  expect(() => loadProjectRemotionRuntime(entry)).toThrow(
-    "missing required capability renderStill",
-  );
+it("does not require the native upstream renderer package", async () => {
+  const entry = await project();
+  expect(() => loadProjectRemotionRuntime(entry)).not.toThrow();
 });
 
 it("rejects two React installations even when their versions match", async () => {

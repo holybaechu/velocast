@@ -46,13 +46,13 @@ describe("loadConfigFromPath", () => {
     expect(config.entry).toBe(join(directory, "index.html"));
   });
 
-  it("loads the playground accelerated renderer defaults", async () => {
+  it("loads the playground WebCodecs renderer defaults", async () => {
     const config = await loadConfigFromPath(
       "apps/playground/velocast.config.ts",
     );
-    expect(config.renderer?.acceleration).toBe("required");
-    expect(config.renderer?.concurrency).toBe("auto");
-    expect(config.renderer?.pixelFormat).toBe("nv12");
+    expect(config.renderer?.acceleration).toBe("auto");
+    expect(config.renderer?.concurrency).toBe(1);
+    expect(config.renderer?.pixelFormat).toBe("yuv420p");
   });
 
   it("resolves default config paths from the original invocation directory", async () => {

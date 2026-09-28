@@ -30,19 +30,20 @@ is applied to the returned display-oriented RGBA. Explicitly tagged PQ/HLG
 BT.2020 inputs are tone-mapped to SDR BT.709; ambiguous HDR metadata is
 rejected. HDR output is outside this decoder boundary.
 
-The decoder seeks from an indexed keyframe, preserves source timestamps, and
-checks each returned frame's PTS, dimensions, format, and checksum against its
-bytes. Nearby forward requests reuse a live decoder; repeats use a bounded
-cache. Reverse or distant seeks start from an appropriate keyframe. It never
+The decoder indexes source timestamps, checks each returned frame's PTS and
+dimensions, and returns caller-owned RGBA bytes. Forward requests reuse one
+persistent seekable Mediabunny decoder per source; repeated frames use a
+bounded cache. Reverse and distant requests seek within that session. It never
 extracts a whole clip to raw frames on disk.
 
 Default bounds include 512 MiB encoded input, 16 MiB or 250,000 index frames,
-32 MiB RGBA frame, eight live media-tool processes across the Node process,
-four warm cursors per source, sixteen queued requests per source, and four
-cached frames. `maxDecoderCursors` and `maxCacheBytes` can lower those
-limits. They do not bound codec process memory or caller-retained arrays.
-Cancellation joins the active child before settling; closing drains work,
-joins children, and clears the cache.
+32 MiB RGBA frame, eight live Electron media processes across the Node
+process, sixteen queued requests per source, and four cached frames.
+`maxDecoderCursors` remains a compatibility ceiling of four, while the runtime
+uses one persistent session per source. `maxCacheBytes` can lower the cache
+limit. These bounds do not include Chromium codec memory or caller-retained
+arrays. Cancellation closes the active session before settling; closing drains
+work, reaps the host, and clears the cache.
 
-Focused unit and FFmpeg integration tests live beside the decoder source.
+Focused unit and browser media integration tests live beside the decoder source.
 See [authored audio](authored-audio.md) for the separate sound path.

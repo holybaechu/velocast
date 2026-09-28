@@ -70,10 +70,10 @@ function fixture(behavior = "ok") {
   return { state, session: new CodecSession(Encoder, Frame), imported };
 }
 
-test("configuration uses baseline Annex B, quality mode and a hardware preference", () => {
+test("configuration uses baseline AVCC, quality mode and a hardware preference", () => {
   const config = encoderConfig(settings);
   assert.equal(config.codec, "avc1.42001f");
-  assert.equal(config.avc.format, "annexb");
+  assert.equal(config.avc.format, "avc");
   assert.equal(config.latencyMode, "quality");
   assert.equal(config.hardwareAcceleration, "prefer-hardware");
   assert.equal(
@@ -81,7 +81,7 @@ test("configuration uses baseline Annex B, quality mode and a hardware preferenc
     "avc1.420032",
   );
   assert.throws(
-    () => encoderConfig({ ...settings, bitrate: 241_000_000 }),
+    () => encoderConfig({ ...settings, codec: "h264", bitrate: 241_000_000 }),
     /unsupported_config/,
   );
   for (const invalid of [

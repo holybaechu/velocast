@@ -148,42 +148,32 @@ export function median(values) {
     : (ordered[middle - 1] + ordered[middle]) / 2;
 }
 
-export function assertGpuTelemetry(report, backend, expectedFrames) {
+export function assertWebCodecsTelemetry(report, backend, expectedFrames) {
   if (backend !== "electron")
     throw new Error("Only the Electron browser host is supported");
-  const capture = "electron_d3d11_shared_texture";
-  if (report.capture_backend !== capture)
+  const captures = ["electron_shared_texture", "electron_software_bgra"];
+  if (!captures.includes(report.capture_backend))
     throw new Error(
-      `capture_backend ${report.capture_backend}; expected ${capture}`,
+      `capture_backend ${report.capture_backend}; expected Electron capture`,
+    );
+  if (report.conversion_backend !== "chromium_webcodecs")
+    throw new Error(
+      `conversion_backend ${report.conversion_backend} is not Chromium WebCodecs`,
+    );
+  if (!/^electron_webcodecs_(h264|hevc|av1)$/.test(report.encoder_backend ?? ""))
+    throw new Error(
+      `encoder_backend ${report.encoder_backend} is not WebCodecs`,
     );
   if (
-    !["d3d11_video_processor", "d3d11_shader_nv12"].includes(
-      report.conversion_backend,
-    )
-  )
-    throw new Error(
-      `conversion_backend ${report.conversion_backend} is not D3D11 GPU conversion`,
-    );
-  if (
-    !/^(h264|hevc|av1)_(amf|nvenc|qsv|mf)$/.test(report.encoder_backend ?? "")
-  )
-    throw new Error(
-      `encoder_backend ${report.encoder_backend} is not a Windows hardware encoder`,
-    );
-  if (
-    report.cpu_readback_frames !== 0 ||
-    report.fallback_used ||
     report.dropped_frames !== 0 ||
     report.stale_frames !== 0
   )
     throw new Error(
-      `GPU fallback/readback/drop/stale: ${JSON.stringify(report)}`,
+      `WebCodecs frame drop/stale: ${JSON.stringify(report)}`,
     );
   for (const field of ["frames_expected", "frames_rendered", "frames_encoded"])
     if (report[field] !== expectedFrames)
       throw new Error(`${field} ${report[field]}; expected ${expectedFrames}`);
-  if (report.surface_format_encoder !== "nv12")
-    throw new Error(`surface_format_encoder ${report.surface_format_encoder}`);
   if (!(report.total_wall_ms > 0))
     throw new Error("native total_wall_ms was not positive");
 }

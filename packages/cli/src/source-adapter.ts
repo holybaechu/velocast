@@ -249,8 +249,6 @@ export async function executeSourceJob(
       await (dependencies.renderSourceOutput ?? renderSourceOutput)({
         output: result.outputPath!,
         signal,
-        ffmpeg: dependencies.sourceOutputTools?.ffmpeg,
-        ffprobe: dependencies.sourceOutputTools?.ffprobe,
         renderVideo: async (path, videoSignal) => {
           if (prepared.renderVideo)
             await prepared.renderVideo(path, videoSignal);
@@ -329,6 +327,8 @@ function assertReferenceOptions(request: RenderRequest): void {
       );
   }
   for (const [key, value] of Object.entries(request.config.renderer ?? {})) {
+    // The media runtime context honors binary selection for source-owned output.
+    if (key === "binary") continue;
     if (value !== undefined)
       throw new Error(
         `source.option_unsupported: source renderer override cannot honor renderer.${key}`,

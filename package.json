@@ -2,7 +2,7 @@
   "name": "@velocast/repo",
   "private": true,
   "scripts": {
-    "electron:verify": "node scripts/verify-electron-renderer.mjs",
+    "electron:verify": "node scripts/verify-electron-portable.mjs",
     "electron:verify-portable": "node scripts/verify-electron-portable.mjs",
     "electron:package": "node scripts/package-electron-runtime.mjs",
     "build": "turbo run build",

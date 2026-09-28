@@ -36,6 +36,6 @@ export function selectRemotionIntegrationProfile(
       browserClose: "options",
     };
   throw new Error(
-    `Unsupported Remotion version ${version}. Supported integration profiles: ${SUPPORTED_REMOTION_VERSIONS}. Install matching remotion, @remotion/bundler and @remotion/renderer versions in the entry project's dependencies.`,
+    `Unsupported Remotion version ${version}. Supported integration profiles: ${SUPPORTED_REMOTION_VERSIONS}. Install matching remotion and @remotion/bundler versions in the entry project's dependencies.`,
   );
 }

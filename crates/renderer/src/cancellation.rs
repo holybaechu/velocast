@@ -13,13 +13,34 @@ impl RenderCancellation {
         Self::for_process(path.map(Path::new), std::process::id())
     }
 
-    fn for_process(path: Option<&Path>, pid: u32) -> Self {
+    pub(crate) fn for_process(path: Option<&Path>, pid: u32) -> Self {
         Self {
             path: path.map(|path| {
                 let mut name = path.as_os_str().to_os_string();
                 name.push(format!(".{pid}.cancel"));
                 PathBuf::from(name)
             }),
+        }
+    }
+
+    pub(crate) fn request(&self) -> anyhow::Result<bool> {
+        let Some(path) = &self.path else {
+            return Ok(false);
+        };
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub(crate) fn remove_requested(&self) {
+        if let Some(path) = &self.path {
+            let _ = std::fs::remove_file(path);
         }
     }
 
@@ -51,23 +72,19 @@ mod tests {
         ));
         let current = RenderCancellation::for_process(Some(&event), 42);
         let other = RenderCancellation::for_process(Some(&event), 43);
-        assert!(
-            current
-                .path
-                .as_ref()
-                .unwrap()
-                .to_string_lossy()
-                .ends_with(".jsonl.42.cancel")
-        );
+        assert!(current
+            .path
+            .as_ref()
+            .unwrap()
+            .to_string_lossy()
+            .ends_with(".jsonl.42.cancel"));
         current.check().unwrap();
         std::fs::write(current.path.as_ref().unwrap(), b"").unwrap();
-        assert!(
-            current
-                .check()
-                .unwrap_err()
-                .to_string()
-                .contains("renderer.cancelled")
-        );
+        assert!(current
+            .check()
+            .unwrap_err()
+            .to_string()
+            .contains("renderer.cancelled"));
         other.check().unwrap();
         RenderCancellation::default().check().unwrap();
         std::fs::remove_file(current.path.unwrap()).unwrap();

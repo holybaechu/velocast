@@ -33,7 +33,7 @@ mod tests {
         let args = Args::try_parse_from([
             "velocast-renderer",
             "--job-json",
-            r#"{"mode":"composition","composition_id":"product-hero","serve_url":"http://127.0.0.1:4545","selector":null,"output":"out/hero.mp4","codec":"libx264"}"#,
+            r#"{"mode":"composition","composition_id":"product-hero","serve_url":"http://127.0.0.1:4545","selector":null,"output":"out/hero.mp4","codec":"h264"}"#,
         ])
         .unwrap();
 
@@ -41,7 +41,7 @@ mod tests {
 
         assert_eq!(job.mode, RenderMode::Composition);
         assert_eq!(job.composition_id.as_deref(), Some("product-hero"));
-        assert_eq!(job.codec, "libx264");
+        assert_eq!(job.codec, "h264");
     }
 
     #[test]
@@ -58,7 +58,7 @@ mod tests {
             "velocast-renderer",
             "--capabilities-json",
             "--job-json",
-            r#"{"mode":"composition","composition_id":"product-hero","serve_url":"http://127.0.0.1:4545","selector":null,"output":"out/hero.mp4","codec":"libx264"}"#,
+            r#"{"mode":"composition","composition_id":"product-hero","serve_url":"http://127.0.0.1:4545","selector":null,"output":"out/hero.mp4","codec":"h264"}"#,
         ])
         .unwrap_err()
         .to_string();

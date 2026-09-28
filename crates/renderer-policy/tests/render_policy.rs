@@ -1,119 +1,48 @@
-use velocast_renderer_policy::backend_registry::BackendKind;
-use velocast_renderer_policy::encoder_plan::EncoderCandidatePlan;
-use velocast_renderer_policy::encoder_plan::{EncoderCapabilities, EncoderPlan};
-use velocast_renderer_policy::scheduler::{chunk_frame_ranges, FrameRange};
-use velocast_renderer_policy::settings::EncoderSettings;
-use velocast_renderer_policy::settings::{EncoderBackendPreference, EncoderExecutionContext};
-
+use std::num::NonZeroU32;
+use velocast_protocol::{
+    CompositionManifest, OutputFrameRange, RenderJob, RendererAssemblyMode, RendererConcurrency,
+};
+use velocast_renderer_policy::render_plan::{RenderPipelinePlan, RenderPipelineRoute};
+fn fixture() -> (RenderJob, CompositionManifest) {
+    (
+ serde_json::from_value(serde_json::json!({"mode":"composition","serve_url":"http://localhost","output":"movie.mp4","codec":"h264"})).unwrap(),
+ serde_json::from_value(serde_json::json!({"id":"scene","width":640,"height":360,"fps":30,"durationFrames":90})).unwrap())
+}
 #[test]
-fn segment_schedule_covers_every_frame_once_when_work_does_not_divide_evenly() {
+fn segment_ranges_cover_every_frame_once() {
+    let (job, c) = fixture();
+    let p = RenderPipelinePlan::for_job(&job, &c, 4).unwrap();
+    assert_eq!(p.route, RenderPipelineRoute::ParallelSegments);
     assert_eq!(
-        chunk_frame_ranges(10, 3),
-        vec![
-            FrameRange { start: 0, end: 4 },
-            FrameRange { start: 4, end: 7 },
-            FrameRange { start: 7, end: 10 },
-        ],
+        p.ranges.iter().flat_map(|r| r.frames()).collect::<Vec<_>>(),
+        (0..90).collect::<Vec<_>>()
     );
 }
-
 #[test]
-fn activation_tries_the_planned_backends_in_order_before_software_fallback() {
-    let plan = EncoderPlan::resolve(
-        EncoderSettings::new(1920, 1080, 30, "h264", "nv12", "out.mp4"),
-        &EncoderCapabilities::windows(),
-    )
-    .unwrap();
-    let mut attempted = Vec::new();
-    let opened = plan
-        .activate(|candidate| {
-            attempted.push(candidate.kind());
-            if candidate.kind() == BackendKind::WindowsD3D11Nvenc {
-                Ok("nvenc encoder")
-            } else {
-                Err("backend could not open")
-            }
-        })
-        .unwrap();
+fn reference_selection_is_serial() {
+    let (mut job, c) = fixture();
+    job.assembly_mode = RendererAssemblyMode::Reference;
     assert_eq!(
-        attempted,
-        vec![BackendKind::WindowsD3D11Amf, BackendKind::WindowsD3D11Nvenc]
+        RenderPipelinePlan::for_job(&job, &c, 8)
+            .unwrap()
+            .concurrency,
+        1
     );
-    assert_eq!(opened.value, "nvenc encoder");
-    assert_eq!(opened.failures.len(), 1);
-    assert_eq!(opened.failures[0].kind, BackendKind::WindowsD3D11Amf);
+    job.concurrency = Some(RendererConcurrency::Workers(NonZeroU32::new(2).unwrap()));
+    assert!(RenderPipelinePlan::for_job(&job, &c, 8).is_err());
 }
-
 #[test]
-fn required_acceleration_returns_all_open_failures_without_attempting_software() {
-    let mut settings = EncoderSettings::new(1920, 1080, 30, "h264", "nv12", "out.mp4");
-    settings.backend = EncoderBackendPreference::HardwareRequired;
-    let plan = EncoderPlan::resolve(settings, &EncoderCapabilities::windows()).unwrap();
-    let mut attempts = Vec::new();
-    let failures = plan
-        .activate::<(), _>(|candidate| {
-            attempts.push(candidate.kind());
-            Err("device busy")
-        })
-        .unwrap_err();
+fn ranges_preserve_source_frames_and_reject_parallel() {
+    let (mut job, c) = fixture();
+    job.output_range = Some(OutputFrameRange {
+        start_frame: 20,
+        end_frame: 25,
+    });
+    let p = RenderPipelinePlan::for_job(&job, &c, 8).unwrap();
     assert_eq!(
-        attempts,
-        vec![
-            BackendKind::WindowsD3D11Amf,
-            BackendKind::WindowsD3D11Nvenc,
-            BackendKind::WindowsD3D11Qsv,
-            BackendKind::WindowsD3D11Mf
-        ]
+        p.ranges[0].frames().collect::<Vec<_>>(),
+        vec![20, 21, 22, 23, 24]
     );
-    assert_eq!(failures.len(), 4);
-    assert!(failures
-        .iter()
-        .all(|failure| failure.error == "device busy"));
-}
-
-#[test]
-fn auto_fallback_preserves_failed_attempts_when_software_opens() {
-    let settings = EncoderSettings::new(1920, 1080, 30, "hevc_mf", "nv12", "out.mp4");
-    let plan = EncoderPlan::resolve(settings, &EncoderCapabilities::windows()).unwrap();
-    let opened = plan
-        .activate(|candidate| match candidate {
-            EncoderCandidatePlan::Software => Ok("software encoder"),
-            _ => Err("encoder.ffmpeg_open_failed: device busy"),
-        })
-        .unwrap();
-    assert_eq!(opened.kind, BackendKind::SoftwareBgraFfmpeg);
-    assert_eq!(opened.failures.len(), 1);
-    assert_eq!(opened.failures[0].kind, BackendKind::WindowsD3D11Mf);
-    assert_eq!(
-        opened.failures[0].error,
-        "encoder.ffmpeg_open_failed: device busy"
-    );
-}
-
-#[test]
-fn software_and_streamed_workers_do_not_attempt_hardware_even_when_host_supports_it() {
-    let mut software = EncoderSettings::new(1920, 1080, 30, "h264", "nv12", "out.mp4");
-    software.backend = EncoderBackendPreference::Software;
-    let streamed = EncoderSettings::new(1920, 1080, 30, "h264", "nv12", "out.mp4")
-        .with_execution_context(EncoderExecutionContext::StreamedBgraWorker);
-    for settings in [software, streamed] {
-        let plan = EncoderPlan::resolve(settings, &EncoderCapabilities::windows()).unwrap();
-        assert_eq!(plan.candidates(), &[EncoderCandidatePlan::Software]);
-    }
-}
-
-#[test]
-fn retired_vaapi_codecs_are_rejected_even_when_software_fallback_is_allowed() {
-    for capabilities in [
-        EncoderCapabilities::software_only(),
-        EncoderCapabilities::windows(),
-    ] {
-        for codec in ["h264_vaapi", "hevc_vaapi", "av1_vaapi"] {
-            let settings = EncoderSettings::new(1920, 1080, 30, codec, "nv12", "out.mp4");
-            assert!(EncoderPlan::resolve(settings, &capabilities)
-                .unwrap_err()
-                .to_string()
-                .contains("encoder.codec_unavailable"));
-        }
-    }
+    job.assembly_mode = RendererAssemblyMode::Segments;
+    assert!(RenderPipelinePlan::for_job(&job, &c, 8).is_err());
 }

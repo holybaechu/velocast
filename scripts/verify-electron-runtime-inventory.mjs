@@ -22,18 +22,30 @@ export function verifyElectronRuntimeInventory(root, files, expected) {
     runtime.renderer !== "velocast-renderer.exe" ||
     runtime.electron !== "electron/electron.exe" ||
     runtime.hostScript !== "electron-host/main.cjs" ||
-    runtime.ffmpeg !== "ffmpeg.exe" ||
-    runtime.ffprobe !== "ffprobe.exe"
+    runtime.mediaClient !== "electron-host/media-client.cjs" ||
+    runtime.mediaBundle !== "electron-host/media-runtime.cjs" ||
+    runtime.mediaPackage !== "electron-host/node_modules/mediabunny" ||
+    runtime.ffmpeg !== undefined || runtime.ffprobe !== undefined
   )
     fail("runtime entrypoints differ");
   if (
     runtime.rendererCapabilities?.defaultBrowserHost !== "electron" ||
-    runtime.rendererCapabilities?.electronHostProtocolVersion !== 1 ||
+    runtime.rendererCapabilities?.electronHostProtocolVersion !== 2 ||
+    runtime.rendererCapabilities?.videoEncoderBackend !== "webcodecs" ||
+    runtime.rendererCapabilities?.mediaRuntime !== "mediabunny" ||
     JSON.stringify(runtime.rendererCapabilities?.browserHosts) !==
       '["electron"]'
   )
     fail("renderer capabilities are not Electron-only");
   if (!Array.isArray(runtime.files)) fail("file inventory is missing");
+  for (const path of [
+    "electron-host/media-client.cjs",
+    "electron-host/media-runtime.cjs",
+    "electron-host/node_modules/mediabunny/package.json",
+    "electron-host/node_modules/mediabunny/LICENSE",
+  ])
+    if (!runtime.files.some((file) => file.path === path))
+      fail(`media runtime file missing: ${path}`);
   const actual = files
     .filter((file) => file.path !== "electron-runtime.json")
     .map(({ path, size, sha256 }) => ({ path, size, sha256 }))

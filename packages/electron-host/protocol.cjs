@@ -23,10 +23,20 @@ function parseCommand(line) {
     );
   }
   if (
-    !["load", "execute", "resize", "invalidate", "paint", "release", "close",
-      "webcodecs-open", "webcodecs-frame", "webcodecs-finish"].includes(
-      command.method,
-    )
+    ![
+      "load",
+      "execute",
+      "resize",
+      "invalidate",
+      "paint",
+      "release",
+      "close",
+      "webcodecs-open",
+      "webcodecs-frame",
+      "webcodecs-finish",
+      "media-operation",
+      "png",
+    ].includes(command.method)
   ) {
     throw new Error(
       `Electron host command method is unsupported: ${String(command.method)}`,
@@ -62,16 +72,6 @@ function parseScriptTitle(title, token) {
   return null;
 }
 
-function handleHex(ntHandle) {
-  if (!Buffer.isBuffer(ntHandle) || ntHandle.length !== 8) {
-    throw new Error("Electron shared texture has no 64-bit Windows NT HANDLE");
-  }
-  const handle = ntHandle.readBigUInt64LE();
-  if (handle === 0n)
-    throw new Error("Electron shared texture has a null NT HANDLE");
-  return `0x${handle.toString(16)}`;
-}
-
 function positiveDimension(value, name) {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`Electron shared texture has invalid ${name}`);
@@ -101,13 +101,15 @@ function rectangle(value, name) {
   };
 }
 
-function textureMetadata(textureInfo, request, textureId, formats = ["bgra"]) {
+function textureMetadata(textureInfo, request, formats = ["bgra", "rgba"]) {
   if (
     !textureInfo ||
     textureInfo.widgetType !== "frame" ||
     !formats.includes(textureInfo.pixelFormat)
   ) {
-    throw new Error("Electron did not produce a BGRA frame shared texture");
+    throw new Error(
+      "Electron did not produce a BGRA/RGBA frame shared texture",
+    );
   }
   const textureWidth = positiveDimension(
     textureInfo.codedSize?.width,
@@ -138,10 +140,6 @@ function textureMetadata(textureInfo, request, textureId, formats = ["bgra"]) {
     contentRect: textureInfo.contentRect ?? null,
     timestamp: textureInfo.timestamp ?? null,
   };
-  if (request.copy) {
-    metadata.textureId = textureId;
-    metadata.handle = handleHex(textureInfo.handle?.ntHandle);
-  }
   return metadata;
 }
 

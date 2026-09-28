@@ -109,8 +109,8 @@ async function artifactFixture(root) {
       "electron-host/main.cjs",
       Buffer.from("// private Electron host fixture\n"),
     ],
-    ["ffmpeg.exe", renderer],
-    ["ffprobe.exe", renderer],
+    ["electron-host/media-client.cjs", Buffer.from("media client")],
+    ["electron-host/media-runtime.cjs", Buffer.from("media runtime")],
   ]);
   const electronInventory = {
     schema: "velocast-electron-runtime-v1",
@@ -122,13 +122,15 @@ async function artifactFixture(root) {
     renderer: "velocast-renderer.exe",
     electron: "electron/electron.exe",
     hostScript: "electron-host/main.cjs",
-    ffmpeg: "ffmpeg.exe",
-    ffprobe: "ffprobe.exe",
+    mediaClient: "electron-host/media-client.cjs",
+    mediaBundle: "electron-host/media-runtime.cjs",
     electronVersion: release.electronVersion,
     rendererCapabilities: {
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 1,
+      electronHostProtocolVersion: 2,
+      videoEncoderBackend: "webcodecs",
+      mediaRuntime: "mediabunny",
     },
     files: [...payloads].map(([path, bytes]) => ({
       path,
@@ -184,8 +186,6 @@ async function artifactFixture(root) {
     nativeFiles: [
       "velocast-renderer.exe",
       "electron/electron.exe",
-      "ffmpeg.exe",
-      "ffprobe.exe",
     ],
   };
 }

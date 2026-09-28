@@ -1,6 +1,6 @@
 """Measure reference/output offsets from identically decoded mono float32 PCM.
 
-Decode both inputs with the same FFmpeg -ac 1 -ar RATE -f f32le options.
+Decode both inputs to the same mono float32 sample rate before comparison.
 The --self-test mode checks in-memory vectors with known offsets and gain.
 """
 

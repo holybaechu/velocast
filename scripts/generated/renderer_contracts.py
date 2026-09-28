@@ -155,9 +155,9 @@ RENDERER_EVENT_FIELD_CONTRACTS = {
 BACKEND_DIAGNOSTIC_CODES = frozenset((
     "backend.unavailable",
     "encoder.codec_unavailable",
-    "encoder.ffmpeg_finish_failed",
-    "encoder.ffmpeg_open_failed",
-    "encoder.ffmpeg_packet_write_failed",
+    "encoder.webcodecs_finish_failed",
+    "encoder.webcodecs_open_failed",
+    "encoder.webcodecs_packet_write_failed",
     "encoder.hardware_unavailable",
     "gpu.convert_failed",
     "gpu.import_unavailable",

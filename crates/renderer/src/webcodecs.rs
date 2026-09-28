@@ -1,118 +1,64 @@
-//! Opt-in Electron-owned capture/encode experiment. Native retains scheduling,
-//! audio, cancellation, validation, and transactional output publication.
-use std::path::Path;
-use std::time::Instant;
-
-use anyhow::{ensure, Context};
-use serde_json::json;
-use velocast_protocol::{
-    CompositionManifest, RenderJob, RenderMode, RenderOperation, RendererAcceleration,
-    RendererAssemblyMode, RendererConcurrency,
-};
-
+//! Browser-owned encoding and muxing; Rust retains scheduling and publication.
 use crate::browser_protocol::BrowserDriver;
 use crate::events::{RendererEvent, RendererEventSink};
 use crate::native_browser::NativeBrowser;
-use crate::render_job::{RenderJobResources, WorkerCommand};
-use crate::telemetry::{RenderTelemetry, WebCodecsTelemetry};
+use crate::render_job::RenderJobResources;
+use crate::telemetry::{AudioTelemetry, RenderTelemetry, WebCodecsTelemetry};
+use anyhow::{ensure, Context};
+use serde_json::{json, Value};
+use std::path::Path;
+use std::time::Instant;
+use velocast_protocol::{CompositionManifest, RenderJob, RendererAcceleration};
 
-pub(crate) fn requested(job: &RenderJob) -> anyhow::Result<bool> {
-    let selected = match std::env::var("VELOCAST_EXPERIMENTAL_ENCODER") {
-        Ok(value) => parse_selector(&value)?,
-        Err(std::env::VarError::NotPresent) => false,
-        Err(error) => return Err(error).context("webcodecs.invalid_selector"),
-    };
-    // Inspection and PNG retain their existing portable paths with the same env.
-    if !selected || job.operation != RenderOperation::Render {
-        return Ok(false);
-    }
-    validate_job(job)?;
-    Ok(true)
+pub(crate) fn codec(job: &RenderJob) -> anyhow::Result<&'static str> {
+    Ok(velocast_renderer_policy::codec::RequestedVideoCodec::parse(&job.codec)?.canonical_label())
 }
-
-fn parse_selector(value: &str) -> anyhow::Result<bool> {
-    match value {
-        "" => Ok(false),
-        "webcodecs" => Ok(true),
-        _ => anyhow::bail!(
-            "webcodecs.invalid_selector: VELOCAST_EXPERIMENTAL_ENCODER must be webcodecs or unset"
-        ),
-    }
-}
-
-fn validate_job(job: &RenderJob) -> anyhow::Result<()> {
-    ensure!(job.acceleration == RendererAcceleration::Auto,
-        "webcodecs.acceleration_unsupported: use --acceleration auto; WebCodecs cannot guarantee required hardware, and shared textures require GPU capture");
+pub(crate) fn validate_job(job: &RenderJob) -> anyhow::Result<()> {
+    ensure!(job.acceleration!=RendererAcceleration::Required,"encoder.hardware_guarantee_unsupported: WebCodecs exposes acceleration preferences; use auto or off");
     ensure!(
-        job.mode != RenderMode::CompositionWorker
-            && job.capture_probe.is_none()
-            && !matches!(&job.concurrency, Some(RendererConcurrency::Workers(count)) if count.get() != 1)
-            && job.assembly_mode != RendererAssemblyMode::Segments,
-        "webcodecs.parallel_unsupported: use --concurrency 1 --assembly reference"
+        job.capture_probe.is_none(),
+        "capture.probe_retired: use WebCodecs render validation"
     );
-    ensure!(
-        job.codec == "h264",
-        "webcodecs.codec_unsupported: this experiment requires --codec h264"
-    );
+    codec(job)?;
     ensure!(
         job.pixel_format
             .as_deref()
             .is_none_or(|format| matches!(format, "nv12" | "yuv420p")),
-        "webcodecs.pixel_format_unsupported: only 8-bit 4:2:0 output is supported"
+        "encoder.pixel_format_unsupported: current WebCodecs output supports 8-bit 4:2:0"
     );
     ensure!(
         Path::new(&job.output)
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("mp4")),
-        "webcodecs.container_unsupported: this experiment requires MP4 output"
+        "encoder.container_unsupported: use MP4 output"
     );
     Ok(())
 }
-
+pub(crate) fn validate_geometry(composition: &CompositionManifest) -> anyhow::Result<()> {
+    ensure!(composition.width > 0 && composition.height > 0 && composition.width <= 4096 && composition.height <= 4096
+        && composition.width % 2 == 0 && composition.height % 2 == 0 && (1..=120).contains(&composition.fps),
+        "encoder.geometry_unsupported: current media runtime requires even dimensions up to 4096 and 1–120 fps");
+    Ok(())
+}
 pub(crate) async fn render(
     job: &RenderJob,
     composition: &CompositionManifest,
     browser: &NativeBrowser,
     output: &Path,
+    audio: Option<&Value>,
     resources: &mut RenderJobResources,
-    telemetry: &mut RenderTelemetry,
+    report: &mut RenderTelemetry,
     events: &mut RendererEventSink,
 ) -> anyhow::Result<()> {
+    validate_job(job)?;
+    validate_geometry(composition)?;
+    let codec = codec(job)?;
     let bitrate = job.bitrate_bps.unwrap_or(8_000_000);
-    let opened = browser.webcodecs_request(json!({"method":"webcodecs-open", "settings": {
-        "width":composition.width, "height":composition.height, "fps":composition.fps, "bitrate":bitrate
-    }}))?;
-    let codec = opened["config"]["codec"]
-        .as_str()
-        .context("webcodecs.invalid_config_response")?;
-    telemetry.mode = crate::telemetry::RenderModeLabel::ExperimentalWebCodecs;
-    telemetry.capture_backend = Some("electron_shared_texture_webcodecs".into());
-    telemetry.conversion_backend = Some("chromium_webcodecs".into());
-    telemetry.encoder_backend = Some("electron_webcodecs_h264".into());
-    telemetry.surface_format_encoder = Some("yuv420p".into());
-    telemetry.requested_codec = Some("h264".into());
-    telemetry.selected_codec = Some("h264".into());
-    telemetry.target_bitrate_bps = Some(bitrate);
-    telemetry.webcodecs = Some(WebCodecsTelemetry {
-        codec: codec.to_owned(),
-        hardware_acceleration: "prefer-hardware".into(),
-        hardware_encoder_verified: false,
-        uncompressed_readback_verified: false,
-        color_space: None,
-    });
-    events
-        .emit(RendererEvent::PipelinePlanResolved {
-            route: "experimental_webcodecs".into(),
-            effective_concurrency: 1,
-            probe_tier: "webcodecs_config".into(),
-            segment_count: 0,
-            capture_mode: "electron_shared_texture".into(),
-            conversion_mode: "chromium_webcodecs".into(),
-            encoder_mode: "webcodecs".into(),
-            planned_encoder_backend: "electron_webcodecs_h264".into(),
-            encoder_backend: "electron_webcodecs_h264".into(),
-        })
-        .await?;
+    let hardware = if job.acceleration == RendererAcceleration::Off {
+        "prefer-software"
+    } else {
+        "prefer-hardware"
+    };
     let start = job
         .output_range
         .as_ref()
@@ -123,225 +69,191 @@ pub(crate) async fn render(
         .map_or(composition.duration_frames, |range| range.end_frame);
     ensure!(
         start < end && end <= composition.duration_frames,
-        "webcodecs.invalid_range"
+        "output.invalid_range"
     );
-    telemetry.frames_expected = end - start;
+    report.frames_expected = end - start;
+    let opened=browser.host_request(json!({"method":"webcodecs-open","settings":{"width":composition.width,"height":composition.height,"fps":composition.fps,"bitrate":bitrate,"codec":codec,"hardwareAcceleration":hardware,"pixelFormat":job.pixel_format,"outputPath":std::path::absolute(output)?},"audio":audio}))?;
+    report.capture_backend = Some("electron_shared_texture".into());
+    report.conversion_backend = Some("chromium_webcodecs".into());
+    report.encoder_backend = Some(format!("electron_webcodecs_{codec}"));
+    report.surface_format_encoder = Some("yuv420p".into());
+    report.requested_codec = Some(codec.into());
+    report.selected_codec = Some(codec.into());
+    report.target_bitrate_bps = Some(bitrate);
+    report.webcodecs = Some(WebCodecsTelemetry {
+        codec: opened["config"]["codec"].as_str().unwrap_or(codec).into(),
+        hardware_acceleration: opened["config"]["hardwareAcceleration"]
+            .as_str()
+            .unwrap_or(hardware)
+            .into(),
+        hardware_encoder_verified: false,
+        uncompressed_readback_verified: false,
+        color_space: None,
+    });
     let mut context = crate::frame_loop::render_context(composition);
     context.render_session = browser.render_session();
     for (index, frame) in (start..end).enumerate() {
         resources.check_cancellation()?;
-        let started = Instant::now();
+        resources.check_workers().await?;
+        let now = Instant::now();
         browser.render_frame(
             &crate::frame_loop::seek_frame_script(frame, &context)?,
             frame,
         )?;
-        telemetry.browser_script_wait_ms += started.elapsed().as_millis();
-        let captured =
-            browser.webcodecs_request(json!({"method":"webcodecs-frame", "index":index}))?;
+        report.browser_script_wait_ms += now.elapsed().as_millis();
+        let captured = browser.host_request(json!({"method":"webcodecs-frame","index":index}))?;
         ensure!(
             captured["index"].as_u64() == Some(index as u64)
                 && captured["frames"].as_u64() == Some(index as u64 + 1)
-                && captured["width"].as_u64() == Some(u64::from(composition.width))
-                && captured["height"].as_u64() == Some(u64::from(composition.height)),
+                && captured["width"].as_u64() == Some(composition.width as u64)
+                && captured["height"].as_u64() == Some(composition.height as u64),
             "webcodecs.invalid_frame_response"
         );
-        telemetry.frame_render_wait_ms += started.elapsed().as_millis();
-        telemetry.surface_format_in = Some(
+        report.frame_render_wait_ms += now.elapsed().as_millis();
+        report.surface_format_in = Some(
             captured["pixelFormat"]
                 .as_str()
-                .filter(|format| matches!(*format, "bgra" | "rgba"))
                 .context("webcodecs.invalid_surface_format")?
                 .into(),
         );
-        telemetry.frames_rendered += 1;
-        telemetry.frames_encoded += 1;
+        report.capture_backend = Some(
+            captured["captureBackend"]
+                .as_str()
+                .unwrap_or("electron_shared_texture")
+                .into(),
+        );
+        if captured["cpuReadback"].as_bool() == Some(true) {
+            report.cpu_readback_frames += 1;
+        }
+        report.frames_rendered += 1;
+        report.frames_encoded += 1;
         events
             .emit(RendererEvent::FrameRendered {
                 frame,
-                capture_backend: telemetry.capture_backend.clone(),
-                surface_format_in: telemetry.surface_format_in.clone(),
+                capture_backend: report.capture_backend.clone(),
+                surface_format_in: report.surface_format_in.clone(),
             })
             .await?;
         events
             .emit(RendererEvent::FrameEncoded {
                 frame,
-                frames_encoded: telemetry.frames_encoded,
+                frames_encoded: report.frames_encoded,
             })
             .await?;
     }
-    let finished = browser.webcodecs_request(json!({"method":"webcodecs-finish"}))?;
-    let color_filter = h264_color_metadata(&finished["colorSpace"])?;
-    telemetry
-        .webcodecs
-        .as_mut()
-        .expect("opened WebCodecs session")
-        .color_space = Some(finished["colorSpace"].clone());
-    telemetry.surface_format_encoder = Some(
-        if finished["colorSpace"]["fullRange"] == true {
-            "yuvj420p"
-        } else {
-            "yuv420p"
-        }
-        .into(),
-    );
-    ensure!(
-        finished["frames"].as_u64() == Some(u64::from(end - start)),
-        "webcodecs.frame_count_mismatch"
-    );
-    let stream = browser.webcodecs_stream()?;
-    let metadata = std::fs::symlink_metadata(&stream)?;
-    ensure!(
-        metadata.is_file()
-            && metadata.len() > 0
-            && finished["bytes"].as_u64() == Some(metadata.len()),
-        "webcodecs.invalid_bitstream"
-    );
-    let started = Instant::now();
-    let mut command = tokio::process::Command::new("ffmpeg");
-    command
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-nostdin",
-            "-y",
-            "-fflags",
-            "+genpts",
-            "-r",
-            &composition.fps.to_string(),
-            "-f",
-            "h264",
-            "-i",
-        ])
-        .arg(&stream)
-        .args([
-            "-map",
-            "0:v:0",
-            "-c:v",
-            "copy",
-            "-an",
-            "-movflags",
-            "+faststart",
-        ])
-        .args(["-bsf:v", &color_filter])
-        .arg(output)
-        .stdin(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.as_std_mut().creation_flags(0x08000000);
+    let now = Instant::now();
+    let finished = browser.host_request(json!({"method":"webcodecs-finish"}))?;
+    report.mux_or_remux_ms += now.elapsed().as_millis();
+    crate::output_media::validate_video(&finished, composition, end - start)?;
+    crate::output_media::validate_codec(&finished, codec)?;
+    if let Some(facts) = report.webcodecs.as_mut() {
+        facts.color_space = finished
+            .get("colorSpace")
+            .cloned()
+            .or_else(|| finished["video"].get("colorSpace").cloned());
     }
-    resources.spawn_workers(vec![WorkerCommand {
-        start,
-        end,
-        capture_stdout: false,
-        command,
-    }])?;
-    resources
-        .wait_for_workers()
-        .await
-        .context("webcodecs.mux_failed")?;
-    telemetry.mux_or_remux_ms += started.elapsed().as_millis();
-    let probe = crate::segment_muxer::probe_segment(output).await?;
-    crate::segment_muxer::validate_final_output(
-        &probe,
-        &crate::segment_muxer::ExpectedVideoOutput {
-            width: composition.width,
-            height: composition.height,
-            fps: composition.fps,
-            frame_count: end - start,
-            codec_name: "h264".into(),
-            pix_fmts: crate::segment_muxer::expected_stream_pix_fmts(
-                job.pixel_format.as_deref().unwrap_or("nv12"),
-            ),
-        },
-    )?;
-    crate::output_media::validate_rebased_video(output).await?;
+    if let Some(audio) = audio {
+        record_audio(audio, &finished, report)?;
+    }
     resources.check_cancellation()?;
     Ok(())
 }
-
-fn h264_color_metadata(color: &serde_json::Value) -> anyhow::Result<String> {
-    // WebCodecs reports decoder color metadata separately. Hardware Annex B
-    // output can omit VUI tags; preserve the reported conversion, not a guess
-    // based on resolution or the pre-conversion RGB texture's color space.
-    let primaries = match color["primaries"].as_str() {
-        Some("bt709") => 1,
-        Some("bt470bg") => 5,
-        Some("smpte170m") => 6,
-        _ => anyhow::bail!("webcodecs.unsupported_color: missing or unsupported SDR primaries"),
-    };
-    let transfer = match color["transfer"].as_str() {
-        Some("bt709") => 1,
-        Some("smpte170m") => 6,
-        Some("iec61966-2-1") => 13,
-        _ => anyhow::bail!("webcodecs.unsupported_color: missing or unsupported SDR transfer"),
-    };
-    let matrix = match color["matrix"].as_str() {
-        Some("bt709") => 1,
-        Some("bt470bg") => 5,
-        Some("smpte170m") => 6,
-        _ => anyhow::bail!("webcodecs.unsupported_color: missing or unsupported YUV matrix"),
-    };
-    let full = u8::from(
-        color["fullRange"]
-            .as_bool()
-            .context("webcodecs.unsupported_color: missing range")?,
+pub(crate) fn record_audio(
+    audio: &Value,
+    metadata: &Value,
+    report: &mut RenderTelemetry,
+) -> anyhow::Result<()> {
+    let sound = &metadata["audio"];
+    let plan = &audio["plan"];
+    let rate = plan["sampleRate"]
+        .as_u64()
+        .context("audio.invalid_sample_rate")?;
+    let samples = plan["durationSamples"]
+        .as_u64()
+        .context("audio.invalid_sample_count")?;
+    let encoded_rate = sound["sampleRate"]
+        .as_u64()
+        .context("audio.invalid_output_sample_rate")?;
+    let encoded_codec = sound["codec"]
+        .as_str()
+        .context("audio.invalid_output_codec")?;
+    ensure!(
+        sound["channels"].as_u64() == Some(2)
+            && match encoded_codec {
+                "aac" => encoded_rate == rate,
+                "opus" => encoded_rate == 48000,
+                _ => false,
+            },
+        "audio.invalid_output_format"
     );
-    Ok(format!("h264_metadata=colour_primaries={primaries}:transfer_characteristics={transfer}:matrix_coefficients={matrix}:video_full_range_flag={full}"))
+    ensure!(
+        sound["duration"]
+            .as_f64()
+            .is_some_and(|duration| (duration - samples as f64 / rate as f64).abs()
+                <= 2048.0 / encoded_rate as f64),
+        "audio.invalid_output_duration"
+    );
+    report.audio = Some(AudioTelemetry {
+        sample_rate: rate,
+        duration_samples: samples,
+        codec: Some(encoded_codec.into()),
+        encoded_sample_rate: Some(encoded_rate),
+        codec_fallback_used: sound["fallbackUsed"].as_bool().unwrap_or(false),
+        pcm_sha256: sound["pcmSha256"]
+            .as_str()
+            .filter(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .context("audio.invalid_pcm_digest")?
+            .into(),
+        mix_ms: metadata["audioMixMs"].as_u64().unwrap_or(0) as u128,
+        mux_ms: report.mux_or_remux_ms,
+    });
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn mux_tags_follow_reported_decoder_color_and_reject_unknown_values() {
-        assert_eq!(h264_color_metadata(&json!({"primaries":"bt709", "transfer":"bt709", "matrix":"bt709", "fullRange":false})).unwrap(),
-            "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1:video_full_range_flag=0");
-        assert!(h264_color_metadata(&json!({})).is_err());
-        assert!(h264_color_metadata(&json!({"primaries":"bt2020", "transfer":"pq", "matrix":"bt2020-ncl", "fullRange":false})).is_err());
+    fn job() -> RenderJob {
+        serde_json::from_value(json!({"mode":"composition","serve_url":"http://localhost","output":"movie.mp4","codec":"h264"})).unwrap()
     }
-
     #[test]
-    fn selector_is_explicit() {
-        assert!(!parse_selector("").unwrap());
-        assert!(parse_selector("webcodecs").unwrap());
-        assert!(parse_selector("typo").is_err());
+    fn strict_hardware_cannot_be_promised() {
+        let mut j = job();
+        j.acceleration = RendererAcceleration::Required;
+        assert!(validate_job(&j)
+            .unwrap_err()
+            .to_string()
+            .starts_with("encoder.hardware_guarantee_unsupported"));
+        j.acceleration = RendererAcceleration::Off;
+        validate_job(&j).unwrap();
     }
-
     #[test]
-    fn experimental_job_rejects_guarantees_and_routes_it_cannot_satisfy() {
-        let mut job: RenderJob = serde_json::from_value(json!({
-            "serve_url":"http://localhost:3000", "output":"movie.mp4", "codec":"h264",
-            "acceleration":"auto", "mode":"composition"
-        }))
-        .unwrap();
-        validate_job(&job).unwrap();
-        job.acceleration = RendererAcceleration::Required;
-        assert!(validate_job(&job)
-            .unwrap_err()
-            .to_string()
-            .contains("acceleration_unsupported"));
-        job.acceleration = RendererAcceleration::Off;
-        assert!(validate_job(&job).is_err());
-        job.acceleration = RendererAcceleration::Auto;
-        job.assembly_mode = RendererAssemblyMode::Segments;
-        assert!(validate_job(&job)
-            .unwrap_err()
-            .to_string()
-            .contains("parallel_unsupported"));
-        job.assembly_mode = RendererAssemblyMode::Reference;
-        job.pixel_format = Some("yuv444p".into());
-        assert!(validate_job(&job)
-            .unwrap_err()
-            .to_string()
-            .contains("pixel_format_unsupported"));
-        job.pixel_format = None;
-        job.codec = "h264_nvenc".into();
-        assert!(validate_job(&job)
-            .unwrap_err()
-            .to_string()
-            .contains("codec_unsupported"));
+    fn codec_names_are_runtime_independent() {
+        let mut j = job();
+        for codec in ["h264", "hevc", "av1"] {
+            j.codec = codec.into();
+            validate_job(&j).unwrap();
+        }
+        j.codec = "vendor_encoder".into();
+        assert!(validate_job(&j).is_err());
+    }
+    #[test]
+    fn opus_output_preserves_authored_audio_clock() {
+        let audio = json!({"plan":{"sampleRate":44100,"durationSamples":44100}});
+        let mut metadata = json!({"audio":{"codec":"opus","sampleRate":48000,
+            "channels":2,"duration":1.0,"fallbackUsed":true,"pcmSha256":"a".repeat(64)}});
+        let mut report =
+            RenderTelemetry::new(crate::telemetry::RenderModeLabel::ReferenceWebCodecs);
+        record_audio(&audio, &metadata, &mut report).unwrap();
+        let sound = report.audio.unwrap();
+        assert_eq!(sound.sample_rate, 44100);
+        assert_eq!(sound.duration_samples, 44100);
+        assert_eq!(sound.encoded_sample_rate, Some(48000));
+        assert!(sound.codec_fallback_used);
+        metadata["audio"]["duration"] = json!(0.5);
+        let mut report =
+            RenderTelemetry::new(crate::telemetry::RenderModeLabel::ReferenceWebCodecs);
+        assert!(record_audio(&audio, &metadata, &mut report).is_err());
     }
 }

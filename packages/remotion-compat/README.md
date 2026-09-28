@@ -188,14 +188,11 @@ parity for every original project.
 The modern trim and callback contracts were checked against installed upstream
 4.0.526 declarations and source, and the official [OffthreadVideo source](https://github.com/remotion-dev/remotion/blob/main/packages/core/src/video/OffthreadVideo.tsx).
 
-`node scripts/verify-remotion-media-native.mjs prepare RENDERER OUTPUT` builds a
-real H.264/AAC source and matching official timeline/Remotion media compositions.
-`run RENDERER OUTPUT --browser CHROME` compares native full/range decoded pixels,
-decoded audio and exact PCM hashes against each other and the FFmpeg plan reference;
-then checks reordered browser frame pixels. The full-versus-range PCM comparison
-uses `1e-7` absolute tolerance for interpolated endpoint rounding. The optional
-`browser` mode performs only the real decoder/frame-readiness comparison and does
-not claim native output validation.
+Run `node scripts/verify-footage-native.mjs RENDERER NEW-OUTPUT-DIRECTORY` for a
+native authored source-video composition with generated media and audio. This
+gate checks encoded frame count, sampled picture pixels, and decoded audio.
+Remotion compatibility has separate runtime tests; these gates do not establish
+whole-movie native pixel parity for every original project.
 
 ## Series and Loop timing
 

@@ -8,8 +8,6 @@ import type { DecodedVideoFrame } from "./video-frame-source.js";
 export interface VideoFrameHttpOptions {
   env?: NodeJS.ProcessEnv;
   directory: string;
-  ffmpegPath?: string;
-  ffprobePath?: string;
 }
 export interface VideoFrameHttpSnapshot {
   url: string;

@@ -1,8 +1,8 @@
 import { isObjectRecord } from "./internal/validation.js";
 
 const knownRendererErrorPatterns = [
+  /(?:media|encoder|runtime|acceleration|capture|webcodecs)\.[a-z_]+: [^\r\n]+/,
   /electron\.[a-z_]+: [^\r\n]+/,
-  /capture\.d3d11_unavailable: [^\r\n]+/,
   /config serve\.url is required for render/,
   /composition [^\r\n]+ was not found/,
   /selector [^\r\n]+ was not found in composition metadata/,
@@ -11,13 +11,10 @@ const knownRendererErrorPatterns = [
   /accelerated rendering [^\r\n]+/,
   /hardware encoder [^\r\n]+/,
   /frame \d+ timed out waiting for accelerated paint/,
-  /ffmpeg binary was not found on PATH/,
-  /ffmpeg exited with code -?\d+/,
-  /ffmpeg segment remux failed with code -?\d+[^\r\n]*/,
   /required GPU benchmark [^\r\n]+/,
   /worker_backend\.incompatible:[^\r\n]+/,
   /remuxed output [^\r\n]+/,
-  /ffmpeg decoded (?:(?:boundary|selected) )?frame hash probe failed for [^\r\n]+/,
+  /webcodecs decoded (?:(?:boundary|selected) )?frame hash probe failed for [^\r\n]+/,
   /decoded (?:boundary|selected) frame hash probe returned \d+ frame\(s\), expected \d+ in [^\r\n]+/,
   /decoded frame hash count \d+ did not match expected frame count \d+ in [^\r\n]+/,
   /decoded selected frame hash count \d+ did not match selected frame count \d+ in [^\r\n]+/,
@@ -30,8 +27,6 @@ const knownRendererErrorPatterns = [
 ];
 
 const multilineRendererErrorPatterns = [
-  /D3D11 accelerated rendering is required,[^\r\n]+(?:\r?\n(?:Run: [^\r\n]+|Then build with: [^\r\n]+|Use Windows [^\r\n]+|Set acceleration [^\r\n]+))+/,
-  /D3D11 accelerated rendering dependencies are missing\.[^\r\n]*(?:\r?\nRun: [^\r\n]+)+/,
   /accelerated rendering is required, but no compatible GPU backend is available on this platform\.\r?\nBackend cause: [^\r\n]+/,
   /accelerated rendering is required, but it is not available for this render path: [^\r\n]+\r?\nSet acceleration to "auto" [^\r\n]+/,
   /accelerated rendering currently supports nv12\/yuv420p output, but [^\r\n]+\r?\nUse --pixel-format [^\r\n]+/,
@@ -55,11 +50,11 @@ export function extractKnownRendererError(output: string): string | undefined {
     return workerFailure[0].trimEnd();
   }
 
-  const ffmpegEncoderInitializationFailure = output.match(
-    /ffmpeg encoder initialization failed:[\s\S]*$/,
+  const webcodecsEncoderInitializationFailure = output.match(
+    /encoder.webcodecs_open_failed:[\s\S]*$/,
   );
-  if (ffmpegEncoderInitializationFailure) {
-    return ffmpegEncoderInitializationFailure[0].trimEnd();
+  if (webcodecsEncoderInitializationFailure) {
+    return webcodecsEncoderInitializationFailure[0].trimEnd();
   }
 
   for (const pattern of multilineRendererErrorPatterns) {

@@ -13,7 +13,6 @@ const {
   parseScriptTitle,
   textureMetadata,
 } = require("./protocol.cjs");
-const { TextureLease } = require("./texture-lease.cjs");
 const { SoftwareFrameLease, byteLength } = require("./software-frame.cjs");
 const { resolveCaptureFrameRate } = require("./capture-rate.cjs");
 const { configureProfileDirectory } = require("./profile-directory.cjs");
@@ -23,17 +22,21 @@ const SCRIPT_TIMEOUT_MS = 4_500;
 const PAINT_TIMEOUT_MS = 1_800;
 const LEASE_TIMEOUT_MS = 10_000;
 
-const surfaceMode = process.env.VELOCAST_ELECTRON_SURFACE_MODE || "accelerated";
-if (!["software", "accelerated", "webcodecs"].includes(surfaceMode)) {
+const surfaceMode = process.env.VELOCAST_ELECTRON_SURFACE_MODE || "webcodecs";
+if (!["software", "webcodecs", "bitmap"].includes(surfaceMode)) {
   throw new Error("Invalid Electron surface mode");
 }
 const software = surfaceMode === "software";
-const webcodecs = surfaceMode === "webcodecs";
+const bitmap = surfaceMode === "bitmap";
+const webcodecs = surfaceMode === "webcodecs" || bitmap;
 let webcodecsEncoder = null;
 // Older protocol-1 controllers do not provide an owned profile directory.
 // Keep their existing startup behavior; updated controllers always isolate it.
 if (process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY !== undefined)
-  configureProfileDirectory(app, process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY);
+  configureProfileDirectory(
+    app,
+    process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY,
+  );
 // This must happen before app.whenReady and before any renderer process exists.
 if (software) app.disableHardwareAcceleration();
 const softwareFrames = software
@@ -46,10 +49,8 @@ let window = null;
 let paintWaiter = null;
 let titleWaiter = null;
 let closed = false;
-let textureSequence = 0;
 let leaseTimer = null;
 let inputStream = null;
-const leases = new TextureLease();
 const debug = (...parts) => {
   if (process.env.VELOCAST_ELECTRON_HOST_DEBUG === "1") {
     process.stderr.write(`[electron-host] ${parts.join(" ")}\n`);
@@ -100,7 +101,6 @@ function cleanup() {
   inputStream = null;
   try {
     webcodecsEncoder?.dispose();
-    leases.releaseAll();
     softwareFrames?.releaseAll();
   } catch (error) {
     process.stderr.write(`${error}\n`);
@@ -126,12 +126,19 @@ function browser() {
 }
 
 function onPaint(event, dirtyRect, image) {
+  if (bitmap) {
+    releaseTexture(event.texture);
+    return;
+  }
   if (software) {
     releaseTexture(event.texture);
     const waiter = paintWaiter;
     if (!waiter || !image || image.isEmpty()) return;
     const size = image.getSize(1);
-    if (size.width !== waiter.request.expectedWidth || size.height !== waiter.request.expectedHeight) {
+    if (
+      size.width !== waiter.request.expectedWidth ||
+      size.height !== waiter.request.expectedHeight
+    ) {
       waiter.staleSizePaints++;
       schedulePaintRetry(waiter);
       return;
@@ -181,11 +188,9 @@ function onPaint(event, dirtyRect, image) {
   clearTimeout(waiter.timer);
   clearTimeout(waiter.retryTimer);
   try {
-    const textureId = `${waiter.request.generation}:${++textureSequence}`;
     const metadata = textureMetadata(
       texture.textureInfo,
       waiter.request,
-      textureId,
       webcodecs ? ["bgra", "rgba"] : ["bgra"],
     );
     metadata.dirtyRect = dirtyRect;
@@ -194,12 +199,7 @@ function onPaint(event, dirtyRect, image) {
       waiter.resolve({ texture, metadata });
       return;
     }
-    if (waiter.request.copy) {
-      leases.retain(textureId, texture);
-      armLeaseTimeout();
-    } else {
-      releaseTexture(texture);
-    }
+    releaseTexture(texture);
     waiter.resolve(metadata);
   } catch (error) {
     releaseTexture(texture);
@@ -211,7 +211,8 @@ function schedulePaintRetry(waiter) {
   if (waiter.retryTimer) return;
   waiter.retryTimer = setTimeout(() => {
     waiter.retryTimer = null;
-    if (paintWaiter === waiter && window && !window.isDestroyed()) browser().invalidate();
+    if (paintWaiter === waiter && window && !window.isDestroyed())
+      browser().invalidate();
   }, 50);
 }
 
@@ -254,23 +255,38 @@ function waitForTitle(token) {
 }
 
 async function captureSoftware(request) {
-  if (softwareFrames.occupied) throw new Error("Release the previous software frame first");
+  if (softwareFrames.occupied)
+    throw new Error("Release the previous software frame first");
   const contents = browser();
   const [width, height] = window.getContentSize();
-  await deadline(contents.executeJavaScript(
-    "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
-  ), PAINT_TIMEOUT_MS, "Electron software compositor fence");
+  await deadline(
+    contents.executeJavaScript(
+      "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
+    ),
+    PAINT_TIMEOUT_MS,
+    "Electron software compositor fence",
+  );
   // OSR invalidate() synchronously emits CompositeFrame from its cached backing
   // bitmap. It does not request a new compositor frame. capturePage instead
   // resolves this request through OSR CopyFromSurface/CopyFromCompositingSurface.
-  const image = await deadline(contents.capturePage(
-    { x: 0, y: 0, width, height }, { stayHidden: true, stayAwake: true },
-  ), PAINT_TIMEOUT_MS, "Electron software compositor copy");
+  const image = await deadline(
+    contents.capturePage(
+      { x: 0, y: 0, width, height },
+      { stayHidden: true, stayAwake: true },
+    ),
+    PAINT_TIMEOUT_MS,
+    "Electron software compositor copy",
+  );
   if (closed) throw new Error("Electron host closed during software capture");
   const size = image.getSize(1);
-  if (image.isEmpty() || size.width !== (request.expectedWidth ?? width) ||
-      size.height !== (request.expectedHeight ?? height)) {
-    throw new Error("Electron software compositor copy returned invalid dimensions");
+  if (
+    image.isEmpty() ||
+    size.width !== (request.expectedWidth ?? width) ||
+    size.height !== (request.expectedHeight ?? height)
+  ) {
+    throw new Error(
+      "Electron software compositor copy returned invalid dimensions",
+    );
   }
   const metadata = softwareFrames.capture(image, request);
   if (request.copy) armLeaseTimeout();
@@ -278,18 +294,32 @@ async function captureSoftware(request) {
 }
 
 async function waitForPaint(request) {
+  if (bitmap) {
+    await deadline(
+      browser().executeJavaScript(
+        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+      ),
+      PAINT_TIMEOUT_MS,
+      "Electron bitmap compositor fence",
+    );
+    return {};
+  }
   if (software && request.copy) return captureSoftware(request);
   if (software) {
     // Observation fences establish the loaded/resized surface before capture.
     // Pixel-bearing requests use captureSoftware's correlated compositor copy;
     // a paint notification alone can still contain cached prior-frame pixels.
-    await deadline(browser().executeJavaScript(
-      "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
-    ), PAINT_TIMEOUT_MS, "Electron software compositor fence");
+    await deadline(
+      browser().executeJavaScript(
+        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
+      ),
+      PAINT_TIMEOUT_MS,
+      "Electron software compositor fence",
+    );
   }
   if (paintWaiter)
     throw new Error("Electron host already has a paint in flight");
-  if (leases.occupied || softwareFrames?.occupied)
+  if (softwareFrames?.occupied)
     throw new Error("Electron host must release the previous texture first");
   const [width, height] = window.getContentSize();
   request.expectedWidth ??= width;
@@ -335,7 +365,7 @@ async function waitForPaint(request) {
 
 async function commandLoad(command) {
   debug("load begin", command.url);
-  if (leases.occupied || softwareFrames?.occupied)
+  if (softwareFrames?.occupied)
     throw new Error("Release the shared texture before loading");
   const url = loadUrl(command.url);
   const captureFrameRate = resolveCaptureFrameRate(
@@ -354,7 +384,7 @@ async function commandLoad(command) {
       frame: false,
       backgroundColor: "#000000",
       webPreferences: {
-        offscreen: { useSharedTexture: !software },
+        offscreen: { useSharedTexture: !software && !bitmap },
         backgroundThrottling: false,
         nodeIntegration: false,
         contextIsolation: true,
@@ -362,7 +392,9 @@ async function commandLoad(command) {
         webviewTag: false,
         // Preserve the renderer's Windows generic monospace resolution. Electron otherwise
         // uses Courier New and canvas text differs even with the same source.
-        ...(process.platform === "win32" ? { defaultFontFamily: { monospace: "Consolas" } } : {}),
+        ...(process.platform === "win32"
+          ? { defaultFontFamily: { monospace: "Consolas" } }
+          : {}),
       },
     });
     const contents = window.webContents;
@@ -442,25 +474,123 @@ async function commandExecute(command) {
 async function dispatch(command) {
   switch (command.method) {
     case "webcodecs-open": {
-      if (!webcodecs || webcodecsEncoder) throw new Error("webcodecs.invalid_open");
+      if (!webcodecs || webcodecsEncoder?.settings)
+        throw new Error("webcodecs.invalid_open");
       const { WebCodecsHost } = require("./webcodecs-host.cjs");
-      webcodecsEncoder = new WebCodecsHost(process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY);
-      return { config: await webcodecsEncoder.open(command.settings) };
+      webcodecsEncoder ??= new WebCodecsHost(
+        process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY,
+      );
+      return {
+        config: await webcodecsEncoder.open(command.settings, command.audio),
+      };
+    }
+    case "media-operation": {
+      if (!webcodecsEncoder) {
+        const { WebCodecsHost } = require("./webcodecs-host.cjs");
+        webcodecsEncoder = new WebCodecsHost(
+          process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY,
+        );
+      }
+      await webcodecsEncoder.initialize();
+      return webcodecsEncoder.command("media-operation", command.operation);
+    }
+    case "png": {
+      const { absolute } = require("./media-io.cjs");
+      const contents = browser(),
+        [width, height] = window.getContentSize();
+      byteLength(width, height);
+      await deadline(
+        contents.executeJavaScript(
+          "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+        ),
+        PAINT_TIMEOUT_MS,
+        "PNG compositor fence",
+      );
+      const image = await deadline(
+        contents.capturePage(
+          { x: 0, y: 0, width, height },
+          { stayHidden: true, stayAwake: true },
+        ),
+        PAINT_TIMEOUT_MS,
+        "PNG compositor copy",
+      );
+      const size = image.getSize(1);
+      if (
+        image.isEmpty() ||
+        size.width !== (command.expectedWidth ?? width) ||
+        size.height !== (command.expectedHeight ?? height)
+      )
+        throw new Error("media.invalid_png_geometry");
+      const bytes = image.toPNG();
+      fs.writeFileSync(absolute(command.outputPath), bytes, {
+        flag: "wx",
+        mode: 0o600,
+      });
+      return {
+        path: command.outputPath,
+        width: size.width,
+        height: size.height,
+        bytes: bytes.length,
+      };
     }
     case "webcodecs-frame": {
-      if (!webcodecs || !webcodecsEncoder || command.index !== webcodecsEncoder.frames ||
-          !Number.isSafeInteger(command.index) || command.index < 0) throw new Error("webcodecs.invalid_sequence");
+      if (
+        !webcodecs ||
+        !webcodecsEncoder ||
+        command.index !== webcodecsEncoder.frames ||
+        !Number.isSafeInteger(command.index) ||
+        command.index < 0
+      )
+        throw new Error("webcodecs.invalid_sequence");
       const generation = command.index + 1;
+      if (bitmap) {
+        const [width, height] = window.getContentSize();
+        byteLength(width, height);
+        await waitForPaint({ generation });
+        const image = await deadline(
+          browser().capturePage(
+            { x: 0, y: 0, width, height },
+            { stayHidden: true, stayAwake: true },
+          ),
+          PAINT_TIMEOUT_MS,
+          "Electron bitmap compositor copy",
+        );
+        const size = image.getSize(1);
+        if (image.isEmpty() || size.width !== width || size.height !== height)
+          throw new Error("webcodecs.invalid_bitmap_geometry");
+        return {
+          ...(await webcodecsEncoder.encodeBitmap(
+            image.getBitmap(),
+            command.index,
+          )),
+          width,
+          height,
+          pixelFormat: "bgra",
+          captureBackend: "electron_bitmap",
+          cpuReadback: true,
+        };
+      }
       // Match the native reference path's initial and per-generation settling.
       for (let paint = 0; paint < (command.index === 0 ? 6 : 2); paint++) {
         await waitForPaint({ generation, copy: false });
       }
-      const { texture, metadata } = await waitForPaint({ generation, copy: false, webcodecs: true });
-      return { ...(await webcodecsEncoder.encode(texture, command.index)),
-        width: metadata.width, height: metadata.height, pixelFormat: metadata.pixelFormat };
+      const { texture, metadata } = await waitForPaint({
+        generation,
+        copy: false,
+        webcodecs: true,
+      });
+      return {
+        ...(await webcodecsEncoder.encode(texture, command.index)),
+        width: metadata.width,
+        height: metadata.height,
+        pixelFormat: metadata.pixelFormat,
+        captureBackend: "electron_shared_texture",
+        cpuReadback: false,
+      };
     }
     case "webcodecs-finish": {
-      if (!webcodecs || !webcodecsEncoder) throw new Error("webcodecs.invalid_finish");
+      if (!webcodecs || !webcodecsEncoder)
+        throw new Error("webcodecs.invalid_finish");
       return webcodecsEncoder.finish();
     }
     case "load":
@@ -468,8 +598,10 @@ async function dispatch(command) {
     case "execute":
       return commandExecute(command);
     case "invalidate": {
-      if (software || leases.occupied || paintWaiter)
-        throw new Error("GPU preparation requires an idle, released capture surface");
+      if (software || paintWaiter)
+        throw new Error(
+          "GPU preparation requires an idle, released capture surface",
+        );
       // The native loop discards this preparation paint. Submit it without
       // waiting for a paint that capture would discard. Actual frame
       // acceptance still goes through all generation/size/settling fences.
@@ -480,7 +612,7 @@ async function dispatch(command) {
       return { queued: true };
     }
     case "resize": {
-      if (leases.occupied || softwareFrames?.occupied)
+      if (softwareFrames?.occupied)
         throw new Error("Release the shared texture before resizing");
       const width = positiveSize(command.width, "browser width");
       const height = positiveSize(command.height, "browser height");
@@ -509,7 +641,10 @@ async function dispatch(command) {
         );
       }
       browser();
-      return waitForPaint({ generation: command.generation, copy: command.copy });
+      return waitForPaint({
+        generation: command.generation,
+        copy: command.copy,
+      });
     }
     case "release": {
       if (software) {
@@ -518,13 +653,7 @@ async function dispatch(command) {
         leaseTimer = null;
         return {};
       }
-      if (typeof command.textureId !== "string") {
-        throw new Error("Electron release requires textureId");
-      }
-      leases.release(command.textureId);
-      clearTimeout(leaseTimer);
-      leaseTimer = null;
-      return {};
+      throw new Error("WebCodecs texture ownership is internal to Electron");
     }
     case "close":
       return {};
@@ -641,8 +770,13 @@ app
         "Electron shared-texture host currently supports Windows only",
       );
     }
-    await writeLine({ event: "ready", version: 1, pid: process.pid, surfaceMode,
-      asyncPaintInvalidation: !software });
+    await writeLine({
+      event: "ready",
+      version: 2,
+      pid: process.pid,
+      surfaceMode,
+      asyncPaintInvalidation: !software,
+    });
     listenForCommands();
   })
   .catch((error) => {
