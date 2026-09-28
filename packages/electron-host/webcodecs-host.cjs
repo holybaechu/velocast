@@ -262,7 +262,10 @@ class WebCodecsHost {
           audioCodec: this.settings.audioCodec,
           container: this.config.container,
           fps: this.settings.fps,
-          mediaBackend: this.config.backend,
+          // Video backend selection does not restrict audio codec availability.
+          // Use the same native audio route as multi-worker assembly, including
+          // hosts whose Chromium build cannot encode AAC.
+          mediaBackend: "native",
         })
       : this.config.backend === "native"
         ? result
