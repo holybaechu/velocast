@@ -2,12 +2,17 @@
 
 These requirements apply to all work in this repository.
 
-## Commits and pull requests
+## Branches, commits, and pull requests
 
 - Use Conventional Commits for every commit and PR title:
   `type(scope): imperative summary`. The scope is optional. Use `feat`, `fix`,
   `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`
   according to the change.
+- Use conventional branch names: `<type>/<short-kebab-case-description>`,
+  using the same change types as commits, for example `feat/add-webm-export`
+  or `docs/document-rendering`. Start branch names directly with the type;
+  omit namespace prefixes, including `codex/`. Use lowercase letters, digits,
+  and hyphens in the description.
 - Mark breaking changes with `!` after the type or scope and a
   `BREAKING CHANGE:` footer explaining the impact and migration.
 - Write PR descriptions with `## Summary` and `## Validation`. Explain the
