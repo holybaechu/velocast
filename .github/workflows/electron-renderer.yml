@@ -38,7 +38,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 gdb
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install the pinned Electron runtime
         run: node packages/electron-host/node_modules/electron/install.js
@@ -53,8 +53,23 @@ jobs:
         if: runner.os == 'Linux'
         continue-on-error: true
         run: |
-          export VELOCAST_WEBCODECS_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
+          export VELOCAST_CODEC_PROBE_ELECTRON="$(node -p "require('./packages/electron-host/node_modules/electron')")"
+          export VELOCAST_WEBCODECS_TEST_BINARY="$RUNNER_TEMP/native-codec-gdb"
           export VELOCAST_CODEC_PROBE_ROOT="$GITHUB_WORKSPACE"
+          trap 'rm -f "$RUNNER_TEMP/native-codec-gdb" "$RUNNER_TEMP/probe-native-codec-context.cjs"' EXIT
+          cat > "$VELOCAST_WEBCODECS_TEST_BINARY" <<'GDB'
+          #!/usr/bin/env bash
+          exec gdb --batch --return-child-result \
+            -ex 'set pagination off' \
+            -ex 'set confirm off' \
+            -ex 'set debuginfod enabled off' \
+            -ex 'set print thread-events off' \
+            -ex run \
+            -ex 'thread apply all bt' \
+            -ex 'info sharedlibrary' \
+            --args "$VELOCAST_CODEC_PROBE_ELECTRON" "$@"
+          GDB
+          chmod +x "$VELOCAST_WEBCODECS_TEST_BINARY"
           cat > "$RUNNER_TEMP/probe-native-codec-context.cjs" <<'NODE'
           "use strict";
 
@@ -70,7 +85,7 @@ jobs:
           const hostRequire = createRequire(
             path.join(root, "packages/electron-host/package.json"),
           );
-          const cases = ["main-auto", "renderer-auto", "renderer-thread1"];
+          const cases = ["main-auto"];
 
           function mark(stage, extra = {}) {
             fs.appendFileSync(
@@ -347,6 +362,13 @@ jobs:
           }
           NODE
           xvfb-run -a node "$RUNNER_TEMP/probe-native-codec-context.cjs" --output "$RUNNER_TEMP/native-codec-context"
+      - name: Save native codec backtrace (Linux)
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-codec-context-linux
+          path: ${{ runner.temp }}/native-codec-context
+          if-no-files-found: ignore
       - name: Probe AAC impulse timing (macOS)
         id: aac_timing
         if: runner.os == 'macOS'

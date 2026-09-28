@@ -228,7 +228,7 @@ function schedulePaintRetry(waiter) {
     waiter.retryTimer = null;
     if (paintWaiter === waiter && window && !window.isDestroyed()) {
       try {
-        refreshPaint(waiter, bitmap);
+        refreshPaint(waiter, bitmap && !cpuBitmap);
       } catch (error) {
         abortPending(error);
       }
@@ -399,7 +399,7 @@ async function waitForPaint(request) {
       // Invalidate alone can produce a software paint with no shared texture
       // when the composition is unchanged. Restarting the offscreen capturer
       // requests a fresh GPU texture without changing page pixels or layout.
-      refreshPaint(waiter, !software);
+      refreshPaint(waiter, !software && !cpuBitmap);
     } catch (error) {
       paintWaiter = null;
       clearTimeout(timer);
