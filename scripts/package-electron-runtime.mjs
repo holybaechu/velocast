@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   findDumpbin,
@@ -9,7 +10,7 @@ import {
 } from "./electron-runtime-package.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const options = { dllDirs: [], host: join(root, "packages/electron-host") };
+const options = { dllDirs: [join(process.env.SystemRoot ?? "C:\\Windows", "System32")], host: join(root, "packages/electron-host") };
 for (let index = 2; index < process.argv.length; index += 2) {
   const key = process.argv[index],
     value = process.argv[index + 1];
@@ -19,8 +20,7 @@ for (let index = 2; index < process.argv.length; index += 2) {
       "--renderer",
       "--electron",
       "--host",
-      "--ffmpeg",
-      "--ffprobe",
+      "--mediabunny",
       "--output",
       "--dll-dir",
       "--licenses",
@@ -30,11 +30,12 @@ for (let index = 2; index < process.argv.length; index += 2) {
   if (key === "--dll-dir") options.dllDirs.push(resolve(value));
   else options[key.slice(2)] = resolve(value);
 }
-for (const key of ["renderer", "electron", "ffmpeg", "ffprobe", "output"])
+for (const key of ["renderer", "electron", "output"])
   if (!options[key])
     throw new Error(
-      "Required: --renderer EXE --electron DIST --ffmpeg EXE --ffprobe EXE --dll-dir DIR --output NEW-DIR [--licenses DIR]",
+      "Required: --renderer EXE --electron DIST --output NEW-DIR [--mediabunny PACKAGE-DIR] [--dll-dir DIR] [--licenses DIR]",
     );
+options.mediabunny ??= realpathSync(join(options.host, "node_modules", "mediabunny"));
 const dumpbin = findDumpbin();
 options.readImports = (file) => windowsImports(dumpbin, file);
 options.probeCapabilities = (binary) =>

@@ -12,8 +12,7 @@ export interface PcmReferenceOptions {
 }
 
 /**
- * Bounded offline oracle, NOT the production mixer. Production uses FFmpeg's
- * streaming graph. Sources must already be decoded, resampled and explicitly
+ * Bounded offline oracle, independent of the production WebCodecs mixer. Sources must already be decoded, resampled and explicitly
  * converted to the requested channel count. No resampling, normalization,
  * limiting, or silent gain changes occur here; the input arrays are never changed.
  */

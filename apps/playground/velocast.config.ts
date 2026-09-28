@@ -4,9 +4,9 @@ export default defineConfig({
   entry: "index.html",
   renderer: {
     binary: "auto",
-    acceleration: "required",
-    concurrency: "auto",
-    assembly: "segments",
-    pixelFormat: "nv12",
+    acceleration: "auto",
+    concurrency: 1,
+    assembly: "reference",
+    pixelFormat: "yuv420p",
   },
 });

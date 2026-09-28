@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import type {
   DoctorProbeInput,
@@ -51,7 +50,6 @@ export type ProbeHostForDoctorOptions = Pick<
   ResolveRendererBinaryOptions,
   "arch" | "cwd" | "env" | "fallbackTargetDirs" | "platform"
 > & {
-  ffmpegEncoders?: FfmpegEncoderSupport;
   rendererCapabilities?: RendererCapabilitySupport;
   runtimeResolver?: RendererRuntimeResolver;
   resolveRendererProcessEnv?: (
@@ -59,10 +57,6 @@ export type ProbeHostForDoctorOptions = Pick<
   ) => NodeJS.ProcessEnv;
   spawnRendererCapabilities?: RendererCapabilitySpawn;
 };
-export interface FfmpegEncoderSupport {
-  ffmpegPresent: boolean;
-  encoders?: Record<string, boolean>;
-}
 export type {
   RendererCapabilitySupport,
   RendererCapabilitySpawn,
@@ -81,12 +75,11 @@ export function probeHostForDoctor(
     options.runtimeResolver ??
     new RendererRuntimeResolver({ ...options, env, platform, arch });
   let rendererBinary: string | undefined;
-  let probeEnv = env;
   let capabilities = options.rendererCapabilities;
   let reason: string | undefined;
   try {
     rendererBinary = resolver.resolveBinary();
-    probeEnv = options.resolveRendererProcessEnv
+    const probeEnv = options.resolveRendererProcessEnv
       ? options.resolveRendererProcessEnv({ ...options, rendererBinary })
       : resolver.inspectProcessEnv(rendererBinary);
     for (const key of [
@@ -116,41 +109,16 @@ export function probeHostForDoctor(
     reason = error instanceof Error ? error.message : String(error);
   }
   const browserAvailable = rendererBinary !== undefined && reason === undefined;
-  const encoderNames = [
-    ...new Set([
-      "libx264",
-      "png",
-      ...(nativePlatform?.requiredGpuBackends
-        .map((item) => item.ffmpegEncoder)
-        .filter((item): item is string => !!item) ?? []),
-    ]),
-  ];
-  const ffmpeg =
-    options.ffmpegEncoders ?? probeFfmpegEncoders(encoderNames, probeEnv);
-  const linked = capabilities?.d3d11FfmpegEncoder;
   const gpuBackends: DoctorRequiredGpuBackendProbe[] = (
     nativePlatform?.requiredGpuBackends ?? []
-  ).map((backend) => {
-    const available =
-      browserAvailable &&
-      linked?.compiled === true &&
-      linked.encoders?.[backend.ffmpegEncoder ?? backend.backend] === true;
-    return {
-      backend: backend.backend,
-      available,
-      packetWriterAvailable:
-        available && backend.packetWriterImplemented === true,
-      ...(available
-        ? {}
-        : {
-            unavailableCode: "backend.unavailable" as const,
-            reason:
-              linked?.compiled !== true
-                ? "renderer binary did not report Windows D3D11 FFmpeg support"
-                : `Linked FFmpeg encoder ${backend.ffmpegEncoder ?? backend.backend} unavailable`,
-          }),
-    };
-  });
+  ).map((backend) => ({
+    backend: backend.backend,
+    available: false,
+    packetWriterAvailable: false,
+    unavailableCode: "backend.unavailable",
+    reason:
+      "WebCodecs does not provide a verifiable hardware-only guarantee; use acceleration auto or off and a logical codec",
+  }));
   return {
     platform,
     arch,
@@ -174,49 +142,10 @@ export function probeHostForDoctor(
     displayVariablesUnset: (nativePlatform?.displaylessEnvVars ?? []).every(
       (name) => !env[name]?.trim(),
     ),
-    ffmpegPresent: ffmpeg.ffmpegPresent,
-    softwareFallbackAvailable:
-      browserAvailable &&
-      ffmpeg.ffmpegPresent &&
-      ffmpeg.encoders?.libx264 !== false,
+    webCodecsAvailable:
+      browserAvailable && capabilities?.videoEncoderBackend === "webcodecs",
     requiredGpuPacketWriterAvailable: gpuBackends.some(
       (backend) => backend.packetWriterAvailable,
-    ),
-  };
-}
-
-function probeFfmpegEncoders(
-  encoderNames: string[],
-  env: NodeJS.ProcessEnv,
-): FfmpegEncoderSupport {
-  const result = spawnSync("ffmpeg", ["-hide_banner", "-encoders"], {
-    env,
-    encoding: "utf8",
-    maxBuffer: 2 * 1024 * 1024,
-    timeout: 5000,
-    windowsHide: true,
-  });
-  if (result.error || result.status !== 0) return { ffmpegPresent: false };
-  return parseFfmpegEncoderSupport(
-    `${result.stdout}\n${result.stderr}`,
-    encoderNames,
-  );
-}
-
-export function parseFfmpegEncoderSupport(
-  output: string,
-  encoderNames: string[] = ["libx264", "png"],
-): FfmpegEncoderSupport {
-  const found = new Set(
-    output.split(/\r?\n/).flatMap((line) => {
-      const match = /^\s*[A-Z.]{6}\s+(\S+)(?:\s|$)/i.exec(line);
-      return match?.[1] ? [match[1]] : [];
-    }),
-  );
-  return {
-    ffmpegPresent: true,
-    encoders: Object.fromEntries(
-      encoderNames.map((encoder) => [encoder, found.has(encoder)]),
     ),
   };
 }

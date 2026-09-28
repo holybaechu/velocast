@@ -50,7 +50,7 @@ Velocast는 외부 AI 코딩 에이전트와 함께 영상 코드를 편집하�
 - 기본 흐름은 코드 수정·빌드 → `check` 진단과 정확한 PNG 프레임 또는 반열린 구간 `[start,end)` 확인 → 미리보기 자동 갱신·요소 검사 → 전체 영상 출력이다. 프로젝트에 설치하는 에이전트 스킬과 [사용 예제](README.md), [React 계약](packages/react/README.md)이 실제 진입점을 설명한다. 음원 분석의 에너지·온셋 후보는 측정된 보조 자료이며, 검증된 가사나 박자 인식으로 간주하지 않는다.
 - Remotion 호환은 별도 `@velocast/remotion` 진입점이다. React/ReactDOM 18.3.1에서 기존 4.0.244 원본 가사 사례를 유지하며, 4.0.526 스타일의 명시된 비디오·오디오 API와 Series·Loop 등 검증한 범위를 넓힌다. [호환 계약](packages/remotion-compat/README.md) 밖의 기능이나 전체 플러그인 생태계를 지원한다고 간주하지 않는다.
 - `VideoClip`은 명시적인 source-time과 프레임 준비를 사용하는 음소거 영상 요소다. 일반 미디어 합성은 `createMediaTimeline`에 소스와 타이밍을 한 번 선언하면 영상 요소와 공통 [AudioPlan](docs/authored-audio.md)을 함께 만든다. 페이드·더킹은 미리보기와 출력이 공유하는 샘플 단위 볼륨 엔벌로프로 표현한다.
-- Windows H.264 기본 경로는 브라우저 GPU 텍스처를 GPU에서 NV12로 변환해 하드웨어 인코더로 전달한다. GPU 복사와 압축 패킷의 CPU 처리는 남으며, 비압축 프레임의 CPU readback을 피한다. [색 변환과 검증 조건](docs/windows-gpu-color-path.md)은 일반적인 속도 배수 약속이 아니다.
+- 기본 영상 출력은 Electron의 Chromium WebCodecs로 인코딩하고 Mediabunny로 영상·음성 컨테이너를 처리한다. `auto`는 하드웨어 사용을 선호하고 `off`는 소프트웨어 사용을 선호하지만 실제 인코더 선택을 보장하지 않는다. 하드웨어 사용을 보장할 수 없는 `required`는 오류로 처리한다. [렌더링 경로와 검증 범위](docs/webcodecs.md)는 일반적인 속도 배수 약속이 아니다.
 - Windows 비공개 배포 후보 검증과 외부 공개는 구분한다. 검증된 후보·호스트 요구사항을 기록하되 공개 artifact URL은 광고하지 않는다. 서명·재배포 조건·공개 업로드는 별도 배포 작업이다.
 
 이 절은 위 제품 목표의 구현 경로를 연결한다. 기능 범위를 임의 확대하거나 다른 운영체제의 기존 코드를 일괄 제거하는 근거로 사용하지 않는다.

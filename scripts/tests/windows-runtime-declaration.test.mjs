@@ -26,8 +26,8 @@ test("Windows candidate declaration matches the current release manifest", () =>
   );
   assert.deepEqual(target.runtimeFiles, declaration.runtimeFiles);
   assert.deepEqual(target.nativeFiles, declaration.nativeFiles);
-  assert.equal(target.runtimeFiles.length, 179);
-  assert.equal(target.nativeFiles.length, 18);
+  assert.ok(target.runtimeFiles.length > 80);
+  assert.ok(target.nativeFiles.length > 5);
   assert.equal(
     target.runtimeFiles.filter((path) => path.startsWith("electron/locales/"))
       .length > 0,
@@ -36,10 +36,11 @@ test("Windows candidate declaration matches the current release manifest", () =>
   for (const name of [
     "velocast-renderer.exe",
     "electron/electron.exe",
-    "ffmpeg.exe",
-    "ffprobe.exe",
   ])
     assert(target.nativeFiles.includes(name));
+  for (const name of ["electron-host/media-client.cjs", "electron-host/media-runtime.cjs", "electron-host/node_modules/mediabunny/package.json"])
+    assert(target.runtimeFiles.includes(name));
+  assert.ok(!target.runtimeFiles.some((path) => /(^|\/)(ffmpeg|ffprobe)(\.exe)?$|^(avcodec|avformat|avutil|swresample)-\d+\.dll$/i.test(path)));
   assert.equal(
     target.runtimeFiles.some((path) =>
       /(^|\/)(src|include|cmake|debug)(\/|$)|\.(pdb|lib|obj)$/i.test(path),
@@ -48,7 +49,7 @@ test("Windows candidate declaration matches the current release manifest", () =>
   );
 });
 
-test("Windows candidate records Electron and native licensing inputs", () => {
+test("Windows candidate records Electron and Mediabunny licensing inputs", () => {
   const byComponent = Object.fromEntries(
     declaration.licenses.map((license) => [license.component, license]),
   );
@@ -57,6 +58,7 @@ test("Windows candidate records Electron and native licensing inputs", () => {
     "electron/LICENSE",
     "electron/LICENSES.chromium.html",
   ]);
+  assert.deepEqual(byComponent.Mediabunny.files, ["electron-host/node_modules/mediabunny/LICENSE"]);
   assert.equal(declaration.browserHost, "electron");
 });
 

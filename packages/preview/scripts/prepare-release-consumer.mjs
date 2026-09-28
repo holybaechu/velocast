@@ -22,6 +22,7 @@ const root = requested
 if (requested) await mkdir(root);
 const packages = join(root, "packages");
 const project = join(root, "project");
+const psLiteral = (value) => `'${String(value).replaceAll("'", "''")}'`;
 await mkdir(packages);
 await mkdir(project);
 await mkdir(join(project, "dist"));
@@ -127,7 +128,7 @@ await copyFile(
 );
 await writeFile(
   join(root, "run-gate.ps1"),
-  `param([Parameter(Mandatory=$true)][string]$Renderer,[Parameter(Mandatory=$true)][string]$FfmpegBin)\n$env:VELOCAST_RENDERER_BINARY=$Renderer\n$env:VELOCAST_PREVIEW_GATE_PROJECT=${JSON.stringify(project)}\n$env:VELOCAST_PREVIEW_GATE_FFMPEG_BIN=$FfmpegBin\nnode ${JSON.stringify(join(root, "verify-official-preview.mjs"))}\nexit $LASTEXITCODE\n`,
+  `param([Parameter(Mandatory=$true)][string]$Renderer)\n$env:VELOCAST_RENDERER_BINARY=$Renderer\n$env:VELOCAST_PREVIEW_GATE_PROJECT=${psLiteral(project)}\n$env:VELOCAST_PREVIEW_GATE_CLI=${psLiteral(join(project, "node_modules/velocast/dist/bin.js"))}\nnode ${psLiteral(join(root, "verify-official-preview.mjs"))}\nexit $LASTEXITCODE\n`,
 );
 const installedPreview = resolve(
   project,
@@ -155,7 +156,7 @@ const manifest = {
     publicPreviewServerExport: true,
     authoredFixture: "scene / 320x180 / 30fps / 60 frames",
   },
-  run: `powershell -NoProfile -File ${join(root, "run-gate.ps1")} -Renderer <renderer.exe> -FfmpegBin <ffmpeg-bin>`,
+  run: `powershell -NoProfile -File ${psLiteral(join(root, "run-gate.ps1"))} -Renderer <prepared-runtime/velocast-renderer.exe>`,
 };
 await writeFile(
   join(root, "consumer-manifest.json"),

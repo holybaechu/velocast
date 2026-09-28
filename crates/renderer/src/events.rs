@@ -80,9 +80,9 @@ mod tests {
             fallback_used: false,
             fallback_reason: None,
             cpu_readback_frames: 0,
-            capture_backend: Some("electron_d3d11_shared_texture".to_string()),
-            conversion_backend: Some("d3d11_video_processor".to_string()),
-            encoder_backend: Some("h264_mf".to_string()),
+            capture_backend: Some("electron_shared_texture".to_string()),
+            conversion_backend: Some("chromium_webcodecs".to_string()),
+            encoder_backend: Some("electron_webcodecs_h264".to_string()),
         })
         .await
         .unwrap();
@@ -105,7 +105,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(lines[1]).unwrap()["encoder_backend"],
-            "h264_mf"
+            "electron_webcodecs_h264"
         );
         tokio::fs::remove_file(path).await.unwrap();
     }

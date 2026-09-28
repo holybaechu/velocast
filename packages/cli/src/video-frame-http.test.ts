@@ -149,7 +149,7 @@ it("rejects stale request identity and never changes a previously bound snapshot
 it("returns bounded stable errors without exposing decoder command/stderr details", async () => {
   const f = await fixture({
     frameAt: async () => {
-      throw new Error("private path and ffmpeg stderr");
+      throw new Error("private path and webcodecs stderr");
     },
   });
   const response = await fetch(f.url());

@@ -1,16 +1,16 @@
 //! Owns resources that must finish before a render job can return.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::AsyncReadExt;
-use tokio::process::{Child, ChildStdout, Command};
+use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
 pub(crate) struct WorkerCommand {
     pub start: u32,
     pub end: u32,
-    pub capture_stdout: bool,
     pub command: Command,
+    pub cancellation_event_path: Option<PathBuf>,
 }
 
 pub(crate) struct RenderJobResources {
@@ -52,17 +52,14 @@ impl RenderJobResources {
         self.workers.spawn(commands)
     }
 
-    pub fn worker_stdout(&mut self, index: usize) -> anyhow::Result<&mut ChildStdout> {
-        self.workers
-            .running
-            .get_mut(index)
-            .and_then(|worker| worker.stdout.as_mut())
-            .ok_or_else(|| anyhow::anyhow!("streamed worker stdout is unavailable"))
-    }
-
     pub async fn wait_for_workers(&mut self) -> anyhow::Result<()> {
         self.check_cancellation()?;
         self.workers.wait(&self.cancellation).await
+    }
+
+    pub async fn check_workers(&mut self) -> anyhow::Result<()> {
+        self.check_cancellation()?;
+        self.workers.reap_completed(true).await
     }
 
     pub fn set_cancellation(&mut self, cancellation: crate::cancellation::RenderCancellation) {
@@ -105,43 +102,148 @@ struct RunningWorker {
     start: u32,
     end: u32,
     child: Child,
-    stdout: Option<ChildStdout>,
     stderr: JoinHandle<Vec<u8>>,
+    containment: WorkerContainment,
+    cancellation: crate::cancellation::RenderCancellation,
+    cooperative: bool,
+    marker_created: bool,
+}
+
+#[cfg(unix)]
+struct WorkerContainment {
+    group: libc::pid_t,
+    armed: bool,
+}
+#[cfg(unix)]
+impl WorkerContainment {
+    fn new(child: &Child) -> anyhow::Result<Self> {
+        let group = libc::pid_t::try_from(
+            child
+                .id()
+                .ok_or_else(|| anyhow::anyhow!("worker missing PID"))?,
+        )?;
+        anyhow::ensure!(
+            unsafe { libc::getpgid(group) } == group,
+            "worker process group missing"
+        );
+        Ok(Self { group, armed: true })
+    }
+    fn terminate(&mut self) {
+        if self.armed {
+            // The group leader remains an unreaped child until after this call.
+            // Its PID therefore cannot be reused for another process group.
+            unsafe {
+                libc::kill(-self.group, libc::SIGKILL);
+            }
+            self.armed = false;
+        }
+    }
+}
+#[cfg(windows)]
+struct WorkerContainment(windows_sys::Win32::Foundation::HANDLE);
+#[cfg(windows)]
+impl WorkerContainment {
+    fn new(child: &Child) -> anyhow::Result<Self> {
+        use windows_sys::Win32::System::JobObjects::*;
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        anyhow::ensure!(
+            !handle.is_null(),
+            "worker job creation failed: {}",
+            std::io::Error::last_os_error()
+        );
+        let owned = Self(handle);
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        anyhow::ensure!(
+            unsafe {
+                SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformation,
+                    (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&limits) as u32,
+                )
+            } != 0,
+            "worker job configuration failed: {}",
+            std::io::Error::last_os_error()
+        );
+        let process = child
+            .raw_handle()
+            .ok_or_else(|| anyhow::anyhow!("worker process handle unavailable"))?;
+        anyhow::ensure!(
+            unsafe { AssignProcessToJobObject(handle, process) } != 0,
+            "worker job assignment failed: {}",
+            std::io::Error::last_os_error()
+        );
+        Ok(owned)
+    }
+    fn terminate(&mut self) {
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
+        }
+    }
+}
+#[cfg(windows)]
+impl Drop for WorkerContainment {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
 }
 
 impl WorkerGroup {
     pub fn spawn(&mut self, commands: Vec<WorkerCommand>) -> anyhow::Result<()> {
         for mut process in commands {
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                process.command.as_std_mut().process_group(0);
+                process.command.env("VELOCAST_ELECTRON_WORKER_GROUP", "1");
+            }
             process
                 .command
-                .stdout(if process.capture_stdout {
-                    Stdio::piped()
-                } else {
-                    Stdio::null()
-                })
+                .stdout(Stdio::null())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true);
             let mut child = process.command.spawn()?;
-            let stdout = child.stdout.take();
+            let containment = match WorkerContainment::new(&child) {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = child.start_kill();
+                    return Err(error);
+                }
+            };
+            let cancellation = crate::cancellation::RenderCancellation::for_process(
+                process.cancellation_event_path.as_deref(),
+                child.id().expect("spawned worker PID"),
+            );
             let stderr = child.stderr.take();
             let stderr = tokio::spawn(async move {
                 let mut output = Vec::new();
                 if let Some(mut stderr) = stderr {
-                    let _ = stderr.read_to_end(&mut output).await;
+                    let mut buffer = [0; 8192];
+                    while let Ok(read) = stderr.read(&mut buffer).await {
+                        if read == 0 {
+                            break;
+                        }
+                        output.extend_from_slice(&buffer[..read]);
+                        if output.len() > 65536 {
+                            output.drain(..output.len() - 65536);
+                        }
+                    }
                 }
                 output
             });
-            let stdout_missing = process.capture_stdout && stdout.is_none();
             self.running.push(RunningWorker {
                 start: process.start,
                 end: process.end,
                 child,
-                stdout,
                 stderr,
+                containment,
+                cancellation,
+                cooperative: process.cancellation_event_path.is_some(),
+                marker_created: false,
             });
-            if stdout_missing {
-                return Err(anyhow::anyhow!("worker stdout is unavailable"));
-            }
         }
         Ok(())
     }
@@ -154,33 +256,7 @@ impl WorkerGroup {
             // Poll without dropping this future: a completed child's stderr
             // JoinHandle must still be collected before workspace cleanup.
             cancellation.check()?;
-            let mut index = 0;
-            while index < self.running.len() {
-                let status = match self.running[index]
-                    .child
-                    .try_wait()
-                    .map_err(worker_monitor_failed_error)?
-                {
-                    Some(status) => status,
-                    None => {
-                        index += 1;
-                        continue;
-                    }
-                };
-                let mut worker = self.running.swap_remove(index);
-                let stderr = collect_worker_output(&mut worker).await;
-                if !status.success() {
-                    return Err(crate::errors::RendererError::WorkerFailed {
-                        start: worker.start,
-                        end: worker.end,
-                        message: format!(
-                            "exit status: {status}\nstderr:\n{}",
-                            String::from_utf8_lossy(&stderr).trim()
-                        ),
-                    }
-                    .into());
-                }
-            }
+            self.reap_completed(true).await?;
             if !self.running.is_empty() {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
@@ -188,15 +264,75 @@ impl WorkerGroup {
         Ok(())
     }
 
+    async fn reap_completed(&mut self, fail_on_error: bool) -> anyhow::Result<()> {
+        let mut index = 0;
+        while index < self.running.len() {
+            #[cfg(unix)]
+            let ready = crate::electron_app::unix_child_has_exited(
+                self.running[index].child.id().expect("unreaped child PID"),
+            )?;
+            #[cfg(windows)]
+            let ready = self.running[index]
+                .child
+                .try_wait()
+                .map_err(worker_monitor_failed_error)?
+                .is_some();
+            if !ready {
+                index += 1;
+                continue;
+            }
+            let mut worker = self.running.swap_remove(index);
+            worker.containment.terminate();
+            let status = worker
+                .child
+                .wait()
+                .await
+                .map_err(worker_monitor_failed_error)?;
+            let stderr = collect_worker_output(&mut worker).await;
+            if fail_on_error && !status.success() {
+                return Err(crate::errors::RendererError::WorkerFailed {
+                    start: worker.start,
+                    end: worker.end,
+                    message: format!(
+                        "exit status: {status}\nstderr:\n{}",
+                        String::from_utf8_lossy(&stderr).trim()
+                    ),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     pub async fn cancel(&mut self) -> anyhow::Result<()> {
         let mut error = None;
-        // Signal every child before awaiting any one child or its pipes.
+        // Give native workers time to unwind their browser/profile ownership.
+        // Commands without the cooperative protocol are contained immediately.
         for worker in &mut self.running {
-            if worker.child.try_wait().ok().flatten().is_none() {
-                if let Err(failure) = worker.child.start_kill() {
-                    error.get_or_insert_with(|| anyhow::Error::from(failure));
+            if worker.cooperative {
+                match worker.cancellation.request() {
+                    Ok(created) => worker.marker_created = created,
+                    Err(failure) => {
+                        error.get_or_insert(failure);
+                        worker.containment.terminate();
+                    }
                 }
+            } else {
+                worker.containment.terminate();
             }
+        }
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !self.running.is_empty() && tokio::time::Instant::now() < deadline {
+            if let Err(failure) = self.reap_completed(false).await {
+                error.get_or_insert(failure);
+                break;
+            }
+            if !self.running.is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }
+        for worker in &mut self.running {
+            worker.containment.terminate();
         }
         for mut worker in self.running.drain(..) {
             if let Err(failure) = worker.child.wait().await {
@@ -213,7 +349,11 @@ impl Drop for RunningWorker {
         // Cancellation of the owning future cannot await. Keep this fallback
         // on each worker so it also covers cancellation during drain/join.
         let _ = self.child.start_kill();
+        self.containment.terminate();
         self.stderr.abort();
+        if self.marker_created {
+            self.cancellation.remove_requested();
+        }
     }
 }
 
@@ -376,8 +516,9 @@ mod tests {
                 resources.spawn_workers(vec![WorkerCommand {
                     start: 1,
                     end: 2,
-                    capture_stdout: false,
+
                     command: Command::new(root.join("missing-worker-executable")),
+                    cancellation_event_path: None,
                 }])?;
                 Ok(())
             })
@@ -544,16 +685,105 @@ mod tests {
             .unwrap();
         let result =
             RenderJobResources::run(Some(&output), &temporary, &directory, async |_| Ok(())).await;
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("recovery is pending")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("recovery is pending"));
         assert_eq!(
             tokio::fs::read(&recovery).await.unwrap(),
             b"irreplaceable previous video"
         );
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cooperative_worker_unwinds_owned_state_before_workspace_cleanup() {
+        let root = test_directory("cooperative");
+        let directory = root.join("workspace");
+        let ready = root.join("ready");
+        let finished = root.join("unwound");
+        let error = RenderJobResources::run(
+            Some(&root.join("out.mp4")),
+            &directory.join("out.mp4"),
+            &directory,
+            async |resources| {
+                let event = root.join("worker-events.jsonl");
+                let mut command = fixture_command(&ready, &finished, "cooperative");
+                command
+                    .command
+                    .env("VELOCAST_JOB_TEST_CANCEL_EVENT", &event);
+                command.cancellation_event_path = Some(event);
+                resources.spawn_workers(vec![command])?;
+                wait_until_exists(&ready).await;
+                Err::<(), _>(anyhow::anyhow!("cancel this attempt"))
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("cancel this attempt"));
+        assert_eq!(std::fs::read(&finished).unwrap(), b"unwound");
+        assert!(!root.join("owned-profile").exists());
+        assert!(!directory.exists());
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn forced_worker_shutdown_contains_a_stubborn_grandchild() {
+        let root = test_directory("worker-tree");
+        let directory = root.join("workspace");
+        let ready = root.join("ready");
+        let finished = root.join("must-not-finish");
+        let error = RenderJobResources::run(
+            Some(&root.join("out.mp4")),
+            &directory.join("out.mp4"),
+            &directory,
+            async |resources| {
+                let event = root.join("worker-events.jsonl");
+                let mut command = fixture_command(&ready, &finished, "stubborn");
+                command.cancellation_event_path = Some(event);
+                resources.spawn_workers(vec![command])?;
+                wait_until_exists(&ready.with_extension("grandchild-ready")).await;
+                Err::<(), _>(anyhow::anyhow!("stop process tree"))
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("stop process tree"));
+        tokio::time::sleep(std::time::Duration::from_millis(2300)).await;
+        assert!(
+            !finished.exists(),
+            "grandchild survived contained cancellation"
+        );
+        assert!(!directory.exists());
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn frame_fence_observes_failed_sibling_without_waiting_for_local_render() {
+        let root = test_directory("worker-poll");
+        let directory = root.join("workspace");
+        let ready = root.join("ready");
+        let error = RenderJobResources::run(
+            Some(&root.join("out.mp4")),
+            &directory.join("out.mp4"),
+            &directory,
+            async |resources| {
+                resources.spawn_workers(vec![fixture_command(
+                    &ready,
+                    &root.join("finished"),
+                    "fail",
+                )])?;
+                wait_until_exists(&ready).await;
+                for _ in 0..100 {
+                    resources.check_workers().await?;
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                Err::<(), _>(anyhow::anyhow!("worker failure was not observed"))
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("worker 0..1 failed"));
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
 
@@ -571,8 +801,9 @@ mod tests {
         WorkerCommand {
             start: 0,
             end: 1,
-            capture_stdout: false,
+
             command,
+            cancellation_event_path: None,
         }
     }
 
@@ -591,8 +822,69 @@ mod tests {
         let Some(ready) = std::env::var_os("VELOCAST_JOB_TEST_READY") else {
             return;
         };
-        std::fs::write(ready, b"ready").unwrap();
-        if std::env::var("VELOCAST_JOB_TEST_MODE").unwrap() == "fail" {
+        let ready = PathBuf::from(ready);
+        let mode = std::env::var("VELOCAST_JOB_TEST_MODE").unwrap();
+        if mode == "cooperative" {
+            struct OwnedProfile {
+                profile: PathBuf,
+                finished: PathBuf,
+            }
+            impl Drop for OwnedProfile {
+                fn drop(&mut self) {
+                    std::fs::remove_dir_all(&self.profile).unwrap();
+                    std::fs::write(&self.finished, b"unwound").unwrap();
+                }
+            }
+            let profile = ready.parent().unwrap().join("owned-profile");
+            std::fs::create_dir(&profile).unwrap();
+            let _owned = OwnedProfile {
+                profile,
+                finished: PathBuf::from(std::env::var_os("VELOCAST_JOB_TEST_FINISHED").unwrap()),
+            };
+            let cancellation = crate::cancellation::RenderCancellation::from_event_log_path(
+                std::env::var("VELOCAST_JOB_TEST_CANCEL_EVENT")
+                    .ok()
+                    .as_deref(),
+            );
+            std::fs::write(&ready, b"ready").unwrap();
+            while cancellation.check().is_ok() {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            return;
+        }
+        if mode == "stubborn" {
+            #[cfg(unix)]
+            assert_eq!(unsafe { libc::getpgrp() }, unsafe { libc::getpid() });
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "render_job::tests::worker_fixture",
+                    "--nocapture",
+                ])
+                .env(
+                    "VELOCAST_JOB_TEST_READY",
+                    ready.with_extension("grandchild-ready"),
+                )
+                .env("VELOCAST_JOB_TEST_MODE", "grandchild")
+                .spawn()
+                .unwrap();
+            std::fs::write(&ready, b"ready").unwrap();
+            let _ = child.wait();
+            return;
+        }
+        std::fs::write(&ready, b"ready").unwrap();
+        if mode == "grandchild" {
+            #[cfg(unix)]
+            assert_eq!(unsafe { libc::getpgrp() }, unsafe { libc::getppid() });
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            std::fs::write(
+                std::env::var_os("VELOCAST_JOB_TEST_FINISHED").unwrap(),
+                b"escaped",
+            )
+            .unwrap();
+            return;
+        }
+        if mode == "fail" {
             std::process::exit(7);
         }
         std::thread::sleep(std::time::Duration::from_millis(250));

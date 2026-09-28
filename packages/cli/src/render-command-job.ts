@@ -258,7 +258,7 @@ function finalizeRenderJob(fields: RenderJobFields): RustRenderJob {
     ...fields,
     composition_id: fields.composition_id ?? null,
     selector: fields.selector ?? null,
-    codec: fields.codec ?? "libx264",
+    codec: fields.codec ?? "h264",
     pixel_format:
       fields.pixel_format ?? defaultRendererPixelFormat(acceleration),
     acceleration,

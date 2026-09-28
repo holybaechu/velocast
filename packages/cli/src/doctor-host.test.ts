@@ -2,10 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  parseFfmpegEncoderSupport,
-  probeHostForDoctor,
-} from "./doctor-host.js";
+import { probeHostForDoctor } from "./doctor-host.js";
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0))
@@ -33,18 +30,19 @@ const caps = {
   outputApiVersion: 1,
   browserHosts: ["electron"],
   defaultBrowserHost: "electron",
-  electronHostProtocolVersion: 1,
-  d3d11FfmpegEncoder: { compiled: true, encoders: { h264_mf: true } },
+  electronHostProtocolVersion: 2,
+  videoEncoderBackend: "webcodecs",
+  mediaRuntime: "mediabunny",
+  hardwareAccelerationGuarantee: false,
 };
 describe("Electron host doctor", () => {
-  it("uses linked native Windows encoders rather than unrelated PATH encoder availability", () => {
+  it("reports WebCodecs availability without claiming hardware guarantees", () => {
     const f = fixture();
     const report = probeHostForDoctor({
       cwd: f.dir,
       env: f.env,
       platform: "win32",
       arch: "x64",
-      ffmpegEncoders: { ffmpegPresent: false },
       spawnRendererCapabilities: () => ({
         status: 0,
         stdout: JSON.stringify(caps),
@@ -53,10 +51,10 @@ describe("Electron host doctor", () => {
     });
     expect(report.browserRuntime?.available).toBe(true);
     expect(
-      report.requiredGpuBackends?.find((item) => item.backend === "h264_mf")
+      report.requiredGpuBackends?.find((item) => item.backend === "webcodecs")
         ?.available,
-    ).toBe(true);
-    expect(report.softwareFallbackAvailable).toBe(false);
+    ).toBe(false);
+    expect(report.webCodecsAvailable).toBe(true);
   });
   it.each(["linux", "darwin"] as const)(
     "reports %s software without probing retired GPU devices",
@@ -67,19 +65,20 @@ describe("Electron host doctor", () => {
         env: f.env,
         platform,
         arch: "x64",
-        ffmpegEncoders: { ffmpegPresent: true },
         spawnRendererCapabilities: () => ({
           status: 0,
           stdout: JSON.stringify(caps),
           stderr: "",
         }),
       });
-      expect(report.requiredGpuBackends).toEqual([]);
+      expect(report.requiredGpuBackends).toEqual([
+        expect.objectContaining({ backend: "webcodecs", available: false }),
+      ]);
       expect(report.browserRuntime).toMatchObject({
         available: true,
         gpuCaptureSupported: false,
       });
-      expect(report.softwareFallbackAvailable).toBe(true);
+      expect(report.webCodecsAvailable).toBe(true);
     },
   );
   it("rejects legacy native binaries even when Electron files exist", () => {
@@ -89,7 +88,6 @@ describe("Electron host doctor", () => {
       env: f.env,
       platform: "linux",
       arch: "x64",
-      ffmpegEncoders: { ffmpegPresent: true },
       spawnRendererCapabilities: () => ({
         status: 0,
         stdout: '{"outputApiVersion":1}',
@@ -100,7 +98,7 @@ describe("Electron host doctor", () => {
     expect(report.browserRuntime?.reason).toContain(
       "renderer.electron_unsupported",
     );
-    expect(report.softwareFallbackAvailable).toBe(false);
+    expect(report.webCodecsAvailable).toBe(false);
   });
   it("reports a missing browser dependency without claiming fallback readiness", () => {
     const f = fixture();
@@ -109,20 +107,8 @@ describe("Electron host doctor", () => {
       cwd: f.dir,
       env: f.env,
       platform: "win32",
-      ffmpegEncoders: { ffmpegPresent: true },
     });
     expect(report.browserRuntime?.reason).toContain("runtime.electron_missing");
-    expect(report.softwareFallbackAvailable).toBe(false);
-  });
-  it("parses exact FFmpeg encoder rows rather than description substrings", () => {
-    expect(
-      parseFfmpegEncoderSupport(
-        " V..... libx264 H264 encoder\n V..... png PNG\n description h264_mf",
-        ["libx264", "png", "h264_mf"],
-      ),
-    ).toEqual({
-      ffmpegPresent: true,
-      encoders: { libx264: true, png: true, h264_mf: false },
-    });
+    expect(report.webCodecsAvailable).toBe(false);
   });
 });

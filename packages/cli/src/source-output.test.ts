@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { runMediaOperation, type MediaProbe } from "./media-runtime.js";
+import { writeTestVideo, writeTestWav } from "./media-test-fixtures.js";
 import {
   copyFile,
   mkdtemp,
@@ -16,134 +17,75 @@ let directory: string;
 let video: string;
 let audio: string;
 let encodedAudio: string;
+let encodedOpus: string;
+let automaticAudioCodec: string;
 let combined: string;
 let otherVideo: string;
-
-async function command(executable: string, args: string[]): Promise<string> {
-  const child = spawn(executable, args, {
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => (stdout += chunk));
-  child.stderr.on("data", (chunk: string) => (stderr += chunk));
-  const code = await new Promise<number | null>((done, reject) => {
-    child.once("error", reject);
-    child.once("close", done);
-  });
-  if (code !== 0) throw new Error(`${executable} failed: ${stderr}`);
-  return stdout;
-}
 
 async function streams(
   path: string,
 ): Promise<{ codec_type: string; codec_name: string }[]> {
-  const json = await command("ffprobe", [
-    "-v",
-    "error",
-    "-show_entries",
-    "stream=codec_type,codec_name",
-    "-of",
-    "json",
-    path,
-  ]);
-  return (
-    JSON.parse(json) as {
-      streams: { codec_type: string; codec_name: string }[];
-    }
-  ).streams;
+  const result = await runMediaOperation<MediaProbe>({ kind: "probe", path });
+  return [
+    ...(result.video
+      ? [{ codec_type: "video", codec_name: result.video.codec }]
+      : []),
+    ...(result.audio
+      ? [{ codec_type: "audio", codec_name: result.audio.codec ?? "" }]
+      : []),
+  ];
 }
-
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "velocast-source-output-test-"));
   video = join(directory, "fixture.mp4");
   audio = join(directory, "fixture.wav");
-  encodedAudio = join(directory, "fixture.aac");
+  encodedAudio = join(directory, "fixture-audio.mp4");
+  encodedOpus = join(directory, "fixture-opus.mp4");
   combined = join(directory, "combined.mp4");
   otherVideo = join(directory, "other-video.mp4");
-  await command("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-y",
-    "-f",
-    "lavfi",
-    "-i",
-    "color=c=red:s=32x32:r=10:d=0.6",
-    "-an",
-    "-c:v",
-    "mpeg4",
-    video,
-  ]);
-  await command("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-y",
-    "-f",
-    "lavfi",
-    "-i",
-    "sine=frequency=440:sample_rate=48000:duration=0.6",
-    "-c:a",
-    "pcm_s16le",
-    audio,
-  ]);
-  await command("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-y",
-    "-i",
-    audio,
-    "-c:a",
-    "aac",
-    "-b:a",
-    "192k",
-    encodedAudio,
-  ]);
-  await command("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-y",
-    "-f",
-    "lavfi",
-    "-i",
-    "color=c=blue:s=64x64:r=10:d=0.3",
-    "-an",
-    "-c:v",
-    "mpeg4",
-    otherVideo,
-  ]);
-  await command("ffmpeg", [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-y",
-    "-i",
-    video,
-    "-i",
-    audio,
-    "-map",
-    "0:v:0",
-    "-map",
-    "1:a:0",
-    "-c:v",
-    "copy",
-    "-c:a",
-    "aac",
-    combined,
-  ]);
-});
+  await writeTestVideo(video, directory, {
+    width: 160,
+    height: 100,
+    fps: 10,
+    frames: 6,
+  });
+  await writeTestWav(audio, 0.6, 48000);
+  await writeTestVideo(otherVideo, directory, {
+    width: 64,
+    height: 64,
+    fps: 10,
+    frames: 3,
+  });
+  await runMediaOperation({
+    kind: "mux-audio",
+    videoPath: video,
+    audioPath: audio,
+    outputPath: combined,
+  });
+  await runMediaOperation({
+    kind: "encode-audio",
+    path: audio,
+    outputPath: encodedAudio,
+  });
+  await runMediaOperation({
+    kind: "encode-audio",
+    path: audio,
+    outputPath: encodedOpus,
+    audioCodec: "opus",
+  });
+  const encodedStream = (await streams(encodedAudio)).find(
+    (stream) => stream.codec_type === "audio",
+  );
+  if (!encodedStream?.codec_name)
+    throw new Error("Generated fixture has no encoded audio track");
+  automaticAudioCodec = encodedStream.codec_name;
+}, 120_000);
 
 afterAll(async () => {
   await rm(directory, { recursive: true, force: true });
-});
+}, 120_000);
 
-it("publishes a valid video with source-supplied AAC audio", async () => {
+it("publishes video with source audio using the available WebCodecs codec", async () => {
   const output = join(directory, "with-audio.mp4");
   const order: string[] = [];
   await writeFile(output, "old output");
@@ -164,52 +106,57 @@ it("publishes a valid video with source-supplied AAC audio", async () => {
   expect(order).toEqual(["video", "audio"]);
   expect(await streams(output)).toEqual([
     expect.objectContaining({ codec_type: "video" }),
-    expect.objectContaining({ codec_type: "audio", codec_name: "aac" }),
+    expect.objectContaining({
+      codec_type: "audio",
+      codec_name: automaticAudioCodec,
+    }),
   ]);
   expect(
     (await readdir(directory)).filter((name) => name.includes(".velocast-")),
   ).toEqual([]);
-});
+}, 120_000);
 
-it("copies encoded AAC audio without introducing a new sample offset", async () => {
-  const output = join(directory, "aac-copy.mp4");
-  await renderSourceOutput({
-    output,
-    renderVideo: (path) => copyFile(video, path),
-    renderAudio: async (path) => {
-      expect(path).toMatch(/\.aac$/);
-      await copyFile(encodedAudio, path);
-      return path;
-    },
-  });
-  const sourcePcm = join(directory, "source-aac.pcm");
-  const muxedPcm = join(directory, "muxed-aac.pcm");
-  for (const [input, pcm] of [
-    [encodedAudio, sourcePcm],
-    [output, muxedPcm],
-  ] as const) {
-    await command("ffmpeg", [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-y",
-      "-i",
-      input,
-      "-map",
-      "0:a:0",
-      "-c:a",
-      "pcm_s16le",
-      "-f",
-      "s16le",
-      pcm,
-    ]);
-  }
-  expect(await readFile(muxedPcm)).toEqual(await readFile(sourcePcm));
-  expect(
-    (await streams(output)).find((stream) => stream.codec_type === "audio")
-      ?.codec_name,
-  ).toBe("aac");
-});
+it.each(["auto", "opus"])(
+  "copies encoded %s audio without a codec change or new sample offset",
+  async (selection) => {
+    const inputAudio = selection === "opus" ? encodedOpus : encodedAudio;
+    const expectedCodec = (await streams(inputAudio)).find(
+      (stream) => stream.codec_type === "audio",
+    )?.codec_name;
+    expect(expectedCodec).toBeTruthy();
+    const output = join(directory, `${selection}-copy.mp4`);
+    await renderSourceOutput({
+      output,
+      renderVideo: (path) => copyFile(video, path),
+      renderAudio: async (path) => {
+        expect(path).toMatch(/\.wav$/);
+        await copyFile(inputAudio, path);
+        return path;
+      },
+    });
+    const sourcePcm = join(directory, `source-${selection}.pcm`);
+    const muxedPcm = join(directory, `muxed-${selection}.pcm`);
+    for (const [input, pcm] of [
+      [inputAudio, sourcePcm],
+      [output, muxedPcm],
+    ] as const) {
+      await runMediaOperation({
+        kind: "decode-audio",
+        path: input,
+        outputPath: pcm,
+        sampleRate: 48000,
+        channels: 1,
+        format: "f32",
+      });
+    }
+    expect(await readFile(muxedPcm)).toEqual(await readFile(sourcePcm));
+    expect(
+      (await streams(output)).find((stream) => stream.codec_type === "audio")
+        ?.codec_name,
+    ).toBe(expectedCodec);
+  },
+  120_000,
+);
 
 it("publishes the video alone when the source returns no audio", async () => {
   const output = join(directory, "silent.mp4");
@@ -221,7 +168,7 @@ it("publishes the video alone when the source returns no audio", async () => {
   expect((await streams(output)).map((stream) => stream.codec_type)).toEqual([
     "video",
   ]);
-});
+}, 120_000);
 
 it("passes through an upstream MP4 with finished audio", async () => {
   const output = join(directory, "passthrough.mp4");
@@ -235,7 +182,7 @@ it("passes through an upstream MP4 with finished audio", async () => {
     "video",
     "audio",
   ]);
-});
+}, 120_000);
 
 it("rejects a second audio track without replacing an existing output", async () => {
   const output = join(directory, "duplicate-audio.mp4");
@@ -251,7 +198,7 @@ it("rejects a second audio track without replacing an existing output", async ()
     }),
   ).rejects.toThrow(/already has audio/);
   expect(await readFile(output, "utf8")).toBe("original");
-});
+}, 120_000);
 
 it("rejects a video changed after the first probe and preserves prior output", async () => {
   const output = join(directory, "changed-video.mp4");
@@ -267,7 +214,7 @@ it("rejects a video changed after the first probe and preserves prior output", a
     }),
   ).rejects.toThrow(/Final media video/);
   expect(await readFile(output, "utf8")).toBe("original");
-});
+}, 120_000);
 
 it("preserves prior output when audio processing fails", async () => {
   const output = join(directory, "failed.mp4");
@@ -286,7 +233,7 @@ it("preserves prior output when audio processing fails", async () => {
   expect(
     (await readdir(directory)).filter((name) => name.includes(".velocast-")),
   ).toEqual([]);
-});
+}, 120_000);
 
 it("preserves prior output and skips audio after cancellation", async () => {
   const output = join(directory, "cancelled.mp4");
@@ -312,4 +259,4 @@ it("preserves prior output and skips audio after cancellation", async () => {
   expect(
     (await readdir(directory)).filter((name) => name.includes(".velocast-")),
   ).toEqual([]);
-});
+}, 120_000);

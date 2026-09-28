@@ -1,3 +1,4 @@
+import { writeTestWav } from "./media-test-fixtures.js";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -106,17 +107,7 @@ it("creates an audio-backed lyrics project from real supplied media and timed te
   roots.push(root);
   const audio = join(root, "supplied.wav");
   const lyrics = join(root, "supplied.srt");
-  await exec("ffmpeg", [
-    "-v",
-    "error",
-    "-f",
-    "lavfi",
-    "-i",
-    "aevalsrc=if(lt(mod(t\\,0.5)\\,0.06)\\,0.8*sin(2*PI*440*t)\\,0):s=11025:d=2",
-    "-ac",
-    "1",
-    audio,
-  ]);
+  await writeTestWav(audio);
   await writeFile(
     lyrics,
     "1\n00:00:00,000 --> 00:00:00,900\nSupplied first line\n\n2\n00:00:01,000 --> 00:00:01,900\nSupplied second line\n",
@@ -150,7 +141,7 @@ it("creates an audio-backed lyrics project from real supplied media and timed te
   expect(source).toContain("createMediaTimeline(videoConfig");
   expect(source).toContain('const audioSource = "./audio.wav"');
   expect(source).toContain("durationFrames: 120");
-});
+}, 30_000);
 
 it("installs a project-local agent skill and refuses to overwrite it", async () => {
   const root = await mkdtemp(join(tmpdir(), "velocast-skill-install-"));

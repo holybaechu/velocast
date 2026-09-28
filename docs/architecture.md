@@ -115,7 +115,7 @@ The public CLI output operations are `compositions`, `inspect`, `frame`, and
 exclusive-end bounds. A range keeps original source frame numbers/configuration
 but rebases output PTS to zero. Public ranges currently use one reference worker;
 whole-composition segmented rendering is a separate schedule. A PNG request uses
-software capture intentionally and does not introduce PNG intermediates into GPU
+software capture intentionally and does not introduce PNG intermediates into
 video output. Inspection validates declarations, not actual layout readiness.
 
 CLI JSON success requires native results matching the request/session/source, not
@@ -139,27 +139,17 @@ and output-range slicing. See [audio](authored-audio.md) and
 [video frames](video-frame-source.md).
 
 The renderer embeds its checked-in browser runtime directly. Browser readiness
-and a committed React tree are necessary but do not prove that Electron captured the
-matching paint. Preserve callback-time texture ownership, capture generation,
-shared device identity, fences, and teardown ordering.
-
-Windows H.264 now defaults to GPU-owned BGRA textures, rounded full-range BT.601
-Y/UV shader passes into NV12 encoder surfaces, and hardware encoding. Frame and
-codec tags plus compressed H.264 metadata filtering keep the emitted range,
-matrix and centered chroma truthful. This avoids uncompressed GPU-frame CPU
-readback, not all CPU work or all copies. HEVC/AV1 keep the legacy VideoProcessor
-default. The [color-path guide](windows-gpu-color-path.md) records geometry limits
-and diagnostic controls.
-
-Policy uses native discovery facts to select an ordered plan; activation reports
-what actually opened. Planned software is not a failed hardware activation.
-`required` GPU mode must fail rather than silently read frames back, whereas an
-`auto` fallback retains its reason. Capability probes do not reserve devices.
+and a committed React tree are necessary but do not prove that Electron captured
+the matching paint. Capture generation and frame acknowledgements preserve
+ordering. Chromium WebCodecs performs video encoding, and Mediabunny handles
+container and authored-media I/O. `auto` requests hardware preference, `off`
+requests software preference, and `required` fails because WebCodecs does not
+expose a hardware guarantee. See [WebCodecs rendering](webcodecs.md).
 
 ## Validation and distribution boundaries
 
 Run `pnpm check:fast` for generated-contract freshness, JS types/lint/tests, and
-Rust protocol/policy tests without building native FFmpeg/GPU bindings. The CLI wire
+Rust protocol/policy tests without building the native renderer. The CLI wire
 suite exchanges actual serialized jobs/events with Rust. Do not replace behavior
 checks with source-string assertions or treat one language's unit tests as wire
 compatibility.
@@ -195,8 +185,6 @@ callers; new examples provide dimensions and FPS. The public
 adapters, never wrapped around transactional native publication. Core's testing
 reset remains for active cross-package tests. Browser protocol 4 retains
 `getDurationFrames` and renderable `getCompositions`; removing metadata APIs does
-not remove these wire methods. Electron is the sole browser host. Windows retains
-native GPU capture and encoding. Linux and macOS retain software rendering;
-required GPU capture fails explicitly. The former CEF, Linux DMA-BUF/Vulkan/VAAPI,
-and macOS GPU scaffolding has been removed. Signed distribution and broader
+not remove these wire methods. Electron is the sole browser host. WebCodecs and
+Mediabunny form the default media route. Signed distribution and broader
 platform validation remain separate release requirements.

@@ -1,5 +1,12 @@
-//! Isolated Electron host. JSONL carries control and frame metadata only.
-//! Software BGRA uses one bounded private file; Windows GPU capture uses NT handles.
+//! Isolated Electron control transport. Native never imports GPU textures.
+use crate::browser_protocol::{self, BrowserDriver};
+use crate::browser_surface::BrowserSurfaceMode;
+use crate::cancellation::RenderCancellation;
+use crate::frame_loop::{seek_frame_script, SelectorMeasurement};
+use anyhow::{ensure, Context};
+#[cfg(test)]
+use serde::Deserialize;
+use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(windows)]
@@ -10,54 +17,47 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::time::{Duration, Instant};
-
-use anyhow::{ensure, Context};
-use serde::Deserialize;
-use serde_json::{json, Value};
 use velocast_protocol::{AudioPlan, CompositionManifest, RenderJob, RenderSession};
 #[cfg(windows)]
-use windows_sys::Win32::Foundation::{CloseHandle, DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE};
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(all(windows, test))]
+use windows_sys::Win32::Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS};
 #[cfg(windows)]
 use windows_sys::Win32::System::JobObjects::*;
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
-
-use crate::browser_protocol::{self, BrowserDriver};
-use crate::browser_surface::BrowserSurfaceMode;
-use crate::cancellation::RenderCancellation;
-use crate::frame_loop::{seek_frame_script, SelectorMeasurement};
-#[cfg(windows)]
-use crate::paint_state::AcceleratedFrame;
-use crate::paint_state::PaintState;
-use crate::surface::TextureSourceRect;
-
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_MESSAGE_BYTES: u64 = 4 * 1024 * 1024;
+#[cfg(test)]
 const MAX_FRAME_BYTES: u64 = 256 * 1024 * 1024;
 
 pub struct ElectronRenderer {
     surface_mode: BrowserSurfaceMode,
-    paint_state: PaintState,
     host: RefCell<Option<HostProcess>>,
     session: RefCell<Option<RenderSession>>,
     sequence: Cell<u64>,
 }
-
 impl ElectronRenderer {
+    pub(crate) fn surface_mode(&self) -> BrowserSurfaceMode {
+        self.surface_mode
+    }
     pub fn new(surface_mode: BrowserSurfaceMode) -> anyhow::Result<Self> {
         Ok(Self {
             surface_mode,
-            paint_state: PaintState::default(),
             host: RefCell::new(None),
             session: RefCell::new(None),
             sequence: Cell::new(0),
         })
     }
-
-    pub fn paint_state(&self) -> PaintState {
-        self.paint_state.clone()
+    pub(crate) fn host_request(&self, request: Value) -> anyhow::Result<Value> {
+        let timeout = match request["method"].as_str() {
+            Some("media-operation" | "webcodecs-finish" | "webcodecs-open") => {
+                Duration::from_secs(600)
+            }
+            _ => Duration::from_secs(45),
+        };
+        self.request(request, timeout)
     }
-
     pub async fn load(&self, job: &RenderJob) -> anyhow::Result<()> {
         let cancellation = RenderCancellation::from_event_log_path(job.event_log_path.as_deref());
         *self.host.borrow_mut() = Some(HostProcess::spawn(cancellation, self.surface_mode)?);
@@ -85,21 +85,12 @@ impl ElectronRenderer {
     }
 
     fn request(&self, request: Value, timeout: Duration) -> anyhow::Result<Value> {
-        // Remember only paint-producing methods without retaining/allocating the
-        // request string across its move into the host transport.
-        let paint_method = match request["method"].as_str() {
-            Some("paint") => Some("paint"),
-            Some("resize") => Some("resize"),
-            _ => None,
-        };
         self.host
             .borrow_mut()
             .as_mut()
             .context("electron.host_unavailable")?
             .request(request, timeout)
-            .map_err(|error| classify_host_request_error(self.surface_mode, paint_method, error))
     }
-
     fn execute(&self, script: &str) -> anyhow::Result<()> {
         self.request(json!({"method":"execute","script":script}), SCRIPT_TIMEOUT)
             .map(|_| ())
@@ -181,165 +172,10 @@ impl ElectronRenderer {
         }
         Ok(())
     }
-
-    fn capture(&self, copy: bool) -> anyhow::Result<()> {
-        if self.surface_mode == BrowserSurfaceMode::Software {
-            return self.capture_software();
-        }
-        self.capture_accelerated(copy)
-    }
-
-    fn capture_software(&self) -> anyhow::Result<()> {
-        let generation = self.paint_state.current_generation();
-        let value = self.request(
-            json!({"method":"paint","generation":generation,"copy":true}),
-            Duration::from_secs(3),
-        )?;
-        ensure!(
-            value["handle"].is_null() && value["textureId"].is_null(),
-            "electron.unexpected_texture: software response contains GPU lease"
-        );
-        let paint: SoftwarePaintResponse = serde_json::from_value(value)
-            .context("electron.protocol_error: invalid software paint metadata")?;
-        paint.validate(generation)?;
-        let pixels = self
-            .host
-            .borrow()
-            .as_ref()
-            .context("electron.host_unavailable")?
-            .host_directory
-            .as_ref()
-            .context("electron.host_directory_unavailable")?
-            .read_frame(paint.byte_length)?;
-        self.request(
-            json!({"method":"release","softwareFrameId":paint.software_frame_id}),
-            SCRIPT_TIMEOUT,
-        )?;
-        self.paint_state.store_software_frame(
-            "electron_software_bgra",
-            generation,
-            paint.width,
-            paint.height,
-            pixels,
-        )
-    }
-
-    #[cfg(not(windows))]
-    fn capture_accelerated(&self, _copy: bool) -> anyhow::Result<()> {
-        anyhow::bail!(
-            "electron.accelerated_unsupported: shared texture import requires Windows; select software surface"
-        )
-    }
-
-    #[cfg(windows)]
-    fn capture_accelerated(&self, copy: bool) -> anyhow::Result<()> {
-        let generation = self.paint_state.current_generation();
-        let value = self.request(
-            json!({"method":"paint","generation":generation,"copy":copy}),
-            Duration::from_secs(3),
-        )?;
-        let paint: PaintResponse = serde_json::from_value(value)
-            .context("electron.protocol_error: invalid paint metadata")?;
-        paint.validate(generation, copy)?;
-        let owned_texture = if copy {
-            let handle = parse_handle(paint.handle.as_deref().context("electron.missing_handle")?)?;
-            let local = self
-                .host
-                .borrow()
-                .as_ref()
-                .context("electron.host_unavailable")?
-                .duplicate_texture(handle)?;
-            // The pool waits on a D3D11 event query before returning.
-            // Only then may Chromium recycle its texture. No source HANDLE escapes.
-            let lease = self.paint_state.copy_owned_texture_from_nt_handle(
-                local.0 as usize,
-                paint.width,
-                paint.height,
-                paint.texture_width,
-                paint.texture_height,
-                paint.source_rect.into(),
-            )?;
-            self.request(
-                json!({"method":"release","textureId":paint.texture_id}),
-                SCRIPT_TIMEOUT,
-            )?;
-            Some(lease)
-        } else {
-            None
-        };
-        self.paint_state.store_accelerated_frame(AcceleratedFrame {
-            generation,
-            width: paint.width,
-            height: paint.height,
-            texture_width: paint.texture_width,
-            texture_height: paint.texture_height,
-            source_rect: paint.source_rect.into(),
-            color_type_debug: "BGRA".into(),
-            platform_handle_debug: "electron_d3d11_shared_texture".into(),
-            owned_texture,
-            bgra: None,
-            software_capture_backend: "electron_software_bgra",
-        });
-        Ok(())
-    }
 }
-
-fn classify_host_request_error(
-    surface_mode: BrowserSurfaceMode,
-    method: Option<&str>,
-    error: anyhow::Error,
-) -> anyhow::Error {
-    // Resizing also waits for a fresh paint in the host. Only accelerated
-    // paint-producing requests may trigger the coordinator's software retry.
-    if surface_mode != BrowserSurfaceMode::Accelerated
-        || !matches!(method, Some("paint" | "resize"))
-    {
-        return error;
-    }
-    let message = error.to_string();
-    let timed_out = message
-        .strip_prefix("electron.host_error: Electron accelerated paint timed out (")
-        .and_then(|detail| detail.strip_suffix(" old-size textures)"))
-        .and_then(|detail| detail.split_once(" null textures, "))
-        .is_some_and(|(missing, stale)| {
-            missing.parse::<u32>().is_ok() && stale.parse::<u32>().is_ok()
-        });
-    if timed_out {
-        error.context(
-            "capture.accelerated_paint_unavailable: Electron shared-texture paint timed out",
-        )
-    } else {
-        error
-    }
-}
-
 impl BrowserDriver for ElectronRenderer {
     fn render_session(&self) -> Option<RenderSession> {
         self.session.borrow().clone()
-    }
-    fn invalidate_for_next_capture(&self) -> anyhow::Result<()> {
-        let asynchronous = self.surface_mode != BrowserSurfaceMode::Software
-            && self
-                .host
-                .borrow()
-                .as_ref()
-                .is_some_and(|host| host.async_paint_invalidation);
-        if asynchronous {
-            ensure!(
-                self.paint_state.take_external_paint_intent() == Some(false),
-                "electron.invalid_paint_intent: preparation must not request a texture copy"
-            );
-            let response = self.request(json!({"method":"invalidate"}), SCRIPT_TIMEOUT)?;
-            ensure!(
-                response["queued"] == true,
-                "electron.protocol_error: paint invalidation was not queued"
-            );
-            return Ok(());
-        }
-        // Legacy hosts and the software path retain synchronous observation.
-        self.request_paint()?;
-        self.pump();
-        Ok(())
     }
     fn render_frame(&self, script: &str, frame: u32) -> anyhow::Result<()> {
         self.report(|token| {
@@ -349,33 +185,13 @@ impl BrowserDriver for ElectronRenderer {
         })
         .map(|_| ())
     }
-    fn request_paint(&self) -> anyhow::Result<()> {
-        let Some(copy) = self.paint_state.take_external_paint_intent() else {
-            return Ok(());
-        };
-        let result = self.capture(copy);
-        if result.is_err() {
-            // A failed copy must never acknowledge a texture whose GPU use may
-            // still be pending. Terminating the isolated host ends the lease.
-            if let Some(mut host) = self.host.borrow_mut().take() {
-                host.abort();
-            }
-        }
-        result
-    }
-    fn requires_initial_post_render_paint_settle(&self) -> bool {
-        true
-    }
-    fn pump(&self) {}
 }
-
 impl Drop for ElectronRenderer {
     fn drop(&mut self) {
         self.host.get_mut().take();
-        self.paint_state.shutdown_owned_texture_pool();
     }
 }
-
+#[cfg(test)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SoftwarePaintResponse {
@@ -387,6 +203,7 @@ struct SoftwarePaintResponse {
     software_frame_id: String,
 }
 
+#[cfg(test)]
 impl SoftwarePaintResponse {
     fn validate(&self, generation: u64) -> anyhow::Result<()> {
         ensure!(
@@ -466,6 +283,7 @@ impl HostDirectory {
         self.root.join("profile")
     }
 
+    #[cfg(test)]
     fn read_frame(&self, expected: u64) -> anyhow::Result<Vec<u8>> {
         ensure!(
             expected > 0 && expected <= MAX_FRAME_BYTES,
@@ -534,92 +352,6 @@ impl Drop for HostDirectory {
     }
 }
 
-#[derive(Clone, Copy, Deserialize)]
-struct SourceRect {
-    left: u32,
-    top: u32,
-    width: u32,
-    height: u32,
-}
-impl From<SourceRect> for TextureSourceRect {
-    fn from(rect: SourceRect) -> Self {
-        Self {
-            left: rect.left,
-            top: rect.top,
-            width: rect.width,
-            height: rect.height,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PaintResponse {
-    generation: u64,
-    width: u32,
-    height: u32,
-    texture_width: u32,
-    texture_height: u32,
-    source_rect: SourceRect,
-    pixel_format: String,
-    handle: Option<String>,
-    texture_id: Option<String>,
-}
-
-impl PaintResponse {
-    fn validate(&self, generation: u64, copy: bool) -> anyhow::Result<()> {
-        ensure!(
-            self.generation == generation,
-            "electron.stale_paint: capture generation did not match request"
-        );
-        ensure!(
-            self.pixel_format == "bgra",
-            "electron.unsupported_format: expected BGRA shared texture"
-        );
-        ensure!(
-            self.width > 0
-                && self.height > 0
-                && self.source_rect.width == self.width
-                && self.source_rect.height == self.height
-                && self
-                    .source_rect
-                    .left
-                    .checked_add(self.width)
-                    .is_some_and(|right| right <= self.texture_width)
-                && self
-                    .source_rect
-                    .top
-                    .checked_add(self.height)
-                    .is_some_and(|bottom| bottom <= self.texture_height),
-            "electron.invalid_geometry: source rectangle exceeds shared texture"
-        );
-        ensure!(
-            !copy
-                || (self.handle.is_some()
-                    && self.texture_id.as_ref().is_some_and(|id| !id.is_empty())),
-            "electron.missing_texture: copy paint requires a retained texture"
-        );
-        ensure!(
-            copy || (self.handle.is_none() && self.texture_id.is_none()),
-            "electron.unexpected_texture: observation must release its source texture"
-        );
-        Ok(())
-    }
-}
-
-#[cfg(windows)]
-fn parse_handle(value: &str) -> anyhow::Result<usize> {
-    let value = value
-        .strip_prefix("0x")
-        .context("electron.invalid_handle: expected hexadecimal NT handle")?;
-    let handle = usize::from_str_radix(value, 16).context("electron.invalid_handle")?;
-    ensure!(
-        handle != 0 && handle != usize::MAX,
-        "electron.invalid_handle: null or invalid NT handle"
-    );
-    Ok(handle)
-}
-
 #[cfg(windows)]
 struct NativeHandle(HANDLE);
 #[cfg(windows)]
@@ -643,14 +375,24 @@ impl ProcessContainment {
 }
 
 #[cfg(unix)]
-struct ProcessContainment(libc::pid_t);
+struct ProcessContainment {
+    pid: libc::pid_t,
+    own_group: bool,
+    armed: Cell<bool>,
+}
 #[cfg(unix)]
 impl ProcessContainment {
     fn terminate(&self) {
         // Child was placed in its own process group before exec, so Chromium's
         // renderer/GPU subprocesses receive the same termination on cancellation.
+        if !self.armed.replace(false) {
+            return;
+        }
         unsafe {
-            libc::kill(-self.0, libc::SIGKILL);
+            libc::kill(
+                if self.own_group { -self.pid } else { self.pid },
+                libc::SIGKILL,
+            );
         }
     }
 }
@@ -658,11 +400,42 @@ impl ProcessContainment {
 #[cfg(unix)]
 fn contain_process(child: &Child) -> anyhow::Result<ProcessContainment> {
     let pid = libc::pid_t::try_from(child.id()).context("electron.invalid_process_id")?;
+    let inherited = std::env::var("VELOCAST_ELECTRON_WORKER_GROUP").as_deref() == Ok("1");
+    let group = unsafe { libc::getpgid(pid) };
     ensure!(
-        pid > 0 && unsafe { libc::getpgid(pid) } == pid,
+        pid > 0
+            && if inherited {
+                group == unsafe { libc::getpid() } && group == unsafe { libc::getpgrp() }
+            } else {
+                group == pid
+            },
         "electron.process_group_missing: host must own an isolated process group"
     );
-    Ok(ProcessContainment(pid))
+    Ok(ProcessContainment {
+        pid,
+        own_group: !inherited,
+        armed: Cell::new(true),
+    })
+}
+
+/// Observe completion without releasing the PID. Callers terminate owned
+/// process groups before wait()/try_wait() can allow the leader PID to be reused.
+#[cfg(unix)]
+pub(crate) fn unix_child_has_exited(pid: u32) -> std::io::Result<bool> {
+    let mut information: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut information,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result == 0 {
+        Ok(unsafe { information.si_pid() } != 0)
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 struct HostProcess {
@@ -673,7 +446,6 @@ struct HostProcess {
     responses: Receiver<anyhow::Result<Value>>,
     sequence: u64,
     failed: bool,
-    async_paint_invalidation: bool,
     cancellation: RenderCancellation,
 }
 
@@ -681,11 +453,6 @@ impl HostProcess {
     fn spawn(cancellation: RenderCancellation, mode: BrowserSurfaceMode) -> anyhow::Result<Self> {
         let binary = absolute_file_env("VELOCAST_ELECTRON_BINARY")?;
         let script = absolute_file_env("VELOCAST_ELECTRON_HOST_SCRIPT")?;
-        let software = mode == BrowserSurfaceMode::Software;
-        ensure!(
-            software || cfg!(windows),
-            "electron.accelerated_unsupported: shared texture import requires Windows; select software surface"
-        );
         let host_directory = HostDirectory::create()?;
         let mut command = Command::new(binary);
         command
@@ -693,7 +460,11 @@ impl HostProcess {
             .env_remove("ELECTRON_RUN_AS_NODE")
             .env(
                 "VELOCAST_ELECTRON_SURFACE_MODE",
-                if software { "software" } else { "accelerated" },
+                match mode {
+                    BrowserSurfaceMode::Software => "software",
+                    BrowserSurfaceMode::Bitmap => "bitmap",
+                    BrowserSurfaceMode::WebCodecs => "webcodecs",
+                },
             )
             .env(
                 "VELOCAST_ELECTRON_PROFILE_DIRECTORY",
@@ -703,15 +474,15 @@ impl HostProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        if software {
-            command.env("VELOCAST_ELECTRON_FRAME_DIRECTORY", &host_directory.root);
-        }
+        command.env("VELOCAST_ELECTRON_FRAME_DIRECTORY", &host_directory.root);
         #[cfg(windows)]
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
-            command.process_group(0);
+            if std::env::var("VELOCAST_ELECTRON_WORKER_GROUP").as_deref() != Ok("1") {
+                command.process_group(0);
+            }
         }
         let child = command.spawn().context("electron.spawn_failed")?;
         Self::from_child(child, cancellation, Some(host_directory))
@@ -768,17 +539,15 @@ impl HostProcess {
             responses,
             sequence: 0,
             failed: false,
-            async_paint_invalidation: false,
             cancellation,
         };
         let ready = host.receive(Duration::from_secs(16))?;
         ensure!(
             ready["event"] == "ready"
-                && ready["version"] == 1
+                && ready["version"] == 2
                 && ready["pid"].as_u64() == Some(u64::from(host.child.id())),
             "electron.protocol_error: invalid host handshake"
         );
-        host.async_paint_invalidation = ready["asyncPaintInvalidation"].as_bool() == Some(true);
         Ok(host)
     }
 
@@ -819,6 +588,9 @@ impl HostProcess {
         self.failed = true;
         self.job.terminate();
         let _ = self.child.kill();
+        self.writes.take();
+        let _ = self.child.wait();
+        self.host_directory.take();
     }
 
     fn receive(&mut self, timeout: Duration) -> anyhow::Result<Value> {
@@ -839,6 +611,13 @@ impl HostProcess {
                     anyhow::bail!("electron.pipe_closed: host disconnected")
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
+                    #[cfg(unix)]
+                    if unix_child_has_exited(self.child.id())? {
+                        self.job.terminate();
+                        let status = self.child.wait()?;
+                        anyhow::bail!("electron.host_exited: {status}");
+                    }
+                    #[cfg(windows)]
                     if let Some(status) = self.child.try_wait()? {
                         anyhow::bail!("electron.host_exited: {status}");
                     }
@@ -846,33 +625,14 @@ impl HostProcess {
             }
         }
     }
-
-    #[cfg(windows)]
-    fn duplicate_texture(&self, source: usize) -> anyhow::Result<NativeHandle> {
-        let mut duplicate = std::ptr::null_mut();
-        let result = unsafe {
-            DuplicateHandle(
-                self.child.as_raw_handle(),
-                source as HANDLE,
-                GetCurrentProcess(),
-                &mut duplicate,
-                0,
-                0,
-                DUPLICATE_SAME_ACCESS,
-            )
-        };
-        ensure!(
-            result != 0,
-            "electron.duplicate_handle_failed: {}",
-            std::io::Error::last_os_error()
-        );
-        Ok(NativeHandle(duplicate))
-    }
 }
 
 impl Drop for HostProcess {
     fn drop(&mut self) {
         if !self.failed {
+            // Cancellation stops work, but must not block an idle host's close
+            // handshake and orderly renderer/profile teardown.
+            self.cancellation = RenderCancellation::default();
             let _ = self.request(json!({"method":"close"}), Duration::from_millis(250));
         }
         // Electron's fd0 reader can keep app.exit alive after its close ACK.
@@ -881,6 +641,12 @@ impl Drop for HostProcess {
         if !self.failed {
             let deadline = Instant::now() + Duration::from_millis(500);
             while Instant::now() < deadline {
+                #[cfg(unix)]
+                match unix_child_has_exited(self.child.id()) {
+                    Ok(true) | Err(_) => break,
+                    Ok(false) => std::thread::sleep(Duration::from_millis(5)),
+                }
+                #[cfg(windows)]
                 match self.child.try_wait() {
                     Ok(Some(_)) | Err(_) => break,
                     Ok(None) => std::thread::sleep(Duration::from_millis(5)),
@@ -984,112 +750,6 @@ fn validate_response(response: &Value, id: u64) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn accelerated_paint_timeout_retains_coordinator_retry_gates() {
-        use crate::telemetry::{RenderModeLabel, RenderTelemetry};
-        use velocast_protocol::RendererAcceleration::{Auto, Off, Required};
-
-        for (message, retry) in [
-            (
-                "Electron accelerated paint timed out (12 null textures, 0 old-size textures)",
-                true,
-            ),
-            (
-                "Electron software paint timed out (0 null textures, 0 old-size textures)",
-                false,
-            ),
-            ("Electron script result timed out", false),
-            (
-                "Electron accelerated paint timed out (malformed response)",
-                false,
-            ),
-            (
-                "electron.invalid_geometry: unexpected source rectangle",
-                false,
-            ),
-        ] {
-            let response = json!({"id":7,"ok":false,"error":message});
-            let error = classify_host_request_error(
-                BrowserSurfaceMode::Accelerated,
-                Some("paint"),
-                validate_response(&response, 7).unwrap_err(),
-            );
-            let mut telemetry = RenderTelemetry::new(RenderModeLabel::ReferenceGpu);
-            assert_eq!(
-                crate::should_retry_software_capture_after_load_error(Auto, &telemetry, &error),
-                retry,
-                "{message}"
-            );
-            for acceleration in [Off, Required] {
-                assert!(!crate::should_retry_software_capture_after_load_error(
-                    acceleration,
-                    &telemetry,
-                    &error
-                ));
-            }
-            telemetry.frames_rendered = 1;
-            assert!(!crate::should_retry_software_capture_after_load_error(
-                Auto, &telemetry, &error
-            ));
-        }
-        for message in [
-            "renderer.cancelled",
-            "electron.request_timeout: host response deadline elapsed",
-            "electron.stale_response: response id did not match active request",
-        ] {
-            let error = classify_host_request_error(
-                BrowserSurfaceMode::Accelerated,
-                Some("paint"),
-                anyhow::anyhow!(message),
-            );
-            assert_eq!(error.to_string(), message);
-            assert!(!crate::should_retry_software_capture_after_load_error(
-                Auto,
-                &RenderTelemetry::new(RenderModeLabel::ReferenceGpu),
-                &error
-            ));
-        }
-    }
-
-    #[test]
-    fn accelerated_resize_and_paint_timeouts_route_to_auto_retry_only() {
-        use crate::telemetry::{RenderModeLabel, RenderTelemetry};
-        use velocast_protocol::RendererAcceleration::{Auto, Required};
-        for surface in [
-            BrowserSurfaceMode::Accelerated,
-            BrowserSurfaceMode::Software,
-        ] {
-            for method in [
-                "resize",
-                "paint",
-                "load",
-                "execute",
-                "invalidate",
-                "release",
-            ] {
-                let response = json!({"id":1,"ok":false,"error":"Electron accelerated paint timed out (0 null textures, 1 old-size textures)"});
-                let raw = validate_response(&response, 1).unwrap_err();
-                let original = raw.to_string();
-                let error = classify_host_request_error(surface, Some(method), raw);
-                let telemetry = RenderTelemetry::new(RenderModeLabel::ReferenceGpu);
-                let retry = surface == BrowserSurfaceMode::Accelerated
-                    && matches!(method, "resize" | "paint");
-                assert_eq!(
-                    crate::should_retry_software_capture_after_load_error(Auto, &telemetry, &error),
-                    retry,
-                    "{surface:?} {method}"
-                );
-                assert!(!crate::should_retry_software_capture_after_load_error(
-                    Required, &telemetry, &error
-                ));
-                if !retry {
-                    assert_eq!(error.to_string(), original);
-                }
-            }
-        }
-    }
-
     #[test]
     fn software_metadata_rejects_stale_oversized_and_inconsistent_frames() {
         let mut paint = SoftwarePaintResponse {
@@ -1219,7 +879,7 @@ mod tests {
         let child = Command::new("sh")
             .arg("-c")
             .arg(
-                r#"printf '{"event":"ready","version":1,"pid":%s}\n' "$$"; read request; sleep 30"#,
+                r#"printf '{"event":"ready","version":2,"pid":%s}\n' "$$"; read request; sleep 30"#,
             )
             .process_group(0)
             .stdin(Stdio::piped())
@@ -1239,7 +899,7 @@ mod tests {
         let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
             .join("System32/WindowsPowerShell/v1.0/powershell.exe");
         let script = format!(
-            r#"[Console]::WriteLine('{{"event":"ready","version":1,"pid":' + $PID + '}}'); {script}"#
+            r#"[Console]::WriteLine('{{"event":"ready","version":2,"pid":' + $PID + '}}'); {script}"#
         );
         let child = Command::new(shell)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
@@ -1388,56 +1048,5 @@ mod tests {
         assert!(read_message(&mut &b"{}"[..]).is_err());
         assert!(read_message(&mut &b""[..]).is_err());
         assert!(read_message(&mut &vec![b' '; MAX_MESSAGE_BYTES as usize + 1][..]).is_err());
-    }
-    #[cfg(windows)]
-    #[test]
-    fn handles_preserve_all_bits_without_javascript_numbers() {
-        assert_eq!(
-            parse_handle("0x123456789abcdef0").unwrap(),
-            0x123456789abcdef0
-        );
-        for value in ["1234", "0x0", "0xffffffffffffffff", "0x10000000000000000"] {
-            assert!(parse_handle(value).is_err());
-        }
-    }
-    #[test]
-    fn paint_rejects_stale_generation_geometry_and_observation_leases() {
-        let mut paint = PaintResponse {
-            generation: 3,
-            width: 16,
-            height: 16,
-            texture_width: 16,
-            texture_height: 16,
-            source_rect: SourceRect {
-                left: 0,
-                top: 0,
-                width: 16,
-                height: 16,
-            },
-            pixel_format: "bgra".into(),
-            handle: Some("0x1234".into()),
-            texture_id: Some("texture-1".into()),
-        };
-        assert!(paint.validate(3, true).is_ok());
-        assert!(paint.validate(4, true).is_err());
-        assert!(paint.validate(3, false).is_err());
-        paint.source_rect.left = u32::MAX;
-        assert!(paint.validate(3, true).is_err());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn electron_capture_keeps_its_provenance_through_surface_metadata() {
-        let texture = crate::capture::windows_d3d11::OwnedTextureLease::borrowed_for_test(0);
-        let surface =
-            crate::surface::PlatformSurface::WindowsD3D11(crate::surface::WindowsD3D11Surface {
-                owned_texture: texture,
-            });
-        assert_eq!(
-            surface
-                .capture_metadata(crate::surface::SurfaceFormat::Bgra)
-                .capture_backend,
-            "electron_d3d11_shared_texture"
-        );
     }
 }

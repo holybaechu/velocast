@@ -2,7 +2,6 @@ import { existsSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import type * as Bundler from "@remotion/bundler";
-import type * as Renderer from "@remotion/renderer";
 import {
   selectRemotionIntegrationProfile,
   type RemotionIntegrationProfile,
@@ -20,7 +19,6 @@ export interface ProjectRemotionRuntime {
   readonly reactVersion: string;
   readonly profile: RemotionIntegrationProfile;
   readonly bundler: typeof Bundler;
-  readonly renderer: typeof Renderer;
   readonly serialize: Serializer;
   readonly deserialize: Deserializer;
 }
@@ -47,7 +45,8 @@ function isProjectDependency(
     const candidate = join(directory, "node_modules", name, "package.json");
     if (
       existsSync(candidate) &&
-      realpathSync(candidate) === realpathSync(resolvedPath)
+      // Native realpath also normalizes Windows drive casing and short names.
+      realpathSync.native(candidate) === realpathSync.native(resolvedPath)
     )
       return true;
     if (dirname(directory) === directory) return false;
@@ -60,18 +59,12 @@ export function loadProjectRemotionRuntime(
 ): ProjectRemotionRuntime {
   const projectRequire = createRequire(resolve(entryPoint));
   const packages = new Map<string, { version: string; path: string }>();
-  for (const name of [
-    "remotion",
-    "@remotion/bundler",
-    "@remotion/renderer",
-    "react",
-    "react-dom",
-  ]) {
+  for (const name of ["remotion", "@remotion/bundler", "react", "react-dom"]) {
     try {
       const path = projectRequire.resolve(`${name}/package.json`);
       if (!isProjectDependency(entryPoint, name, path))
         throw new Error(
-          "Resolved outside the entry project's dependency tree (for example, through NODE_PATH)",
+          `Resolved outside the entry project's dependency tree (for example, through NODE_PATH): ${path}`,
         );
       const manifest = projectRequire(path) as { version?: unknown };
       if (typeof manifest.version !== "string")
@@ -85,7 +78,7 @@ export function loadProjectRemotionRuntime(
     }
   }
   const version = packages.get("remotion")!.version;
-  for (const name of ["@remotion/bundler", "@remotion/renderer"]) {
+  for (const name of ["@remotion/bundler"]) {
     if (packages.get(name)!.version !== version)
       throw new Error(
         `Remotion packages must have matching versions: remotion@${version}, ${name}@${packages.get(name)!.version}. Update the entry project's dependencies and lockfile together.`,
@@ -107,19 +100,14 @@ export function loadProjectRemotionRuntime(
 
   // Upstream webpack aliases use its own package resolution. Checking the actual
   // singleton prevents those aliases from silently replacing the user's runtime.
-  for (const owner of [
-    "remotion",
-    "@remotion/bundler",
-    "@remotion/renderer",
-    "react-dom",
-  ]) {
+  for (const owner of ["remotion", "@remotion/bundler", "react-dom"]) {
     const ownerRequire = createRequire(packages.get(owner)!.path);
     for (const dependency of owner === "react-dom"
       ? ["react"]
       : ["remotion", "react", "react-dom"]) {
       let actual: string;
       try {
-        actual = realpathSync(
+        actual = realpathSync.native(
           ownerRequire.resolve(`${dependency}/package.json`),
         );
       } catch (cause) {
@@ -128,7 +116,7 @@ export function loadProjectRemotionRuntime(
           { cause },
         );
       }
-      if (actual !== realpathSync(packages.get(dependency)!.path))
+      if (actual !== realpathSync.native(packages.get(dependency)!.path))
         throw new Error(
           `${owner} resolves a different ${dependency} installation than the entry project. Deduplicate the project's ${dependency} dependency to preserve a single runtime.`,
         );
@@ -151,26 +139,10 @@ export function loadProjectRemotionRuntime(
     }
   };
   const bundler = loadModule("@remotion/bundler") as typeof Bundler;
-  const renderer = loadModule("@remotion/renderer") as typeof Renderer;
   const noReact = loadModule("remotion/no-react") as {
     NoReactInternals?: Record<string, unknown>;
   };
   requireFunction(bundler.bundle, "bundle", version);
-  for (const name of [
-    "openBrowser",
-    "makeCancelSignal",
-    "getCompositions",
-    "selectComposition",
-    "renderMedia",
-    "renderStill",
-  ] as const)
-    requireFunction(renderer[name], name, version);
-  for (const name of ["serveStatic", "makeDownloadMap"] as const)
-    requireFunction(
-      renderer.RenderInternals?.[name],
-      `RenderInternals.${name}`,
-      version,
-    );
   requireFunction(
     noReact.NoReactInternals?.[profile.serialize],
     profile.serialize,
@@ -186,7 +158,6 @@ export function loadProjectRemotionRuntime(
     reactVersion,
     profile,
     bundler,
-    renderer,
     serialize: noReact.NoReactInternals![profile.serialize] as Serializer,
     deserialize: noReact.NoReactInternals![profile.deserialize] as Deserializer,
   };

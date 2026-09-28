@@ -5,9 +5,12 @@
   "description": "Offscreen Electron browser host for the native renderer",
   "main": "main.cjs",
   "scripts": {
-    "test": "node --test test/*.test.cjs"
+    "test": "node --test --test-concurrency=2 test/*.test.cjs"
   },
   "devDependencies": {
     "electron": "44.4.5"
+  },
+  "dependencies": {
+    "mediabunny": "1.60.0"
   }
 }

@@ -43,7 +43,7 @@ describe("buildCompositionRenderCommandJob", () => {
       serve_url: "http://127.0.0.1:4545",
       selector: null,
       output: "renders/hero.mp4",
-      codec: "libx264",
+      codec: "h264",
       pixel_format: "nv12",
       acceleration: "auto",
       assembly_mode: "auto",
@@ -52,7 +52,7 @@ describe("buildCompositionRenderCommandJob", () => {
     });
   });
 
-  it("omits unset optional fields from the final renderer job", () => {
+  it("defaults an unspecified codec to logical h264 and omits unset optional fields", () => {
     expect(
       buildCompositionRenderCommandJob(
         { serve: { url: "http://127.0.0.1:4545" } },
@@ -65,7 +65,7 @@ describe("buildCompositionRenderCommandJob", () => {
       serve_url: "http://127.0.0.1:4545",
       selector: null,
       output: "renders/hero.mp4",
-      codec: "libx264",
+      codec: "h264",
       pixel_format: "nv12",
       acceleration: "auto",
       assembly_mode: "auto",
@@ -380,7 +380,7 @@ describe("buildCaptureProbeCommandJob", () => {
       serve_url: "http://127.0.0.1:4545",
       selector: null,
       output: join(cwd, ".velocast/tmp/capture-probe-unused.mp4"),
-      codec: "libx264",
+      codec: "h264",
       pixel_format: "nv12",
       acceleration: "required",
       assembly_mode: "reference",

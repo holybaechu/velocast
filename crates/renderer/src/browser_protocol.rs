@@ -10,20 +10,6 @@ pub trait BrowserDriver {
         None
     }
     fn render_frame(&self, script: &str, frame: u32) -> anyhow::Result<()>;
-    fn request_paint(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
-    /// Prepare the next capture without requiring a completed paint. Any paint
-    /// produced here is discarded; capture-generation requests provide freshness.
-    fn invalidate_for_next_capture(&self) -> anyhow::Result<()> {
-        self.request_paint()?;
-        self.pump();
-        Ok(())
-    }
-    fn requires_initial_post_render_paint_settle(&self) -> bool {
-        false
-    }
-    fn pump(&self);
 }
 
 pub(crate) fn composition_discovery_script(token: &str) -> String {

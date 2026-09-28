@@ -3,7 +3,7 @@ import { realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const args = parseArgs(process.argv.slice(2));
-for (const name of ["harness", "project", "runtime", "output"])
+for (const name of ["harness", "project", "output"])
   if (!args[name]) throw new Error(`missing --${name}`);
 const command = [process.execPath, resolve(args.harness)];
 const project = resolve(args.project);
@@ -15,7 +15,6 @@ const execution = await run(command[0], command.slice(1), {
   INIT_CWD: project,
   VELOCAST_PREVIEW_GATE_PROJECT: project,
   VELOCAST_PREVIEW_GATE_CLI: cli,
-  VELOCAST_PREVIEW_GATE_FFMPEG_BIN: resolve(args.runtime),
 });
 if (execution.exitCode !== 0)
   throw new Error(
@@ -35,7 +34,7 @@ writeFileSync(
       command,
       project,
       cli,
-      runtime: resolve(args.runtime),
+      runtime: args.runtime ? resolve(args.runtime) : null,
       result,
       stdout: execution.stdout,
       stderr: execution.stderr,

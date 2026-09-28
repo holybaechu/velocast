@@ -148,42 +148,57 @@ export function median(values) {
     : (ordered[middle - 1] + ordered[middle]) / 2;
 }
 
-export function assertGpuTelemetry(report, backend, expectedFrames) {
+export function assertWebCodecsTelemetry(report, backend, expectedFrames) {
   if (backend !== "electron")
     throw new Error("Only the Electron browser host is supported");
-  const capture = "electron_d3d11_shared_texture";
-  if (report.capture_backend !== capture)
+  const captures = ["electron_shared_texture", "electron_bitmap"];
+  if (!captures.includes(report.capture_backend))
     throw new Error(
-      `capture_backend ${report.capture_backend}; expected ${capture}`,
+      `capture_backend ${report.capture_backend}; expected Electron capture`,
     );
+  if (report.capture_backend === "electron_bitmap") {
+    if (
+      !report.fallback_used ||
+      typeof report.fallback_reason !== "string" ||
+      !report.fallback_reason.trim()
+    )
+      throw new Error("Bitmap capture requires a recorded fallback reason");
+    if (report.cpu_readback_frames !== expectedFrames)
+      throw new Error(
+        `Bitmap readback count ${report.cpu_readback_frames}; expected ${expectedFrames}`,
+      );
+  } else if (
+    report.fallback_used ||
+    report.fallback_reason ||
+    report.cpu_readback_frames !== 0
+  ) {
+    throw new Error("Shared-texture capture reported fallback or CPU readback");
+  }
+  const hardwarePreference = report.webcodecs?.hardware_acceleration;
   if (
-    !["d3d11_video_processor", "d3d11_shader_nv12"].includes(
-      report.conversion_backend,
+    hardwarePreference !== undefined &&
+    !["prefer-hardware", "prefer-software", "no-preference"].includes(
+      hardwarePreference,
     )
   )
     throw new Error(
-      `conversion_backend ${report.conversion_backend} is not D3D11 GPU conversion`,
+      `Unknown WebCodecs hardware preference: ${hardwarePreference}`,
+    );
+  if (report.conversion_backend !== "chromium_webcodecs")
+    throw new Error(
+      `conversion_backend ${report.conversion_backend} is not Chromium WebCodecs`,
     );
   if (
-    !/^(h264|hevc|av1)_(amf|nvenc|qsv|mf)$/.test(report.encoder_backend ?? "")
+    !/^electron_webcodecs_(h264|hevc|av1)$/.test(report.encoder_backend ?? "")
   )
     throw new Error(
-      `encoder_backend ${report.encoder_backend} is not a Windows hardware encoder`,
+      `encoder_backend ${report.encoder_backend} is not WebCodecs`,
     );
-  if (
-    report.cpu_readback_frames !== 0 ||
-    report.fallback_used ||
-    report.dropped_frames !== 0 ||
-    report.stale_frames !== 0
-  )
-    throw new Error(
-      `GPU fallback/readback/drop/stale: ${JSON.stringify(report)}`,
-    );
+  if (report.dropped_frames !== 0 || report.stale_frames !== 0)
+    throw new Error(`WebCodecs frame drop/stale: ${JSON.stringify(report)}`);
   for (const field of ["frames_expected", "frames_rendered", "frames_encoded"])
     if (report[field] !== expectedFrames)
       throw new Error(`${field} ${report[field]}; expected ${expectedFrames}`);
-  if (report.surface_format_encoder !== "nv12")
-    throw new Error(`surface_format_encoder ${report.surface_format_encoder}`);
   if (!(report.total_wall_ms > 0))
     throw new Error("native total_wall_ms was not positive");
 }

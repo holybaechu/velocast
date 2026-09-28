@@ -480,7 +480,7 @@ async function releaseFixture(
   writeFileSync(join(runtimeDir, "resources.pak"), "resource");
   mkdirSync(join(runtimeDir, "locales"));
   writeFileSync(join(runtimeDir, "locales", "en-US.pak"), "locale");
-  for (const file of ["electron", "main.cjs", "ffmpeg", "ffprobe"])
+  for (const file of ["electron", "main.cjs", "media-client.cjs", "media-runtime.cjs"])
     writeFileSync(join(runtimeDir, file), "fixture");
   writeFileSync(
     join(runtimeDir, "electron-runtime.json"),
@@ -492,16 +492,16 @@ async function releaseFixture(
       renderer: rendererName,
       electron: "electron",
       hostScript: "main.cjs",
-      ffmpeg: "ffmpeg",
-      ffprobe: "ffprobe",
+      mediaClient: "media-client.cjs",
+      mediaBundle: "media-runtime.cjs",
     }),
   );
   const runtimeFiles = [
     "electron-runtime.json",
     "electron",
     "main.cjs",
-    "ffmpeg",
-    "ffprobe",
+    "media-client.cjs",
+    "media-runtime.cjs",
     rendererName,
     helperName,
     "resources.pak",
@@ -564,8 +564,8 @@ function fakeManifest(
       "electron-runtime.json",
       "electron",
       "main.cjs",
-      "ffmpeg",
-      "ffprobe",
+      "media-client.cjs",
+      "media-runtime.cjs",
       artifact.renderer,
       helperName,
       "resources.pak",

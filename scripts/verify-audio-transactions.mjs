@@ -51,7 +51,7 @@ async function run(name, snapshot, fault, extra = {}) {
   const output = join(directory, `${name}.mp4`);
   await writeFile(output, previous);
   const job = { mode: "composition", composition_id: "audio-hero", serve_url: snapshot.url,
-    render_session: snapshot.session, output, codec: "libx264", acceleration: "off",
+    render_session: snapshot.session, output, codec: "h264", acceleration: "off",
     concurrency: 1, assembly_mode: "reference", report_path: join(directory, `${name}.report.json`),
     result_path: join(directory, `${name}.result.json`), ...extra };
   const event = { name, startedAt: new Date().toISOString(), stdout: "", stderr: "", cwd: root };
@@ -69,7 +69,7 @@ async function run(name, snapshot, fault, extra = {}) {
           event.stderr += bytes;
           if (hook) return;
           if (fault === "mux-failure" && event.stderr.includes("stage=mix")) {
-            // An explicit owned-workspace I/O fault. The REAL FFmpeg mux must
+            // An explicit owned-workspace I/O fault. The media mux must
             // fail opening its destination; no fake encoder or fabricated exit.
             hook = mkdir(join(workspace, "audio-muxed.mp4")).then(() => {
               event.fault = { path: join(workspace, "audio-muxed.mp4"), kind: "destination-is-directory" };

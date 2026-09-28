@@ -69,13 +69,13 @@
       "code": "encoder.codec_unavailable"
     },
     {
-      "code": "encoder.ffmpeg_finish_failed"
+      "code": "encoder.webcodecs_finish_failed"
     },
     {
-      "code": "encoder.ffmpeg_open_failed"
+      "code": "encoder.webcodecs_open_failed"
     },
     {
-      "code": "encoder.ffmpeg_packet_write_failed"
+      "code": "encoder.webcodecs_packet_write_failed"
     },
     {
       "code": "encoder.hardware_unavailable"

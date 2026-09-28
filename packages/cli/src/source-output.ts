@@ -1,4 +1,8 @@
-import { spawn } from "node:child_process";
+import {
+  runMediaOperation,
+  type MediaProbe,
+  type MediaRunner,
+} from "./media-runtime.js";
 import { lstat, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 
@@ -13,8 +17,7 @@ export interface SourceOutputOptions {
     signal: AbortSignal,
   ) => Promise<string | null>;
   signal?: AbortSignal;
-  ffmpeg?: string;
-  ffprobe?: string;
+  mediaRunner?: MediaRunner;
 }
 
 interface ProbeStream {
@@ -30,6 +33,8 @@ interface ProbeStream {
 }
 
 interface ProbeResult {
+  videoTrackCount?: number;
+  audioTrackCount?: number;
   streams?: ProbeStream[];
   format?: { duration?: string };
 }
@@ -42,6 +47,7 @@ interface ProbeResult {
 export async function renderSourceOutput(
   options: SourceOutputOptions,
 ): Promise<string> {
+  const media = options.mediaRunner ?? runMediaOperation;
   const output = resolve(options.output);
   if (extname(output).toLowerCase() !== ".mp4") {
     throw new Error("Source output must be an MP4 path");
@@ -54,14 +60,14 @@ export async function renderSourceOutput(
     join(dirname(output), `.${basename(output)}.velocast-`),
   );
   const video = join(stage, "video.mp4");
-  const audio = join(stage, "audio.aac");
+  const audio = join(stage, "audio.wav");
   const muxed = join(stage, "muxed.mp4");
   try {
     signal.throwIfAborted();
     await options.renderVideo(video, signal);
     signal.throwIfAborted();
     await assertRegularFile(video, "Video renderer");
-    const videoProbe = await probe(video, options.ffprobe ?? "ffprobe", signal);
+    const videoProbe = await probe(video, media, signal);
     const sourceHasAudio =
       videoProbe.streams?.some((stream) => stream.codec_type === "audio") ??
       false;
@@ -81,57 +87,26 @@ export async function renderSourceOutput(
         );
       }
       await assertRegularFile(audioSource, "Audio renderer");
-      const audioProbe = await probe(
-        audioSource,
-        options.ffprobe ?? "ffprobe",
-        signal,
-      );
+      const audioProbe = await probe(audioSource, media, signal);
       assertStreams(
         audioProbe,
         { video: false, audio: true },
         "Audio renderer",
       );
-      const audioCodec = audioProbe.streams?.find(
-        (stream) => stream.codec_type === "audio",
-      )?.codec_name;
-      const audioOptions =
-        audioCodec === "aac"
-          ? ["-c:a", "copy"]
-          : ["-c:a", "aac", "-b:a", "192k", "-af", "apad", "-shortest"];
-      await run(
-        options.ffmpeg ?? "ffmpeg",
-        [
-          "-hide_banner",
-          "-loglevel",
-          "error",
-          "-nostdin",
-          "-y",
-          "-i",
-          video,
-          "-i",
-          audioSource,
-          "-map",
-          "0:v:0",
-          "-map",
-          "1:a:0",
-          "-c:v",
-          "copy",
-          ...audioOptions,
-          "-movflags",
-          "+faststart",
-          muxed,
-        ],
-        signal,
+      await media(
+        {
+          kind: "mux-audio",
+          videoPath: video,
+          audioPath: audioSource,
+          outputPath: muxed,
+        },
+        { signal },
       );
       candidate = muxed;
     }
 
     await assertRegularFile(candidate, "Final media");
-    const finalProbe = await probe(
-      candidate,
-      options.ffprobe ?? "ffprobe",
-      signal,
-    );
+    const finalProbe = await probe(candidate, media, signal);
     assertStreams(
       finalProbe,
       { video: true, audio: sourceHasAudio || audioSource !== null },
@@ -160,19 +135,44 @@ async function assertRegularFile(
 
 async function probe(
   path: string,
-  executable: string,
+  media: MediaRunner,
   signal: AbortSignal,
 ): Promise<ProbeResult> {
-  const output = await run(
-    executable,
-    ["-v", "error", "-show_streams", "-show_format", "-of", "json", path],
-    signal,
+  const result = await media<MediaProbe>(
+    { kind: "probe", path, frames: true },
+    { signal },
   );
-  try {
-    return JSON.parse(output) as ProbeResult;
-  } catch {
-    throw new Error(`FFprobe returned invalid JSON for ${path}`);
-  }
+  return {
+    videoTrackCount: result.videoTrackCount,
+    audioTrackCount: result.audioTrackCount,
+    format: { duration: String(result.duration) },
+    streams: [
+      ...(result.video
+        ? [
+            {
+              codec_type: "video",
+              codec_name: result.video.codec,
+              width: result.video.width,
+              height: result.video.height,
+              nb_frames: result.video.frames
+                ? String(result.video.frames.length)
+                : undefined,
+              duration: String(result.video.duration ?? result.duration),
+              start_time: result.video.frames?.length
+                ? String(
+                    (result.video.frames[0]!.pts *
+                      result.video.timeBase.numerator) /
+                      result.video.timeBase.denominator,
+                  )
+                : undefined,
+            },
+          ]
+        : []),
+      ...(result.audio
+        ? [{ codec_type: "audio", duration: String(result.audio.duration) }]
+        : []),
+    ],
+  };
 }
 
 function assertStreams(
@@ -181,8 +181,10 @@ function assertStreams(
   producer: string,
 ): void {
   const types = result.streams?.map((stream) => stream.codec_type) ?? [];
-  const videoCount = types.filter((type) => type === "video").length;
-  const audioCount = types.filter((type) => type === "audio").length;
+  const videoCount =
+    result.videoTrackCount ?? types.filter((type) => type === "video").length;
+  const audioCount =
+    result.audioTrackCount ?? types.filter((type) => type === "audio").length;
   const duration = mediaDuration(result);
   if (
     videoCount !== Number(expected.video) ||
@@ -269,60 +271,4 @@ function frameDurationSeconds(stream: ProbeStream): number | null {
   const duration = positiveNumber(stream.duration);
   const frames = positiveNumber(stream.nb_frames);
   return duration !== null && frames !== null ? duration / frames : null;
-}
-
-function run(
-  executable: string,
-  args: string[],
-  signal: AbortSignal,
-): Promise<string> {
-  signal.throwIfAborted();
-  return new Promise((resolveOutput, reject) => {
-    const child = spawn(executable, args, {
-      signal,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let stdoutBytes = 0;
-    let childError: Error | null = null;
-    let outputError: Error | null = null;
-    const maxOutput = 2 * 1024 * 1024;
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      if (outputError) return;
-      stdoutBytes += Buffer.byteLength(chunk);
-      if (stdoutBytes > maxOutput) {
-        outputError = new Error(`${executable} exceeded the output limit`);
-        child.kill();
-      } else {
-        stdout += chunk;
-      }
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr = (stderr + chunk).slice(-maxOutput);
-    });
-    // An aborted child can emit "error" before "close". Wait for close so the
-    // caller cannot remove staging files while FFmpeg still has them open.
-    child.once("error", (error: Error) => {
-      childError = error;
-    });
-    child.once("close", (code) => {
-      try {
-        signal.throwIfAborted();
-      } catch (error) {
-        reject(error);
-        return;
-      }
-      if (outputError) reject(outputError);
-      else if (childError) reject(childError);
-      else if (code === 0) resolveOutput(stdout);
-      else
-        reject(
-          new Error(`${executable} exited with code ${code}: ${stderr.trim()}`),
-        );
-    });
-  });
 }

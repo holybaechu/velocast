@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn public_output_requests_default_to_legacy_render_and_reject_ambiguous_fields() {
-        let base = json!({"mode":"composition","composition_id":"hero","serve_url":"http://localhost","output":"out.mp4","codec":"libx264"});
+        let base = json!({"mode":"composition","composition_id":"hero","serve_url":"http://localhost","output":"out.mp4","codec":"h264"});
         let job: RenderJob = serde_json::from_value(base.clone()).unwrap();
         assert_eq!(job.operation, RenderOperation::Render);
         assert!(job.kind().is_ok());
@@ -178,7 +178,7 @@ mod tests {
               "serve_url":"http://127.0.0.1:4545",
               "selector":null,
               "output":"out/hero.mp4",
-              "codec":"libx264",
+              "codec":"h264",
               "pixel_format":"yuv444p"
             }"#,
         )
@@ -201,7 +201,7 @@ mod tests {
           "serve_url":"http://127.0.0.1:4545",
           "selector":"#hero",
           "output":"out/hero.mp4",
-          "codec":"libx264",
+          "codec":"h264",
           "pixel_format":"yuv444p"
         }"##,
         )
@@ -220,7 +220,7 @@ mod tests {
           "mode":"url",
           "serve_url":"http://127.0.0.1:4545",
           "output":"out/hero.mp4",
-          "codec":"libx264",
+          "codec":"h264",
           "pixel_format":"yuv444p"
         }"#,
         )
@@ -345,7 +345,7 @@ mod tests {
           "serve_url":"http://127.0.0.1:4545",
           "selector":null,
           "output":"out/hero.mp4",
-          "codec":"libx264",
+          "codec":"h264",
           "pixel_format":"yuv444p",
           "concurrency":"auto"
         }"#,
@@ -364,7 +364,7 @@ mod tests {
           "serve_url":"http://127.0.0.1:4545",
           "selector":null,
           "output":"out/hero.mp4",
-          "codec":"libx264",
+          "codec":"h264",
           "pixel_format":"yuv444p",
           "concurrency":3
         }"#,
@@ -407,7 +407,7 @@ mod tests {
           "serve_url":"http://127.0.0.1:4545",
           "selector":null,
           "output":"out/hero.mp4",
-          "codec":"libx264",
+          "codec":"h264",
           "pixel_format":"yuv444p"
         }"#,
         )
@@ -496,7 +496,7 @@ mod tests {
           "serve_url":"http://127.0.0.1:4545",
           "selector":null,
           "output":"out/hero.mp4",
-          "codec":"libx264",
+          "codec":"h264",
           "pixel_format":"yuv444p"
         }"#,
         )
@@ -527,7 +527,7 @@ mod tests {
           "serve_url":"http://127.0.0.1:4545",
           "selector":null,
           "output":"out/hero.mp4",
-          "codec":"libx264",
+          "codec":"h264",
           "pixel_format":"yuv444p",
           "concurrency":0
         }"#,
@@ -546,7 +546,7 @@ mod tests {
           "serve_url":"http://127.0.0.1:4545",
           "selector":null,
           "output":"out/hero.mp4",
-          "codec":"libx264",
+          "codec":"h264",
           "frame_start":60,
           "frame_end":120,
           "frame_step":2,
@@ -582,7 +582,7 @@ mod tests {
           "serve_url":"http://127.0.0.1:4545",
           "selector":null,
           "output":"out/hero.mp4",
-          "codec":"libx264",
+          "codec":"h264",
           "frame_start":0
         }"#,
         )
@@ -602,7 +602,7 @@ mod tests {
           "serve_url":"http://127.0.0.1:4545",
           "selector":null,
           "output":"out/hero.mp4",
-          "codec":"libx264",
+          "codec":"h264",
           "frame_start":60,
           "frame_end":120
         }"#,

@@ -124,13 +124,11 @@ export function packageElectronRuntime(options) {
     );
   const output = resolve(options.output);
   if (existsSync(output)) throw new Error(`runtime.output_exists: ${output}`);
-  const roots = [options.renderer, options.ffmpeg, options.ffprobe].map(
-    (path) => resolve(path),
-  );
+  const roots = [options.renderer].map((path) => resolve(path));
   for (const file of roots)
     if (!statSync(file).isFile())
       throw new Error(`runtime.input_missing: ${file}`);
-  const expectedNames = ["velocast-renderer.exe", "ffmpeg.exe", "ffprobe.exe"];
+  const expectedNames = ["velocast-renderer.exe"];
   roots.forEach((file, index) => {
     if (basename(file).toLowerCase() !== expectedNames[index])
       throw new Error(`runtime.input_name: expected ${expectedNames[index]}`);
@@ -142,13 +140,16 @@ export function packageElectronRuntime(options) {
     join(electron, "LICENSE"),
     join(electron, "LICENSES.chromium.html"),
     join(host, "main.cjs"),
+    join(host, "media-client.cjs"),
+    join(host, "media-runtime.cjs"),
+    join(host, "media-main.cjs"),
+    join(host, "media-preload.cjs"),
+    join(host, "media-io.cjs"),
   ])
     if (!statSync(file).isFile())
       throw new Error(`runtime.input_missing: ${file}`);
   const dependencySet = collectDependencies(roots, {
-    searchDirs: [
-      ...new Set([...roots.map(dirname), ...(options.dllDirs ?? [])]),
-    ],
+    searchDirs: [...new Set([...roots.map(dirname), ...(options.dllDirs ?? [])])],
     readImports: options.readImports,
   });
   const arch = options.arch ?? process.arch;
@@ -159,7 +160,9 @@ export function packageElectronRuntime(options) {
   const capabilities = options.probeCapabilities(roots[0]);
   if (
     capabilities.defaultBrowserHost !== "electron" ||
-    capabilities.electronHostProtocolVersion !== 1 ||
+    capabilities.electronHostProtocolVersion !== 2 ||
+    capabilities.videoEncoderBackend !== "webcodecs" ||
+    capabilities.mediaRuntime !== "mediabunny" ||
     JSON.stringify(capabilities.browserHosts) !== '["electron"]'
   )
     throw new Error(
@@ -180,7 +183,7 @@ export function packageElectronRuntime(options) {
   for (const entry of readdirSync(host, { withFileTypes: true })) {
     if (
       entry.isFile() &&
-      (entry.name.endsWith(".cjs") || entry.name === "package.json")
+      (entry.name.endsWith(".cjs") || entry.name.endsWith(".html") || entry.name === "package.json")
     )
       cpSync(
         join(host, entry.name),
@@ -188,6 +191,18 @@ export function packageElectronRuntime(options) {
         { force: false, errorOnExist: true },
       );
   }
+  const mediaPackage = resolve(options.mediabunny);
+  const mediaOutput = join(output, "electron-host", "node_modules", "mediabunny");
+  for (const name of ["package.json", "LICENSE", "dist/bundles/mediabunny.node.cjs", "dist/bundles/mediabunny.cjs"]) {
+    if (!existsSync(join(mediaPackage, name)))
+      throw new Error(`runtime.input_missing: ${mediaPackage}/${name}`);
+  }
+  mkdirSync(join(mediaOutput, "dist", "bundles"), { recursive: true });
+  for (const name of ["package.json", "LICENSE", "dist/bundles/mediabunny.node.cjs", "dist/bundles/mediabunny.cjs"])
+    cpSync(join(mediaPackage, name), join(mediaOutput, name), {
+      force: false,
+      errorOnExist: true,
+    });
   if (options.licenses)
     cpSync(resolve(options.licenses), join(output, "native-licenses"), {
       recursive: true,
@@ -195,6 +210,8 @@ export function packageElectronRuntime(options) {
       errorOnExist: true,
     });
   const files = inventoryFiles(output);
+  if (files.some(({ path }) => /^(ffmpeg|ffprobe)(\.exe)?$|^(avcodec|avformat|avutil|swresample)-\d+\.dll$/i.test(path)))
+    throw new Error("runtime.retired_media_dependency: standalone media tools or native codec libraries are not allowed");
   if (
     files.some((file) =>
       /(^|\/)libcef\.(dll|so)$|Chromium Embedded Framework|(^|\/)cef[-_]/i.test(
@@ -218,8 +235,9 @@ export function packageElectronRuntime(options) {
     renderer: "velocast-renderer.exe",
     electron: "electron/electron.exe",
     hostScript: "electron-host/main.cjs",
-    ffmpeg: "ffmpeg.exe",
-    ffprobe: "ffprobe.exe",
+    mediaClient: "electron-host/media-client.cjs",
+    mediaBundle: "electron-host/media-runtime.cjs",
+    mediaPackage: "electron-host/node_modules/mediabunny",
     rendererCapabilities: capabilities,
     electronVersion: readFileSync(join(electron, "version"), "utf8").trim(),
     dependencyGraph: dependencySet.graph,

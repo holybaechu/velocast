@@ -79,7 +79,7 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
     host = join(root, "host");
   mkdirSync(electron);
   mkdirSync(host);
-  for (const name of ["velocast-renderer.exe", "ffmpeg.exe", "ffprobe.exe"])
+  for (const name of ["velocast-renderer.exe"])
     writeFileSync(join(root, name), executableFixture());
   for (const name of [
     "electron.exe",
@@ -92,20 +92,31 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
       name.endsWith(".exe") ? executableFixture() : "fixture",
     );
   writeFileSync(join(host, "main.cjs"), "fixture-host");
+  for (const name of ["media-client.cjs", "media-runtime.cjs", "media-main.cjs", "media-preload.cjs", "media-io.cjs"])
+    writeFileSync(join(host, name), "fixture-media");
+  writeFileSync(join(host, "webcodecs.html"), "trusted-encoder-page");
+  const mediabunny = join(root, "mediabunny");
+  mkdirSync(mediabunny);
+  mkdirSync(join(mediabunny, "dist", "bundles"), { recursive: true });
+  writeFileSync(join(mediabunny, "package.json"), '{"name":"mediabunny"}');
+  writeFileSync(join(mediabunny, "LICENSE"), "license");
+  writeFileSync(join(mediabunny, "dist/bundles/mediabunny.node.cjs"), "media-runtime");
+  writeFileSync(join(mediabunny, "dist/bundles/mediabunny.cjs"), "browser-runtime");
   const options = {
     platform: "win32",
     arch: "x64",
     renderer: join(root, "velocast-renderer.exe"),
     electron,
     host,
-    ffmpeg: join(root, "ffmpeg.exe"),
-    ffprobe: join(root, "ffprobe.exe"),
+    mediabunny,
     output: join(root, "candidate"),
     readImports: () => ["KERNEL32.dll"],
     probeCapabilities: () => ({
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 1,
+      electronHostProtocolVersion: 2,
+      videoEncoderBackend: "webcodecs",
+      mediaRuntime: "mediabunny",
     }),
   };
   const result = packageElectronRuntime(options);
@@ -116,6 +127,9 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
     "fixture-host",
   );
   assert.throws(() => packageElectronRuntime(options), /runtime.output_exists/);
+  assert.equal(readFileSync(join(options.output, "electron-host/webcodecs.html"), "utf8"), "trusted-encoder-page");
+  assert.equal(readFileSync(join(options.output, "electron-host/node_modules/mediabunny/dist/bundles/mediabunny.node.cjs"), "utf8"), "media-runtime");
+  assert.ok(!result.files.some(({ path }) => /(^|\/)(ffmpeg|ffprobe)(\.exe)?$/i.test(path)));
   assert.throws(
     () =>
       packageElectronRuntime({

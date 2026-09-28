@@ -74,8 +74,8 @@ describe("doctorCommand", () => {
                 available: true,
                 gpuCaptureSupported: true,
               },
-              ffmpegPresent: true,
-              softwareFallbackAvailable: true,
+
+              webCodecsAvailable: true,
             };
           },
         },
@@ -106,8 +106,8 @@ describe("doctorCommand", () => {
       },
       requiredGpuPrerequisites: [],
       requiredGpuBackends: [],
-      ffmpegPresent: true,
-      softwareFallbackAvailable: true,
+
+      webCodecsAvailable: true,
     };
 
     await doctorCommand(
@@ -140,8 +140,8 @@ describe("doctorCommand", () => {
       },
       requiredGpuPrerequisites: [],
       requiredGpuBackends: [],
-      ffmpegPresent: true,
-      softwareFallbackAvailable: true,
+
+      webCodecsAvailable: true,
     };
 
     await doctorCommand(
@@ -179,20 +179,20 @@ describe("doctorCommand", () => {
           displayVariablesUnset: true,
           requiredGpuBackends: [
             {
-              backend: "h264_mf",
+              backend: "webcodecs",
               available: true,
               packetWriterAvailable: true,
             },
           ],
-          ffmpegPresent: true,
-          softwareFallbackAvailable: true,
+
+          webCodecsAvailable: true,
           requiredGpuPacketWriterAvailable: true,
         }),
       },
     );
 
     expect(JSON.parse(writes.join(""))).toMatchObject({
-      requiredGpu: { available: true, backend: "h264_mf" },
+      requiredGpu: { available: true, backend: "webcodecs" },
     });
   });
 
@@ -214,13 +214,13 @@ describe("doctorCommand", () => {
           requiredGpuPrerequisites: [],
           requiredGpuBackends: [
             {
-              backend: "h264_nvenc",
+              backend: "webcodecs",
               available: true,
               packetWriterAvailable: true,
             },
           ],
-          ffmpegPresent: true,
-          softwareFallbackAvailable: true,
+
+          webCodecsAvailable: true,
         }),
       },
     );
@@ -228,8 +228,8 @@ describe("doctorCommand", () => {
     const output = writes.join("");
     expect(output).toContain("Velocast doctor (win32/x64)");
     expect(output).toContain("Required GPU: available");
-    expect(output).toContain("Backend: h264_nvenc");
-    expect(output).toContain("Software fallback: available");
+    expect(output).toContain("Backend: webcodecs");
+    expect(output).toContain("WebCodecs runtime: available");
   });
 
   it("prints Windows backend candidates without claiming one was selected", async () => {
@@ -250,26 +250,26 @@ describe("doctorCommand", () => {
           requiredGpuPrerequisites: [],
           requiredGpuBackends: [
             {
-              backend: "h264_amf",
+              backend: "webcodecs",
               available: true,
               packetWriterAvailable: true,
             },
             {
-              backend: "h264_mf",
+              backend: "webcodecs",
               available: true,
               packetWriterAvailable: true,
             },
           ],
-          ffmpegPresent: true,
-          softwareFallbackAvailable: true,
+
+          webCodecsAvailable: true,
         }),
       },
     );
 
     const output = writes.join("");
     expect(output).toContain("Required GPU: available");
-    expect(output).toContain("Backend candidates: h264_amf, h264_mf");
-    expect(output).not.toContain("Backend: h264_amf");
+    expect(output).toContain("Backend candidates: webcodecs, webcodecs");
+    expect(output).not.toContain("Backend: webcodecs");
   });
 
   it("prints structured doctor diagnostics in JSON when required GPU is unavailable", async () => {
@@ -296,15 +296,15 @@ describe("doctorCommand", () => {
           ],
           requiredGpuBackends: [
             {
-              backend: "h264_mf",
+              backend: "webcodecs",
               available: false,
               unavailableCode: "encoder.codec_unavailable",
-              reason: "FFmpeg encoder h264_mf unavailable",
+              reason: "WebCodecs encoder webcodecs unavailable",
               packetWriterAvailable: true,
             },
           ],
-          ffmpegPresent: true,
-          softwareFallbackAvailable: true,
+
+          webCodecsAvailable: true,
         }),
       },
     );
@@ -348,14 +348,14 @@ describe("doctorCommand", () => {
           ],
           requiredGpuBackends: [
             {
-              backend: "h264_mf",
+              backend: "webcodecs",
               available: false,
-              reason: "FFmpeg encoder h264_mf unavailable",
+              reason: "WebCodecs encoder webcodecs unavailable",
               packetWriterAvailable: true,
             },
           ],
-          ffmpegPresent: false,
-          softwareFallbackAvailable: false,
+
+          webCodecsAvailable: false,
         }),
       },
     );
@@ -367,9 +367,9 @@ describe("doctorCommand", () => {
     expect(output).toContain(
       "- platform.device_unavailable: GPU device unavailable",
     );
-    expect(output).toContain("Software fallback: unavailable");
+    expect(output).toContain("WebCodecs runtime: unavailable");
     expect(output).toContain(
-      "Software fallback reason: software fallback unavailable",
+      "WebCodecs runtime reason: WebCodecs runtime unavailable",
     );
   });
 });
@@ -632,8 +632,8 @@ describe("executeRendererJob", () => {
       "velocast-renderer",
       "electron",
       "main.cjs",
-      "ffmpeg",
-      "ffprobe",
+      "media-client.cjs",
+      "media-runtime.cjs",
     ])
       writeFileSync(join(artifactDir, file), "fixture");
     writeFileSync(
@@ -646,8 +646,8 @@ describe("executeRendererJob", () => {
         renderer: "velocast-renderer",
         electron: "electron",
         hostScript: "main.cjs",
-        ffmpeg: "ffmpeg",
-        ffprobe: "ffprobe",
+        mediaClient: "media-client.cjs",
+        mediaBundle: "media-runtime.cjs",
       }),
     );
     const runtimeAcquisition = new RendererRuntimeAcquisition({

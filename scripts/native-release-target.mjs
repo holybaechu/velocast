@@ -3,7 +3,6 @@ import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { withDllSearchPath } from "./electron-runtime-package.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const [command, targetId] = process.argv.slice(2);
@@ -39,29 +38,13 @@ function buildTarget(id, metadata, evidenceDir) {
   if (id !== "win32-x64") {
     throw new Error(`release.platform_blocked: ${id}: ${metadata.blocker}`);
   }
-  const vcpkgRoot = process.env.VCPKG_ROOT ?? join(repoRoot, ".tools", "vcpkg");
-  const targetDirectory = join(repoRoot, "target", "electron");
-  const dllDirs = [
-    join(vcpkgRoot, "installed", "x64-windows", "bin"),
-    join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
-  ];
-  run("pwsh", [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    join(repoRoot, "scripts", "setup-accelerated-rendering.ps1"),
-    "-VcpkgRoot",
-    vcpkgRoot,
-  ]);
+  const targetDirectory = join(evidenceDir, "cargo");
   run("pwsh", [
     "-NoProfile",
     "-ExecutionPolicy",
     "Bypass",
     "-File",
     join(repoRoot, "scripts", "build-electron-renderer.ps1"),
-    "-VcpkgRoot",
-    vcpkgRoot,
     "-TargetDirectory",
     targetDirectory,
   ]);
@@ -76,15 +59,6 @@ function buildTarget(id, metadata, evidenceDir) {
     join(repoRoot, "packages", "electron-host", "package.json"),
   );
   const electron = dirname(requireElectron("electron"));
-  const ffmpeg = mediaBinary("VELOCAST_FFMPEG_BINARY", "ffmpeg.exe");
-  const ffprobe = mediaBinary("VELOCAST_FFPROBE_BINARY", "ffprobe.exe");
-  const licenses =
-    process.env.VELOCAST_NATIVE_LICENSES_DIR ??
-    join(vcpkgRoot, "installed", "x64-windows", "share");
-  if (!existsSync(licenses))
-    throw new Error(
-      "release.configuration_missing: native dependency license directory",
-    );
   run(
     process.execPath,
     [
@@ -93,32 +67,13 @@ function buildTarget(id, metadata, evidenceDir) {
       renderer,
       "--electron",
       electron,
-      "--ffmpeg",
-      ffmpeg,
-      "--ffprobe",
-      ffprobe,
-      ...dllDirs.flatMap((directory) => ["--dll-dir", directory]),
-      "--licenses",
-      licenses,
+      "--dll-dir",
+      join(process.env.SystemRoot ?? "C:\\Windows", "System32"),
       "--output",
       runtime,
     ],
-    withDllSearchPath(dllDirs),
   );
   process.stdout.write(`${JSON.stringify({ target: id, runtime })}\n`);
-}
-
-function mediaBinary(variable, name) {
-  if (process.env[variable]) return process.env[variable];
-  const found = execFileSync("where.exe", [name], {
-    encoding: "utf8",
-    windowsHide: true,
-  })
-    .split(/\r?\n/)
-    .find(Boolean)
-    ?.trim();
-  if (!found) throw new Error(`release.configuration_missing: ${variable}`);
-  return found;
 }
 
 function signWindowsRenderer(renderer) {

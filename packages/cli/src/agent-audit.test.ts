@@ -1,14 +1,12 @@
-import { execFile } from "node:child_process";
+import { writeTestVideo } from "./media-test-fixtures.js";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
 import { BROWSER_PROTOCOL_VERSION } from "@velocast/core";
 import { auditComposition, validateAuditAssertions } from "./agent-audit.js";
 
 const roots: string[] = [];
-const exec = promisify(execFile);
 afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
@@ -125,18 +123,7 @@ it("checks a real generated video frame through the snapshot media endpoint", as
   roots.push(root);
   const dist = join(root, "dist");
   await mkdir(dist);
-  await exec("ffmpeg", [
-    "-v",
-    "error",
-    "-f",
-    "lavfi",
-    "-i",
-    "color=c=red:s=64x64:d=1:r=30",
-    "-pix_fmt",
-    "yuv420p",
-    join(dist, "clip.mp4"),
-  ]);
-  await writeFile(
+  await writeTestVideo(join(dist, "clip.mp4"), root);  await writeFile(
     join(dist, "index.html"),
     `<!doctype html><style>html,body{margin:0}#root{width:64px;height:64px}canvas{display:block;width:64px;height:64px}</style><div id="root"><canvas id="frame" width="64" height="64"></canvas></div><script>window.__velocast={protocolVersion:${BROWSER_PROTOCOL_VERSION},session:null,async beginSession(value){this.session=value},getSession(){return this.session},cancelPending(){},async destroy(){},async setInputProps(){},async waitForReady(){},async getCompositions(){return [{id:'video',width:64,height:64,fps:30,durationFrames:30,target:'#root'}]},async getDurationFrames(){return 30},async seekFrame(id,frame,context){const query=new URLSearchParams({src:'clip.mp4',seconds:String(frame/30),sessionId:this.session.sessionId,sourceVersion:this.session.sourceVersion});const response=await fetch('/__velocast-media/frame?'+query);if(!response.ok)throw Error('media endpoint '+response.status+': '+await response.text());const width=Number(response.headers.get('X-Velocast-Frame-Width')),height=Number(response.headers.get('X-Velocast-Frame-Height'));const pixels=new Uint8ClampedArray(await response.arrayBuffer());document.querySelector('#frame').getContext('2d').putImageData(new ImageData(pixels,width,height),0,0);}};</script>`,
   );

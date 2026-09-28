@@ -20,15 +20,15 @@ function fixture() {
     renderer: "velocast-renderer.exe",
     electron: "electron/electron.exe",
     hostScript: "electron-host/main.cjs",
-    ffmpeg: "ffmpeg.exe",
-    ffprobe: "ffprobe.exe",
+    mediaClient: "media-client.cjs",
+    mediaBundle: "media-runtime.cjs",
   };
   for (const file of [
     marker.renderer,
     marker.electron,
     marker.hostScript,
-    marker.ffmpeg,
-    marker.ffprobe,
+    marker.mediaClient,
+    marker.mediaBundle,
   ]) {
     const path = join(root, file);
     mkdirSync(dirname(path), { recursive: true });

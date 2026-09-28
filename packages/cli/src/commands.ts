@@ -1,3 +1,5 @@
+import { getInvocationCwd } from "./paths.js";
+import { withMediaRuntimeContext } from "./media-runtime.js";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -303,17 +305,16 @@ function writeDoctorText(
     }
   }
   write(
-    `Software fallback: ${report.softwareFallback.available ? "available" : "unavailable"}\n`,
+    `WebCodecs runtime: ${report.webCodecs.available ? "available" : "unavailable"}\n`,
   );
-  if (report.softwareFallback.reason) {
-    write(`Software fallback reason: ${report.softwareFallback.reason}\n`);
+  if (report.webCodecs.reason) {
+    write(`WebCodecs runtime reason: ${report.webCodecs.reason}\n`);
   }
 }
 
 export interface RendererRunDependencies {
-  /** Source output transaction override, useful to embed custom FFmpeg tooling. */
+  /** Source output transaction override. */
   renderSourceOutput?: typeof renderSourceOutput;
-  sourceOutputTools?: { ffmpeg?: string; ffprobe?: string };
   executeNativeSourceJob?: typeof executeRendererJob;
   /** Preview output must correspond to the exact authored version being inspected. */
   expectedSourceVersion?: string;
@@ -387,6 +388,23 @@ interface PreparedRendererJob {
 export async function executeRendererJob(
   request: RenderRequest,
   dependencies: RendererRunDependencies = {},
+): Promise<void> {
+  const env = dependencies.pathOptions?.env
+    ? { ...process.env, ...dependencies.pathOptions.env }
+    : { ...process.env };
+  return withMediaRuntimeContext(
+    {
+      configuredBinary: request.config.renderer?.binary,
+      cwd: getInvocationCwd(dependencies.pathOptions),
+      env,
+    },
+    () => executeRendererJobInContext(request, dependencies),
+  );
+}
+
+async function executeRendererJobInContext(
+  request: RenderRequest,
+  dependencies: RendererRunDependencies,
 ): Promise<void> {
   if (request.config.source !== undefined)
     return executeSourceJob(request, dependencies, executeRendererJob);

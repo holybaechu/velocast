@@ -188,9 +188,16 @@ try {
     ],
     repeatEnv,
   );
+  const preferredSoftware = join(evidenceDir, `pnpm-${targetId}-software.mp4`);
+  const preferredSoftwareReport = join(evidenceDir, `pnpm-${targetId}-software-report.json`);
+  await cliRun("pnpm", pnpmResult.consumer, [
+    "render", "product-hero", "--config", "velocast.config.ts",
+    "--acceleration", "off", "--output", preferredSoftware,
+    "--report", preferredSoftwareReport,
+  ], repeatEnv);
   for (const result of results) {
     const args = [
-      join(repoRoot, "scripts", "verify-consumer-render.py"),
+      join(repoRoot, "scripts", "verify-consumer-render.mjs"),
       "--video",
       result.output,
       "--report",
@@ -199,8 +206,10 @@ try {
       targetId,
     ];
     if (result.manager === "pnpm") args.push("--compare", repeat);
-    await run(python(), args, repoRoot);
+    await run(process.execPath, args, repoRoot);
   }
+  await run(process.execPath, [join(repoRoot, "scripts", "verify-consumer-render.mjs"),
+    "--video", preferredSoftware, "--report", preferredSoftwareReport, "--target", targetId], repoRoot);
   const validation = {
     target: targetId,
     packageManagers: ["npm", "pnpm"],
@@ -215,9 +224,7 @@ try {
       npmRender: true,
       pnpmRender: true,
       deterministicRepeat: true,
-      softwareFallback:
-        hostRequirements.softwareFallbackRequired === false ||
-        process.env.VELOCAST_SOFTWARE_FALLBACK_VALIDATED === "1",
+      softwarePreference: true,
     },
     status: "PASS",
   };
@@ -266,10 +273,6 @@ function fileSpec(path) {
 
 function pnpm() {
   return managerCommand("pnpm");
-}
-
-function python() {
-  return process.platform === "win32" ? "python.exe" : "python3";
 }
 
 function resolvedHostRequirements(target, requirements) {

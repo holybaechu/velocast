@@ -181,7 +181,7 @@
       "kind": "verify",
       "scope": "shared",
       "environment": "minimal",
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\windows-private-rc-finalize.mjs", "--root", "C:\\velocast-private-rc", "--state", "C:\\velocast-private-rc\\state\\state.json", "--ffprobe", "<FINAL_RUNTIME_DIR>\\ffprobe.exe", "--host-requirements", "<FINAL_HOST_REQUIREMENTS>", "--output", "C:\\velocast-private-rc\\evidence\\consumer-validation.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\windows-private-rc-finalize.mjs", "--root", "C:\\velocast-private-rc", "--state", "C:\\velocast-private-rc\\state\\state.json", "--runtime", "<FINAL_RUNTIME_DIR>", "--host-requirements", "<FINAL_HOST_REQUIREMENTS>", "--output", "C:\\velocast-private-rc\\evidence\\consumer-validation.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\consumer-validation.json"]
     }

@@ -30,8 +30,6 @@ export interface VideoFramePoolOptions {
   snapshot: { url: string; session: { sourceVersion: string } };
   /** Caller-owned parent; only a unique verified child is removed on close. */
   directory: string;
-  ffmpegPath?: string;
-  ffprobePath?: string;
   limits?: VideoFramePoolLimits;
   signal?: AbortSignal;
 }
@@ -263,8 +261,6 @@ export async function createVideoFramePool(
       source = await (dependencies.openSource ?? openVideoFrameSource)({
         path: entry.path,
         sourceHash: actual,
-        ffmpegPath: options.ffmpegPath,
-        ffprobePath: options.ffprobePath,
         env: options.env,
         limits: {
           ...limits.decoder,

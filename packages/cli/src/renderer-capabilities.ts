@@ -9,10 +9,9 @@ export interface RendererCapabilitySupport {
   outputApiVersion?: number;
   browserHosts?: Array<"electron">;
   defaultBrowserHost?: "electron";
-  d3d11FfmpegEncoder?: {
-    compiled: boolean;
-    encoders?: Record<string, boolean>;
-  };
+  videoEncoderBackend?: "webcodecs";
+  mediaRuntime?: "mediabunny";
+  hardwareAccelerationGuarantee?: false;
 }
 
 export interface RendererCapabilitySpawnOptions {
@@ -86,52 +85,35 @@ export function probeRendererCapabilities(
       parsed.browserHosts.length !== 1 ||
       parsed.browserHosts[0] !== "electron" ||
       parsed.defaultBrowserHost !== "electron" ||
-      parsed.electronHostProtocolVersion !== 1
+      parsed.electronHostProtocolVersion !== 2
     ) {
       return {
         available: false,
         reason:
-          "renderer.electron_unsupported: rebuild or install a renderer advertising Electron host protocol 1",
+          "renderer.electron_unsupported: rebuild or install a renderer advertising Electron host protocol 2",
       };
     }
-    const d3d11 = parsed.d3d11FfmpegEncoder;
-    const browserSupport: Pick<
-      RendererCapabilitySupport,
-      "browserHosts" | "defaultBrowserHost"
-    > = {
-      ...(Array.isArray(parsed.browserHosts)
-        ? { browserHosts: ["electron"] as Array<"electron"> }
-        : {}),
-      ...(parsed.defaultBrowserHost === "electron"
-        ? { defaultBrowserHost: parsed.defaultBrowserHost }
-        : {}),
-    };
-    const outputApiVersion =
-      Number.isInteger(parsed.outputApiVersion) &&
-      typeof parsed.outputApiVersion === "number"
-        ? parsed.outputApiVersion
-        : undefined;
-    if (!isObjectRecord(d3d11))
+    if (
+      parsed.videoEncoderBackend !== "webcodecs" ||
+      parsed.mediaRuntime !== "mediabunny" ||
+      parsed.hardwareAccelerationGuarantee !== false
+    )
       return {
-        available: true,
-        ...browserSupport,
-        ...(outputApiVersion === undefined ? {} : { outputApiVersion }),
+        available: false,
+        reason:
+          "renderer.webcodecs_unsupported: install the matching WebCodecs renderer and media runtime",
       };
     return {
       available: true,
-      ...browserSupport,
-      ...(outputApiVersion === undefined ? {} : { outputApiVersion }),
-      d3d11FfmpegEncoder: {
-        compiled: d3d11.compiled === true,
-        encoders: isObjectRecord(d3d11.encoders)
-          ? Object.fromEntries(
-              Object.entries(d3d11.encoders).filter(
-                (entry): entry is [string, boolean] =>
-                  typeof entry[1] === "boolean",
-              ),
-            )
+      browserHosts: ["electron"],
+      defaultBrowserHost: "electron",
+      outputApiVersion:
+        typeof parsed.outputApiVersion === "number"
+          ? parsed.outputApiVersion
           : undefined,
-      },
+      videoEncoderBackend: "webcodecs",
+      mediaRuntime: "mediabunny",
+      hardwareAccelerationGuarantee: false,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

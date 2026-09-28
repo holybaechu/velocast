@@ -1,7 +1,9 @@
+import { mkdtempSync, rmSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   buildCompositionRenderCommandJobFromSource,
   buildUrlRenderCommandJob,
@@ -18,6 +20,22 @@ import { parseRendererEventLog } from "./renderer-events.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 let fixtureExecutable: string;
+// CI builds the Rust policy first. Reuse its explicitly configured external
+// target so this fixture does not recompile Rust alongside browser tests.
+const ownsTarget = !process.env.CARGO_TARGET_DIR;
+const targetRoot = process.env.CARGO_TARGET_DIR
+  ? resolve(repoRoot, process.env.CARGO_TARGET_DIR)
+  : mkdtempSync(resolve(tmpdir(), "velocast-wire-test-"));
+afterAll(() => {
+  if (!ownsTarget) return;
+  const target = realpathSync(targetRoot);
+  if (
+    dirname(target) !== realpathSync(tmpdir()) ||
+    !target.includes("velocast-wire-test-")
+  )
+    throw new Error("Unsafe test cleanup");
+  rmSync(target, { recursive: true, force: true });
+});
 
 beforeAll(() => {
   const output = execFileSync(
@@ -30,7 +48,7 @@ beforeAll(() => {
       "--example",
       "wire-conformance",
       "--target-dir",
-      resolve(repoRoot, "target/protocol-conformance"),
+      targetRoot,
       "--message-format=json",
     ],
     { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
@@ -150,7 +168,7 @@ describe("cross-language renderer wire", () => {
       mode: "composition",
       serve_url: "http://localhost:4545",
       output: "out.mp4",
-      codec: "libx264",
+      codec: "h264",
     };
     const jobs = [
       minimal,

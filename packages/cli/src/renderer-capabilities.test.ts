@@ -19,7 +19,10 @@ describe("Electron-only capability negotiation", () => {
       outputApiVersion: 1,
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 1,
+      electronHostProtocolVersion: 2,
+      videoEncoderBackend: "webcodecs",
+      mediaRuntime: "mediabunny",
+      hardwareAccelerationGuarantee: false,
     };
     expect(probe(caps)).toMatchObject({
       available: true,
@@ -37,7 +40,10 @@ describe("Electron-only capability negotiation", () => {
       probe({
         browserHosts: ["cef", "electron"],
         defaultBrowserHost: "cef",
-        electronHostProtocolVersion: 1,
+        electronHostProtocolVersion: 2,
+        videoEncoderBackend: "webcodecs",
+        mediaRuntime: "mediabunny",
+        hardwareAccelerationGuarantee: false,
       }).available,
     ).toBe(false);
   });
@@ -55,14 +61,17 @@ describe("Electron-only capability negotiation", () => {
           outputApiVersion: 1,
           browserHosts: ["electron"],
           defaultBrowserHost: "electron",
-          electronHostProtocolVersion: 1,
+          electronHostProtocolVersion: 2,
+          videoEncoderBackend: "webcodecs",
+          mediaRuntime: "mediabunny",
+          hardwareAccelerationGuarantee: false,
         },
         "electron",
       ).available,
     ).toBe(true);
   });
 
-  it.each([0, 2, "1", true, null])(
+  it.each([0, 1, "2", true, null])(
     "rejects unsupported host protocol %s",
     (version) => {
       expect(

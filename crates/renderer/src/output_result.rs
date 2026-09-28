@@ -174,7 +174,7 @@ fn destination_key(path: &Path) -> anyhow::Result<String> {
 mod tests {
     use super::*;
     fn fixture() -> (RenderJob, CompositionManifest) {
-        let job=serde_json::from_value(serde_json::json!({"mode":"composition","composition_id":"hero","serve_url":"http://localhost","output":"out.mp4","codec":"libx264","render_session":{"sessionId":"one","sourceVersion":"source"},"output_range":{"startFrame":12,"endFrame":90}})).unwrap();
+        let job=serde_json::from_value(serde_json::json!({"mode":"composition","composition_id":"hero","serve_url":"http://localhost","output":"out.mp4","codec":"h264","render_session":{"sessionId":"one","sourceVersion":"source"},"output_range":{"startFrame":12,"endFrame":90}})).unwrap();
         let composition = CompositionManifest {
             id: "hero".to_owned(),
             width: 320,

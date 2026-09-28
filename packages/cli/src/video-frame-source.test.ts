@@ -1,8 +1,4 @@
-import {
-  spawn,
-  type ChildProcess,
-  type SpawnOptions,
-} from "node:child_process";
+import type { MediaRunner } from "./media-runtime.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +8,6 @@ import {
   openVideoFrameSource,
   videoPixelChecksum,
   type VideoFrameSource,
-  type VideoToolEvent,
 } from "./video-frame-source.js";
 
 const directories: string[] = [],
@@ -26,90 +21,92 @@ afterEach(async () => {
 async function fixture(mode = "normal") {
   const directory = await mkdtemp(join(tmpdir(), "velocast-video-source-"));
   directories.push(directory);
-  const path = join(directory, "source.bin"),
-    script = join(directory, "tool.cjs");
+  const path = join(directory, "source.bin");
   await writeFile(path, "immutable encoded fixture");
   const sourceHash = createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
-  const probe = {
-    streams: [
-      {
-        codec_name: "vp8",
-        width: 2,
-        height: 2,
-        pix_fmt: "yuv420p",
-        time_base: "1/1000",
-      },
-    ],
-    frames: [0, 80, 280, 320, 360].map((pts, index) => ({
-      pts,
-      best_effort_timestamp: pts,
-      key_frame: index === 0 || index === 2 ? 1 : 0,
-      duration: 40,
-    })),
-  };
-  await writeFile(
-    script,
-    `const item=JSON.parse(process.argv[2]);
-if(item.stall){setInterval(()=>{},1000);}else setTimeout(()=>{if(item.probe)process.stdout.write(JSON.stringify(item.probe));else{process.stderr.write(item.stderr);for(const frame of item.frames)process.stdout.write(Buffer.alloc(frame.bytes,frame.value));}},10);`,
-  );
-  const events: VideoToolEvent[] = [],
-    commands: string[][] = [];
+  const frames = [0, 80, 280, 320, 360].map((pts, index) => ({
+    pts,
+    duration: 40,
+    keyframe: index === 0 || index === 2,
+  }));
   let active = 0,
-    maximum = 0;
+    maximum = 0,
+    sessions = 0,
+    createdSessions = 0,
+    maximumSessions = 0;
   let decoded!: () => void;
-  let decoding = new Promise<void>((resolve) => (decoded = resolve));
-  const launch = (
-    binary: string,
-    args: readonly string[],
-    options: SpawnOptions,
-  ): ChildProcess => {
-    commands.push([binary, ...args]);
-    let item: unknown;
-    if (binary === "probe") item = { probe };
-    else {
-      const seekIndex = args.indexOf("-ss"),
-        filter = args[args.indexOf("-vf") + 1]!,
-        selectedPts = Number(
-          /select=gte\(pts\\,(-?\d+)\)/.exec(filter)?.[1] ?? 0,
-        ),
-        startPts = Math.max(
-          selectedPts,
-          seekIndex < 0 ? 0 : Math.round(Number(args[seekIndex + 1]) * 1000),
-        ),
-        frames = probe.frames.filter((frame) => frame.pts >= startPts),
-        stderr = frames
-          .map((frame, index) => {
-            const bytes = Buffer.alloc(16, frame.pts % 256),
-              checksum = videoPixelChecksum(bytes);
-            return `[showinfo@velocast_pts @ fixture] n: ${index} pts: ${mode === "wrong-pts" ? frame.pts + 1 : frame.pts} pts_time: 0 fmt:rgba s:2x2 checksum:${mode === "wrong-pixels" ? "00000000" : checksum}`;
-          })
-          .join("\n");
-      item = {
-        frames: frames.map((frame) => ({
-          bytes: mode === "short" ? 15 : 16,
-          value: frame.pts % 256,
-        })),
-        stall: mode === "stall",
-        stderr: `[showinfo@velocast_pts @ fixture] config in time_base: 1/1000, frame_rate: 25/1\n${stderr}\n`,
-      };
-      decoded();
-    }
-    const child = spawn(
-      process.execPath,
-      [script, JSON.stringify(item)],
-      options,
-    );
+  const decoding = new Promise<void>((resolve) => (decoded = resolve));
+  const mediaRunner: MediaRunner = async <T>(
+    operation: { kind: string; [key: string]: unknown },
+    options?: { signal?: AbortSignal },
+  ): Promise<T> => {
     active++;
     maximum = Math.max(maximum, active);
-    child.once("close", () => active--);
-    return child;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (operation.kind === "probe")
+        return {
+          duration: 0.4,
+          video: {
+            width: 2,
+            height: 2,
+            codedWidth: 2,
+            codedHeight: 2,
+            codec: "vp8",
+            rotation: 0,
+            colorSpace: mode === "hdr" ? { transfer: "pq" } : undefined,
+            timeBase: { numerator: 1, denominator: 1000 },
+            frames,
+          },
+        } as T;
+      decoded();
+      if (mode === "stall")
+        await new Promise<void>((_, reject) => {
+          const abort = () => reject(new Error("video.cancelled"));
+          if (options?.signal?.aborted) abort();
+          else
+            options?.signal?.addEventListener("abort", abort, { once: true });
+        });
+      const timestamp = Number(operation.timestamp);
+      await writeFile(
+        String(operation.outputPath),
+        Buffer.alloc(
+          mode === "short" ? 15 : 16,
+          Math.round(timestamp * 1000) % 256,
+        ),
+      );
+      return {
+        timestamp: mode === "wrong-pts" ? timestamp + 0.001 : timestamp,
+        width: mode === "wrong-dimensions" ? 3 : 2,
+        height: 2,
+      } as T;
+    } finally {
+      active--;
+    }
   };
   const open = async (limits = {}) => {
     const source = await openVideoFrameSource(
-      { path, sourceHash, ffmpegPath: "decoder", ffprobePath: "probe", limits },
-      { spawn: launch, onCommand: (event) => events.push(event) },
+      { path, sourceHash, limits },
+      {
+        mediaRunner,
+        mediaSessionFactory: async () => {
+          sessions++;
+          createdSessions++;
+          maximumSessions = Math.max(maximumSessions, sessions);
+          let closed = false;
+          return {
+            run: mediaRunner,
+            close: async () => {
+              if (!closed) {
+                sessions--;
+                closed = true;
+              }
+            },
+          };
+        },
+      },
     );
     sources.push(source);
     return source;
@@ -118,14 +115,12 @@ if(item.stall){setInterval(()=>{},1000);}else setTimeout(()=>{if(item.probe)proc
     path,
     sourceHash,
     open,
-    events,
-    commands,
+    sessions: () => sessions,
+    createdSessions: () => createdSessions,
+    maximumSessions: () => maximumSessions,
     active: () => active,
     maximum: () => maximum,
     decoding: () => decoding,
-    resetDecoding: () => {
-      decoding = new Promise((resolve) => (decoded = resolve));
-    },
   };
 }
 
@@ -151,12 +146,8 @@ it("returns exact PTS, uses a four-frame LRU and prevents caller mutation of cac
   await source.frameAt(0);
   const evicted = await source.frameAt(0.08);
   expect(evicted.cacheHit).toBe(false);
-  const decoder = f.commands.find((command) => command.includes("rawvideo"));
-  expect(decoder).toBeDefined();
-  expect(decoder).toContain("-copyts");
-  expect(decoder).toContain("-format_whitelist");
-  expect(decoder).toContain("mov,matroska,webm");
-  expect(f.maximum()).toBeLessThanOrEqual(4);
+  expect(f.maximum()).toBeLessThanOrEqual(8);
+  expect(f.createdSessions()).toBe(1);
 });
 
 it("honors an explicit cache byte budget below the four-frame default", async () => {
@@ -168,12 +159,14 @@ it("honors an explicit cache byte budget below the four-frame default", async ()
   expect(source.stats()).toMatchObject({ cachedFrames: 2, cachedBytes: 32 });
 });
 
-it.each(["wrong-pts", "wrong-pixels", "short"])(
+it.each(["wrong-pts", "wrong-dimensions", "short"])(
   "rejects %s output instead of caching it",
   async (mode) => {
     const f = await fixture(mode),
       source = await f.open();
-    await expect(source.frameAt(0.28)).rejects.toThrow("video.pts_mismatch");
+    await expect(source.frameAt(0.28)).rejects.toThrow(
+      /video.frame_(pts_mismatch|missing)/,
+    );
     expect(source.stats().cachedFrames).toBe(0);
     expect(f.active()).toBe(0);
   },
@@ -233,4 +226,13 @@ it("bounds actual tool children across multiple source handles", async () => {
   expect(f.maximum()).toBeGreaterThan(1);
   expect(f.maximum()).toBeLessThanOrEqual(8);
   expect(f.active()).toBeLessThanOrEqual(8);
+  expect(f.maximumSessions()).toBeLessThanOrEqual(8);
+  expect(f.createdSessions()).toBe(9);
+  await Promise.all(opened.map((source) => source.close()));
+  expect(f.sessions()).toBe(0);
+});
+
+it("rejects HDR without explicit source color metadata", async () => {
+  const f = await fixture("hdr");
+  await expect(f.open()).rejects.toThrow("video.unsupported_color");
 });

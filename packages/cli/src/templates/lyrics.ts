@@ -154,7 +154,7 @@ npm run render
 
 Import accepts SRT, WebVTT, or the documented JSON cue shape. Its intervals use seconds and require \`0 <= startSeconds < endSeconds\`. The component selects cues from \`useCurrentFrame() / fps\`, so exact seeks and renders agree.
 
-For real local audio, run \`npm run analyze:audio -- path/to/song.wav --output src/music-analysis.json --overwrite\`. Energy and onset candidates are measured from bounded FFmpeg-decoded PCM and drive the subtle onset pulse. They are aids for review, not verified beats, downbeats, meter, lyrics, or transcription. The explicit overwrite publishes complete JSON atomically so a build watcher never reads a partial file.
+For real local audio, run \`npm run analyze:audio -- path/to/song.wav --output src/music-analysis.json --overwrite\`. Energy and onset candidates are measured from bounded WebCodecs-decoded PCM and drive the subtle onset pulse. They are aids for review, not verified beats, downbeats, meter, lyrics, or transcription. The explicit overwrite publishes complete JSON atomically so a build watcher never reads a partial file.
 
 For a ready audio-backed project with verified duration and supplied cues, initialize again with \`velocast init <directory> --template lyrics --audio <local-audio> --lyrics <srt-vtt-or-json>\`. The starter deliberately does not point at an asset that was not supplied.
 `,

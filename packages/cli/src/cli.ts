@@ -208,8 +208,6 @@ export async function runCli(
       "Local audio copied into a lyrics project and analyzed",
     )
     .option("--lyrics <path>", "Supplied SRT, VTT, or JSON timed text")
-    .option("--ffmpeg <path>", "FFmpeg executable or wrapper for --audio")
-    .option("--ffprobe <path>", "FFprobe executable or wrapper for --audio")
     .option("--json", "Print the created project as JSON")
     .action(
       async (
@@ -218,8 +216,6 @@ export async function runCli(
           template: "react-static" | "lyrics";
           audio?: string;
           lyrics?: string;
-          ffmpeg?: string;
-          ffprobe?: string;
         },
       ) => {
         await (dependencies.initCommand ?? initCommand)(directory, {
@@ -229,8 +225,6 @@ export async function runCli(
             : { template: options.template }),
           ...(options.audio ? { audio: options.audio } : {}),
           ...(options.lyrics ? { lyrics: options.lyrics } : {}),
-          ...(options.ffmpeg ? { ffmpeg: options.ffmpeg } : {}),
-          ...(options.ffprobe ? { ffprobe: options.ffprobe } : {}),
         });
       },
     );
@@ -297,8 +291,6 @@ export async function runCli(
       "Measure bounded RMS energy and onset candidates from local audio",
     )
     .option("--output <path>", "New analysis JSON output path")
-    .option("--ffmpeg <path>", "FFmpeg executable or wrapper")
-    .option("--ffprobe <path>", "FFprobe executable or wrapper")
     .option("--max-duration <seconds>", "Maximum decoded duration", {
       default: 900,
     })
@@ -464,7 +456,7 @@ function addCommonRenderOptions(command: Command): Command {
       "--codec <codec>",
       "Video codec: h264, hevc, av1, or a supported encoder name",
     )
-    .option("--pixel-format <format>", "FFmpeg output pixel format")
+    .option("--pixel-format <format>", "Output pixel format")
     .option("--bitrate <value>", "Target video bitrate, e.g. 60M or 12000k")
     .option(
       "--acceleration <mode>",

@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, posix, relative, resolve } from "node:path";
 
 export interface BrowserCdpOptions {
   executable?: string;
@@ -32,6 +32,20 @@ const WINDOWS_BROWSERS = [
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
 ];
 
+/** Standard application bundles; explicit browser settings always take precedence. */
+export function browserApplicationPaths(
+  platform: NodeJS.Platform,
+  home: string,
+): string[] {
+  if (platform === "win32") return [...WINDOWS_BROWSERS];
+  if (platform !== "darwin") return [];
+  return ["/Applications", posix.join(home, "Applications")].flatMap((root) => [
+    posix.join(root, "Google Chrome.app/Contents/MacOS/Google Chrome"),
+    posix.join(root, "Chromium.app/Contents/MacOS/Chromium"),
+    posix.join(root, "Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+  ]);
+}
+
 export function resolveAuditBrowser(
   explicit: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
@@ -42,10 +56,10 @@ export function resolveAuditBrowser(
       throw new Error(`audit.browser_not_found: ${configured}`);
     return configured;
   }
-  if (process.platform === "win32") {
-    const found = WINDOWS_BROWSERS.find(existsSync);
-    if (found) return found;
-  }
+  const application = browserApplicationPaths(process.platform, homedir()).find(
+    existsSync,
+  );
+  if (application) return application;
   for (const candidate of ["google-chrome", "chromium", "chromium-browser"])
     if (commandOnPath(candidate, env)) return candidate;
   throw new Error(
@@ -125,33 +139,116 @@ async function removeProfile(path: string): Promise<void> {
   });
 }
 
-async function stopBrowser(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const closed = new Promise<void>((resolveClose) =>
-    child.once("close", () => resolveClose()),
-  );
-  child.kill();
-  const graceful = await Promise.race([
-    closed.then(() => true),
-    new Promise<false>((resolveTimeout) =>
-      setTimeout(() => resolveTimeout(false), 1_000),
-    ),
-  ]);
-  if (!graceful) {
-    child.kill("SIGKILL");
-    await Promise.race([
-      closed,
-      new Promise<void>((_, reject) =>
-        setTimeout(
-          () =>
+/** Stop only the process tree created by this launch, then join Node's close event. */
+export async function stopBrowser(
+  child: ChildProcess,
+  gracefulShutdown?: () => Promise<unknown>,
+): Promise<void> {
+  const exited = () => child.exitCode !== null || child.signalCode !== null;
+  if (exited()) return;
+  let onClose!: () => void;
+  const closed = new Promise<void>((resolveClose) => {
+    onClose = resolveClose;
+    child.once("close", onClose);
+  });
+  try {
+    if (gracefulShutdown) {
+      // A CDP acknowledgement does not mean Chrome has finished shutdown. Keep
+      // watching the process, and bound only this cooperative phase.
+      void Promise.resolve()
+        .then(gracefulShutdown)
+        .catch(() => {});
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          closed,
+          new Promise<void>((done) => {
+            timer = setTimeout(done, 2_000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    if (!exited() && child.pid !== undefined) {
+      if (process.platform === "win32") {
+        await new Promise<void>((done, reject) => {
+          const killer = spawn(
+            "taskkill.exe",
+            ["/pid", String(child.pid), "/t", "/f"],
+            { stdio: "ignore", windowsHide: true },
+          );
+          let failure: Error | undefined;
+          killer.once("error", (error) => {
+            failure = error;
+          });
+          killer.once("close", (code) => {
+            if (exited() || (code === 0 && !failure)) {
+              done();
+              return;
+            }
+            // The browser may already be gone while its libuv exit notification
+            // is queued. A non-destructive existence check distinguishes that
+            // race from an actual termination failure.
+            try {
+              process.kill(child.pid!, 0);
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+                done();
+                return;
+              }
+            }
             reject(
-              new Error("audit.browser_close_timeout: browser did not exit"),
-            ),
-          2_000,
-        ),
-      ),
-    ]);
+              new Error(
+                `audit.browser_termination_failed: taskkill for owned PID ${child.pid} exited ${code}`,
+                { cause: failure },
+              ),
+            );
+          });
+        });
+      } else {
+        // Browser launches own their POSIX process group (detached: true).
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch (error) {
+          if (!exited() && !child.kill("SIGKILL"))
+            throw new Error(
+              "audit.browser_termination_failed: could not terminate the owned browser",
+              { cause: error },
+            );
+        }
+      }
+    }
+    // Successful OS termination can precede Node's close event under load.
+    // Reap it instead of treating a second arbitrary deadline as a failure.
+    await closed;
+  } finally {
+    child.removeListener("close", onClose);
   }
+}
+
+/** Attempt every independent resource cleanup without replacing the original failure. */
+export async function cleanupBrowserResources(
+  actions: readonly (() => Promise<unknown>)[],
+  primary?: { error: unknown },
+): Promise<void> {
+  const failures: unknown[] = [];
+  for (const action of actions) {
+    try {
+      await action();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (!failures.length) return;
+  if (!primary && failures.length === 1) throw failures[0];
+  const message = (error: unknown) =>
+    error instanceof Error ? error.message : String(error);
+  throw new AggregateError(
+    primary ? [primary.error, ...failures] : failures,
+    `${primary ? message(primary.error) + "\n" : ""}Browser cleanup failed: ${failures.map(message).join("; ")}`,
+    primary ? { cause: primary.error } : undefined,
+  );
 }
 
 export async function launchCdpBrowser(
@@ -173,6 +270,7 @@ export async function launchCdpBrowser(
   const child = spawn(executable, arguments_, {
     stdio: "ignore",
     windowsHide: true,
+    detached: process.platform !== "win32",
   });
   let spawnFailure: Error | undefined;
   child.once("error", (error) => {
@@ -296,24 +394,36 @@ export async function launchCdpBrowser(
     };
     await call("Runtime.enable");
     await call("Page.enable");
-    let closed = false;
+    let closePromise: Promise<void> | undefined;
     return {
       executable,
       call,
       evaluate,
-      async close() {
-        if (closed) return;
-        closed = true;
-        socket?.close();
-        rejectPending(new Error("audit.browser_closed: browser was closed"));
-        await stopBrowser(child);
-        await removeProfile(profile);
+      close() {
+        return (closePromise ??= (async () => {
+          try {
+            await stopBrowser(child, () => call("Browser.close"));
+          } finally {
+            socket?.close();
+            rejectPending(
+              new Error("audit.browser_closed: browser was closed"),
+            );
+          }
+          await removeProfile(profile);
+        })());
       },
     };
   } catch (error) {
     socket?.close();
-    await stopBrowser(child).catch(() => {});
-    await removeProfile(profile);
+    await cleanupBrowserResources(
+      [
+        async () => {
+          await stopBrowser(child);
+          await removeProfile(profile);
+        },
+      ],
+      { error },
+    );
     throw error;
   }
 }

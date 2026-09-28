@@ -19,7 +19,7 @@ export interface VideoPtsIndex {
   readonly height: number;
   readonly codec: string;
   readonly pixelFormat: string;
-  /** Counter-clockwise display rotation reported by FFprobe, normalized to 0/90/180/270. */
+  /** Counter-clockwise display rotation reported by the container, normalized to 0/90/180/270. */
   readonly rotationDegrees: number;
   readonly inputColor: {
     readonly transfer: string;
@@ -396,7 +396,7 @@ export function findVideoFrameOffset(
   return index.frames[Math.max(0, low - 1)]!;
 }
 
-/** FFmpeg seeks in microseconds: floor rather than rounding beyond the selected keyframe. */
+/** WebCodecs timestamps are microseconds: floor rather than rounding beyond the selected keyframe. */
 export function videoSeekTimestamp(pts: number, base: VideoTimeBase): string {
   integer(pts, "seek PTS");
   positive(base.numerator, "time base numerator");

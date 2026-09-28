@@ -15,19 +15,36 @@ permissions:
 jobs:
   foundation:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - name: Configure temporary build directories
+        shell: bash
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/velocast-cargo" >> "$GITHUB_ENV"
+          echo "TURBO_CACHE_DIR=$RUNNER_TEMP/velocast-turbo-cache" >> "$GITHUB_ENV"
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
+      - name: Install Electron display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install the pinned Electron runtime
+        run: node packages/electron-host/node_modules/electron/install.js
+      - name: Configure Electron sandbox helper
+        run: |
+          sandbox="$(node -p "require('node:path').join(require('node:path').dirname(require('./packages/electron-host/node_modules/electron')), 'chrome-sandbox')")"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
       - run: pnpm release:verify
       - run: pnpm release:test
       - run: pnpm contracts:check
       - run: pnpm check-types
-      - run: pnpm test
+      - run: xvfb-run -a pnpm test
 
   native:
     if: inputs.execute_native
@@ -42,6 +59,11 @@ jobs:
       VELOCAST_APPLE_NOTARY_PROFILE: ${{ secrets.VELOCAST_APPLE_NOTARY_PROFILE }}
     steps:
       - uses: actions/checkout@v7
+      - name: Configure temporary build directories
+        shell: pwsh
+        run: |
+          "CARGO_TARGET_DIR=$(Join-Path $env:RUNNER_TEMP 'velocast-cargo')" >> $env:GITHUB_ENV
+          "TURBO_CACHE_DIR=$(Join-Path $env:RUNNER_TEMP 'velocast-turbo-cache')" >> $env:GITHUB_ENV
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -74,20 +96,34 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+      - name: Configure temporary build directories
+        shell: bash
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/velocast-cargo" >> "$GITHUB_ENV"
+          echo "TURBO_CACHE_DIR=$RUNNER_TEMP/velocast-turbo-cache" >> "$GITHUB_ENV"
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: node packages/electron-host/node_modules/electron/install.js
+      - name: Install Electron display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
+      - name: Configure Electron sandbox helper
+        run: |
+          sandbox="$(node -p "require('node:path').join(require('node:path').dirname(require('./packages/electron-host/node_modules/electron')), 'chrome-sandbox')")"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
       - uses: actions/download-artifact@v8
         with:
           pattern: velocast-*
           path: ${{ runner.temp }}/velocast-evidence
           merge-multiple: true
       - run: >-
-          node scripts/assemble-release-manifest.mjs
+          xvfb-run -a node scripts/assemble-release-manifest.mjs
           --target win32-x64
           --evidence-dir ${{ runner.temp }}/velocast-evidence
           --output ${{ runner.temp }}/velocast-release-dry-run.json

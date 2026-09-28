@@ -22,6 +22,10 @@
     ".": {
       "types": "./dist/commands.d.ts",
       "default": "./dist/commands.js"
+    },
+    "./source-media": {
+      "types": "./dist/source-media.d.ts",
+      "default": "./dist/source-media.js"
     }
   },
   "files": [
