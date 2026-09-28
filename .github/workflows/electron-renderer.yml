@@ -103,7 +103,16 @@ jobs:
           ELECTRON_ENABLE_LOGGING: "1"
           ELECTRON_ENABLE_STACK_DUMPING: "1"
           ELECTRON_LOG_FILE: ${{ runner.temp }}/native-capture-electron.log
-        run: xvfb-run -a node scripts/verify-native-capture.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/native-capture" --frames 24 --repeats 3 --mode both --all-frames true
+          VELOCAST_MEDIA_TRACE: ${{ runner.temp }}/native-capture-input.jsonl
+        run: |
+          export VELOCAST_CAPTURE_RENDERER="$CARGO_TARGET_DIR/debug/velocast-renderer"
+          export VELOCAST_CAPTURE_STDERR="$RUNNER_TEMP/native-capture-stderr.log"
+          cat > "$RUNNER_TEMP/native-renderer-trace" <<'EOF'
+          #!/usr/bin/env bash
+          exec "$VELOCAST_CAPTURE_RENDERER" "$@" 2> >(tee -a "$VELOCAST_CAPTURE_STDERR" >&2)
+          EOF
+          chmod +x "$RUNNER_TEMP/native-renderer-trace"
+          xvfb-run -a node scripts/verify-native-capture.mjs --renderer "$RUNNER_TEMP/native-renderer-trace" --output "$RUNNER_TEMP/native-capture" --frames 24 --repeats 3 --mode both --all-frames true
       - name: Validate native Mediabunny formats (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -137,5 +146,7 @@ jobs:
             ${{ runner.temp }}/native-capture/segments-*.json
             ${{ runner.temp }}/native-capture/*.mp4
             ${{ runner.temp }}/native-capture-electron.log
+            ${{ runner.temp }}/native-capture-stderr.log
+            ${{ runner.temp }}/native-capture-input.jsonl
             ${{ runner.temp }}/aac-timing.log
             ${{ runner.temp }}/aac-timing.json
