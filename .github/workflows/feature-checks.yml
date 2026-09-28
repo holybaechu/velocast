@@ -75,6 +75,9 @@ jobs:
         run: |
           $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
           $output = Join-Path $env:RUNNER_TEMP 'electron-portable'
+          $env:VELOCAST_WEBCODECS_TEST_BINARY = node -p "require('./packages/electron-host/node_modules/electron')"
+          node --test packages/electron-host/test/shared-capability-runtime.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/verify-electron-portable.mjs --renderer $renderer --output $output --frames 8 --repeats 1
           exit $LASTEXITCODE
       - name: Validate native 4K DOM capture (Windows)

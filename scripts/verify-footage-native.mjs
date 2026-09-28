@@ -99,7 +99,7 @@ await writeFile(config, `export default ${JSON.stringify({ entry:"dist/index.htm
 const video = join(output, "composed.mp4"), report = join(output, "report.json");
 try {
   execFileSync(process.execPath, [join(root, "packages/cli/dist/bin.js"), "render", "footage-native", "--config", config,
-    "--output", video, "--report", report, "--json"], { cwd: fixture, env: { ...process.env, VELOCAST_MEDIA_TRACE: join(output, "capture-pixels.jsonl") }, timeout: 300000, windowsHide: true, stdio: "pipe" });
+    "--output", video, "--report", report, "--media-backend", "native", "--json"], { cwd: fixture, env: { ...process.env, VELOCAST_MEDIA_TRACE: join(output, "capture-pixels.jsonl") }, timeout: 300000, windowsHide: true, stdio: "pipe" });
 } catch (error) {
   throw new Error(`native footage render failed: ${error.stderr?.toString() || error.message}`);
 }

@@ -64,7 +64,9 @@ reports CPU readback even when the capture transport uses a shared texture.
 Bitmap capture uses Chromium's `Page.captureScreenshot` surface snapshot, which
 forces a redraw before copying pixels. The requested logical viewport is set
 through device emulation, avoiding display-size and DPI-dependent window bounds.
-This provider works with GPU and CPU composition. When Electron's
+This provider works with GPU and CPU composition.
+Raw software frame leases and PNG exports use the same snapshot provider.
+When Electron's
 [reported compositor state](https://www.electronjs.org/docs/latest/api/structures/gpu-feature-status)
 indicates unavailable GPU compositing, the coordinator starts a fresh host with
 hardware acceleration disabled. This bounded retry is allowed only before any
