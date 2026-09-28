@@ -116,7 +116,10 @@ it("checks good and known-bad exact frames in a real browser with source identit
       (item) => item.selector === "#gradient",
     )?.contrast,
   ).toBeNull();
-}, 20_000);
+  // This test opens three independent browser sessions. Each session already
+  // has a 15-second startup deadline; a shared 20-second test deadline can
+  // expire during valid cold starts on the hosted Windows runner.
+}, 60_000);
 
 it("checks a real generated video frame through the snapshot media endpoint", async () => {
   const root = await mkdtemp(join(tmpdir(), "velocast-agent-video-audit-"));
