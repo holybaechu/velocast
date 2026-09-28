@@ -137,7 +137,7 @@ try {
       expected.forEach((value, channel) =>
         assert.ok(
           Math.abs(bytes[(48 * 160 + 80) * 4 + channel] - value) < 25,
-          `frame ${frame} channel ${channel} has wrong color`,
+          `${codec} frame ${frame}: decoded ${[...bytes.subarray((48 * 160 + 80) * 4, (48 * 160 + 80) * 4 + 3)]}, expected ${expected}; channel ${channel}`,
         ),
       );
     }
@@ -159,6 +159,8 @@ try {
     assert.ok(rms > 0.04 && rms < 0.1, `unexpected audio RMS ${rms}`);
     const telemetry = JSON.parse(await readFile(`${file}.json`, "utf8"));
     assert.equal(telemetry.frames_encoded, frames);
+    assert.equal(telemetry.capture_backend, "electron_bitmap");
+    assert.equal(telemetry.cpu_readback_frames, frames);
     assert.match(
       telemetry.encoder_backend,
       codec === "vp9" && process.platform === "win32" && process.arch === "x64"

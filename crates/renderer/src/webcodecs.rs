@@ -182,7 +182,14 @@ pub(crate) async fn render(
             },
         "encoder.pixel_format_mismatch: received {pixel_format}"
     );
-    report.capture_backend = Some("electron_shared_texture".into());
+    report.capture_backend = Some(
+        if browser.surface_mode() == crate::browser_surface::BrowserSurfaceMode::Bitmap {
+            "electron_bitmap"
+        } else {
+            "electron_shared_texture"
+        }
+        .into(),
+    );
     report.conversion_backend = Some(
         if backend == "webcodecs" {
             "chromium_webcodecs"

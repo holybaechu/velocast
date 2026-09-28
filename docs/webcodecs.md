@@ -45,8 +45,8 @@ reject unsupported options explicitly.
 
 ## Backend behavior
 
-The native backend uses software codecs. GPU capture remains available, but
-conversion reads frames into CPU RGBA memory before encoding. Telemetry records
+The native backend uses software codecs and compositor bitmap capture, keeping
+GPU composition available while passing CPU pixels to the encoder. Telemetry records
 the actual backend and readback. Native hardware interop is outside this route.
 
 With WebCodecs, `auto` acceleration requests hardware preference and `off`

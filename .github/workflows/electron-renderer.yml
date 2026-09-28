@@ -113,7 +113,9 @@ jobs:
           path: |
             ${{ runner.temp }}/electron-portable
             ${{ runner.temp }}/footage-native/verification.json
+            ${{ runner.temp }}/footage-native/composed.mp4
+            ${{ runner.temp }}/footage-native/report.json
             ${{ runner.temp }}/electron-cargo-tree.txt
-            ${{ runner.temp }}/media-formats/results.json
+            ${{ runner.temp }}/media-formats
             ${{ runner.temp }}/aac-timing.log
             ${{ runner.temp }}/aac-timing.json

@@ -209,7 +209,12 @@ async fn run_coordinator_render(
 fn initial_surface_for_job(job: &RenderJob) -> browser_surface::BrowserSurfaceMode {
     if job.operation != RenderOperation::Render {
         browser_surface::BrowserSurfaceMode::Software
-    } else if std::env::var("VELOCAST_ELECTRON_FORCE_BITMAP").as_deref() == Ok("1") {
+    } else if job.media_backend.as_deref() != Some("webcodecs")
+        || std::env::var("VELOCAST_ELECTRON_FORCE_BITMAP").as_deref() == Ok("1")
+    {
+        // Native software encoding already needs CPU pixels. Use compositor
+        // bitmap capture as its portable reference, avoiding a GPU texture
+        // transfer solely to read those pixels back in another renderer.
         browser_surface::BrowserSurfaceMode::Bitmap
     } else {
         browser_surface::BrowserSurfaceMode::WebCodecs

@@ -118,7 +118,7 @@ for (const frame of [0, 1, 2, 5, 6, 13, 15]) {
   const pixels = await readFile(raw); await unlink(raw);
   for (const [side, x, color] of [["red", 70, [210,30,30]], ["blue", 230, [30,50,210]]]) {
     const at = (50 * 320 + x) * 4;
-    for (let c = 0; c < 3; c++) assert(Math.abs(pixels[at + c] - color[c]) < 35, `${side} frame ${frame} color`);
+    for (let c = 0; c < 3; c++) assert(Math.abs(pixels[at + c] - color[c]) < 35, `${side} frame ${frame}: decoded ${[...pixels.subarray(at, at + 3)]}, expected ${color}`);
     const origin = side === "red" ? 0 : 160;
     for (let bit = 0; bit < 3; bit++) {
       const marker = (8 * 320 + origin + 13 + bit * 18) * 4;

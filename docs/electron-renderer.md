@@ -8,8 +8,8 @@ the host inside a prepared runtime.
 
 The native renderer retains exact frame scheduling, deterministic composition
 inspection, cancellation, and transactional output publication. A single-frame
-PNG request uses Electron's bitmap capture. Video frames use Electron's
-shared-texture path when available. The actual Chromium encoder implementation
+PNG requests and native video use Electron's bitmap capture. Explicit WebCodecs
+video uses shared textures when available. The actual Chromium encoder implementation
 and internal GPU copies are not observable by Velocast.
 
 The native backend reads frames into CPU memory and uses software codecs.
