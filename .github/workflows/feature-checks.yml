@@ -20,11 +20,20 @@ jobs:
         os: [ubuntu-24.04, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/velocast-cargo
-      TURBO_CACHE_DIR: ${{ runner.temp }}/velocast-turbo-cache
     steps:
       - uses: actions/checkout@v7
+      - name: Configure temporary build directories (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/velocast-cargo" >> "$GITHUB_ENV"
+          echo "TURBO_CACHE_DIR=$RUNNER_TEMP/velocast-turbo-cache" >> "$GITHUB_ENV"
+      - name: Configure temporary build directories (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "CARGO_TARGET_DIR=$(Join-Path $env:RUNNER_TEMP 'velocast-cargo')" >> $env:GITHUB_ENV
+          "TURBO_CACHE_DIR=$(Join-Path $env:RUNNER_TEMP 'velocast-turbo-cache')" >> $env:GITHUB_ENV
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
