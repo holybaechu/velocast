@@ -8,9 +8,8 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { runMediaOperation, type MediaProbe } from "velocast/source-media";
 import { writeTestVideo } from "../../cli/src/media-test-fixtures.js";
@@ -23,11 +22,18 @@ it("discovers, captures OffthreadVideo and mixes the genuine Remotion sequence/l
   const directory = await mkdtemp(join(tmpdir(), "velocast-remotion-real-"));
   let source: Awaited<ReturnType<typeof prepareRemotionSource>> | undefined;
   try {
-    const moduleRoot = resolve(
-      dirname(fileURLToPath(import.meta.url)),
-      "../node_modules",
-    );
-    await symlink(moduleRoot, join(directory, "node_modules"), "junction");
+    // Materialize this fixture's declared dependencies even when the package
+    // manager resolves dev peers through a shared store or NODE_PATH.
+    const fixtureRequire = createRequire(import.meta.url);
+    for (const name of ["remotion", "@remotion/bundler", "react", "react-dom"]) {
+      const dependency = join(directory, "node_modules", name);
+      await mkdir(dirname(dependency), { recursive: true });
+      await symlink(
+        dirname(fixtureRequire.resolve(`${name}/package.json`)),
+        dependency,
+        "junction",
+      );
+    }
     await writeFile(
       join(directory, "package.json"),
       JSON.stringify({
