@@ -49,6 +49,11 @@ keeps GPU composition enabled while transferring BGRA frames to the encoder;
 it remains the fallback for unavailable shared-texture import. Native encoding
 reports CPU readback even when the capture transport uses a shared texture.
 
+Bitmap capture observes a compositor paint at the expected size after the page's
+animation-frame fence. Each worker also drains queued startup/resize paints
+before its first encoded frame. Animation callbacks alone do not guarantee GPU
+presentation and can leave the initial preview in the first output frame.
+
 ## Audio and codec adapters
 
 The mixer preserves source trims, sample offsets, gain, and linear envelopes.
@@ -97,8 +102,16 @@ Set `VELOCAST_WEBCODECS_TEST_BINARY` to the pinned Electron executable and run
 `node --test --test-concurrency=2 packages/electron-host/test/*.test.cjs`.
 `VELOCAST_ELECTRON_TEST_BINARY` also enables software-capture stress tests.
 
-The full CLI gates are `scripts/verify-media-formats.mjs` and
-`scripts/verify-electron-portable.mjs`. They cover decoded frame identity,
+The full CLI gates are `scripts/verify-media-formats.mjs`,
+`scripts/verify-electron-portable.mjs`, and `scripts/verify-native-capture.mjs`.
+They cover decoded frame identity,
 audio signal, ranges, assembly, bitmap retry, cancellation, and failure
 preservation. Use output directories outside the repository and clean them
 after inspecting the results.
+
+The native capture gate uses the 4K DOM scene with an initial frame-72 preview.
+It verifies native bitmap capture and decoded identities at reference and
+four-worker segment starts. Pass `--renderer <binary> --output <new-temp-dir>`;
+`--frames 240 --all-frames true` expands verification to every frame of the full
+scene. The default 24-frame, three-repeat gate runs on Windows, Linux, and macOS
+CI without requiring a standalone FFmpeg executable.

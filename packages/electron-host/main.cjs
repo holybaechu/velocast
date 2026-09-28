@@ -126,11 +126,7 @@ function browser() {
 }
 
 function onPaint(event, dirtyRect, image) {
-  if (bitmap) {
-    releaseTexture(event.texture);
-    return;
-  }
-  if (software) {
+  if (software || bitmap) {
     releaseTexture(event.texture);
     const waiter = paintWaiter;
     if (!waiter || !image || image.isEmpty()) return;
@@ -147,6 +143,12 @@ function onPaint(event, dirtyRect, image) {
     clearTimeout(waiter.timer);
     clearTimeout(waiter.retryTimer);
     try {
+      if (bitmap) {
+        // Observe a size-matched compositor paint before the correlated
+        // capturePage copy. RAF callbacks alone can precede GPU presentation.
+        waiter.resolve({});
+        return;
+      }
       const metadata = softwareFrames.capture(image, waiter.request);
       if (waiter.request.copy) armLeaseTimeout();
       waiter.resolve(metadata);
@@ -294,27 +296,18 @@ async function captureSoftware(request) {
 }
 
 async function waitForPaint(request) {
-  if (bitmap) {
-    await deadline(
-      browser().executeJavaScript(
-        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-      ),
-      PAINT_TIMEOUT_MS,
-      "Electron bitmap compositor fence",
-    );
-    return {};
-  }
   if (software && request.copy) return captureSoftware(request);
-  if (software) {
+  if (software || bitmap) {
     // Observation fences establish the loaded/resized surface before capture.
-    // Pixel-bearing requests use captureSoftware's correlated compositor copy;
-    // a paint notification alone can still contain cached prior-frame pixels.
+    // Wait for the compositor's paint as well as the page's RAF callbacks.
+    // Pixels are copied separately by captureSoftware or the bitmap encoder
+    // path: invalidate() alone can emit cached prior-frame pixels.
     await deadline(
       browser().executeJavaScript(
         "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
       ),
       PAINT_TIMEOUT_MS,
-      "Electron software compositor fence",
+      `Electron ${surfaceMode} compositor fence`,
     );
   }
   if (paintWaiter)
@@ -543,6 +536,13 @@ async function dispatch(command) {
       )
         throw new Error("webcodecs.invalid_sequence");
       const generation = command.index + 1;
+      // Both paths must drain queued startup/resize paints for each worker.
+      // Later bitmap frames already await RAF and a size-matched paint before
+      // their compositor copy; shared textures keep their two observations.
+      const settlingPaints = command.index === 0 ? 6 : bitmap ? 0 : 2;
+      for (let paint = 0; paint < settlingPaints; paint++) {
+        await waitForPaint({ generation, copy: false });
+      }
       if (bitmap) {
         const [width, height] = window.getContentSize();
         byteLength(width, height);
@@ -569,10 +569,6 @@ async function dispatch(command) {
           captureBackend: "electron_bitmap",
           cpuReadback: true,
         };
-      }
-      // Match the native reference path's initial and per-generation settling.
-      for (let paint = 0; paint < (command.index === 0 ? 6 : 2); paint++) {
-        await waitForPaint({ generation, copy: false });
       }
       const { texture, metadata } = await waitForPaint({
         generation,

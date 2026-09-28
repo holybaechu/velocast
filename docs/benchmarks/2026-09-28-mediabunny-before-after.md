@@ -2,7 +2,7 @@
 
 Measured on 2026-09-28 for [PR #4](https://github.com/holybaechu/velocast/pull/4). This is a Windows x64 end-to-end H.264/MP4 comparison, not a pure encoder benchmark or a benchmark of every new format.
 
-The native default improves these 1080p canvas and single-worker footage cases, but takes longer for 4K DOM and four-worker footage. The native 4K path also fails frame identity in four of six timed renders. Fix that capture regression before treating the native default as a frame-accurate replacement.
+The measured native version improves these 1080p canvas and single-worker footage cases, but takes longer for 4K DOM and four-worker footage. It failed frame identity in four of six timed 4K renders. The subsequent [capture correction](#capture-correction) addresses that failure; the timing and memory tables below remain measurements of the pre-fix revision.
 
 ## Revisions and settings
 
@@ -112,3 +112,32 @@ Each invocation selected its revision’s release renderer and host with `VELOCA
 - Node 24.21.0, pnpm 12.5.1, rustc 1.98.1, Electron 44.4.5; independent FFmpeg/FFprobe 9.0.1.
 - One developer machine with background applications and uncontrolled thermals. Short four-second compositions include meaningful startup overhead; do not extrapolate directly to long exports.
 - No macOS/Linux performance measurement, sustained-throughput study, quality-normalized encode comparison, GPU-memory measurement, or speed benchmark of HEVC/AV1/VP8/VP9/ProRes and the additional audio formats was performed.
+
+## Capture correction
+
+The failing scene was reduced to a one-frame export, which reproduced the stale
+frame-72 preview in three of five fresh processes. A temporary probe found frame
+72 in the bitmap before encoding, locating the failure in capture rather than
+the codec or muxer.
+
+Bitmap capture previously acknowledged animation callbacks without consuming a
+compositor paint. It now observes a paint at the expected size and uses the
+existing startup settling sequence for each worker before accepting its first
+frame. Subsequent bitmap frames retain a page animation fence and a compositor
+paint acknowledgment; the shared-texture sequence is unchanged.
+
+The corrected host passed three reference and three four-worker exports of the
+full 4K scene: 240 frames at 60 fps, native H.264, 64 Mbps target. Independent
+FFmpeg decoding verified all **1,440 frame identities** and presentation
+timestamps, including segment boundaries, with no stale frames.
+
+The regression gate is now maintained in
+[`scripts/verify-native-capture.mjs`](../../scripts/verify-native-capture.mjs).
+Its default short scene preserves the nonzero initial preview and checks native
+capture, the actual worker plan, and decoded frame identity. Windows, macOS, and
+Linux CI run it with three reference and three four-worker repetitions.
+
+This follow-up verifies correctness, not new performance figures. Compositor
+synchronization adds work; the pre-fix timings above must not be used as
+performance estimates for the corrected pipeline. A controlled benchmark of the
+corrected pipeline remains outstanding.

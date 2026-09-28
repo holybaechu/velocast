@@ -60,3 +60,29 @@ jobs:
       - name: Run feature checks (Windows)
         if: runner.os == 'Windows'
         run: pnpm check:fast
+      - name: Build renderer and CLI for native capture (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pnpm build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p velocast-renderer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Validate native 4K DOM capture (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
+          $output = Join-Path $env:RUNNER_TEMP 'native-capture'
+          node scripts/verify-native-capture.mjs --renderer $renderer --output $output --frames 24 --repeats 3 --mode both
+          exit $LASTEXITCODE
+      - name: Save native capture evidence (Windows)
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-capture-windows
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/native-capture/results.json
+            ${{ runner.temp }}/native-capture/reference-*.json
+            ${{ runner.temp }}/native-capture/segments-*.json
