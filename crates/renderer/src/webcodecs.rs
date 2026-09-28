@@ -191,7 +191,9 @@ pub(crate) fn record_audio(
             .as_f64()
             .is_some_and(|duration| (duration - samples as f64 / rate as f64).abs()
                 <= 2048.0 / encoded_rate as f64),
-        "audio.invalid_output_duration"
+        "audio.invalid_output_duration: expected {:.9}s from {samples} samples at {rate}Hz; received {}s ({encoded_codec}, {encoded_rate}Hz)",
+        samples as f64 / rate as f64,
+        sound["duration"]
     );
     report.audio = Some(AudioTelemetry {
         sample_rate: rate,
