@@ -69,11 +69,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build -p velocast-renderer
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Validate automatic media selection (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
+          $output = Join-Path $env:RUNNER_TEMP 'electron-portable'
+          node scripts/verify-electron-portable.mjs --renderer $renderer --output $output --frames 8 --repeats 1
+          exit $LASTEXITCODE
       - name: Validate native 4K DOM capture (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          VELOCAST_MEDIA_TRACE: ${{ runner.temp }}/native-capture-input.jsonl
         run: |
           $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
           $output = Join-Path $env:RUNNER_TEMP 'native-capture'
@@ -85,8 +91,6 @@ jobs:
       - name: Validate CPU compositor 4K capture (Windows)
         if: ${{ !cancelled() && runner.os == 'Windows' && steps.native_capture_build.outcome == 'success' }}
         shell: pwsh
-        env:
-          VELOCAST_MEDIA_TRACE: ${{ runner.temp }}/native-capture-cpu-input.jsonl
         run: |
           $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
           $output = Join-Path $env:RUNNER_TEMP 'native-capture-cpu'
@@ -99,6 +103,8 @@ jobs:
           name: native-capture-windows
           if-no-files-found: ignore
           path: |
+            ${{ runner.temp }}/electron-portable/results.json
+            ${{ runner.temp }}/electron-portable/auto-*.json
             ${{ runner.temp }}/native-capture/results.json
             ${{ runner.temp }}/native-capture/reference-*.json
             ${{ runner.temp }}/native-capture/segments-*.json
@@ -106,5 +112,3 @@ jobs:
             ${{ runner.temp }}/native-capture-cpu/results.json
             ${{ runner.temp }}/native-capture-cpu/reference-*.json
             ${{ runner.temp }}/native-capture-cpu/*.mp4
-            ${{ runner.temp }}/native-capture-input.jsonl
-            ${{ runner.temp }}/native-capture-cpu-input.jsonl

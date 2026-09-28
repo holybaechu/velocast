@@ -12,12 +12,16 @@ const {
   probe,
   audioDuration,
 } = require("./media-io.cjs");
-const { CodecSession } = require("./webcodecs-codec.cjs");
+const {
+  CodecSession,
+  isUnsupportedWebCodecsError,
+} = require("./webcodecs-codec.cjs");
 const { MediaSession } = require("./media-session.cjs");
 const { registerNativeMedia } = require("./native-media.cjs");
 const {
   containerFor,
   mediaSettings,
+  resolveMediaSettings,
   AUDIO_CODECS,
 } = require("./media-settings.cjs");
 const { toneMapFrame } = require("./hdr-color.cjs");
@@ -720,7 +724,8 @@ async function mux(op) {
 async function encodeFrames(op) {
   if (!Array.isArray(op.framePaths) || !op.framePaths.length)
     throw new Error("media.no_frames");
-  const selected = mediaSettings(op);
+  const requestedAuto = !op.mediaBackend || op.mediaBackend === "auto";
+  const selected = await resolveMediaSettings(op, globalThis.VideoEncoder);
   op = {
     ...op,
     codec: selected.logicalCodec,
@@ -759,16 +764,33 @@ async function encodeFrames(op) {
           bitmap.close();
         }
       }
-      return await session.finish();
+      const result = await session.finish();
+      return selected.backendFallbackReason
+        ? { ...result, backendFallbackReason: selected.backendFallbackReason }
+        : result;
     } catch (error) {
       await session.session.cancel();
       throw error;
     }
   }
-  const sink = outputFile(op.outputPath, op.container),
-    codec = new CodecSession(VideoEncoder, VideoFrame);
+  const codec = new CodecSession(
+    globalThis.VideoEncoder,
+    globalThis.VideoFrame,
+  );
+  let config;
   try {
-    const config = await codec.open(op);
+    config = await codec.open(op);
+  } catch (error) {
+    if (!requestedAuto || !isUnsupportedWebCodecsError(error)) throw error;
+    const result = await encodeFrames({ ...op, mediaBackend: "native" });
+    return {
+      ...result,
+      backendFallbackReason: `${error.message}; using native video encoding`,
+    };
+  }
+  let sink;
+  try {
+    sink = outputFile(op.outputPath, op.container);
     const source = new mb.EncodedVideoPacketSource(
       config.logicalCodec === "h264" ? "avc" : config.logicalCodec,
     );
@@ -822,14 +844,18 @@ async function encodeFrames(op) {
   } catch (error) {
     if (codec.encoder && codec.encoder.state !== "closed")
       codec.encoder.close();
-    await sink.cancel();
+    await sink?.cancel();
     throw error;
   }
 }
 async function runMediaOperation(op) {
   if (!op || typeof op.kind !== "string")
     throw new Error("media.invalid_operation");
-  if (op.mediaBackend !== "webcodecs") registerNativeMedia();
+  if (
+    (op.kind === "encode-frames" && Boolean(op.audioPath)) ||
+    (op.kind !== "encode-frames" && op.mediaBackend !== "webcodecs")
+  )
+    registerNativeMedia();
   if (op.kind === "probe") return probe(op);
   if (op.kind === "frame") return frame(op);
   if (op.kind === "frame-hashes") {

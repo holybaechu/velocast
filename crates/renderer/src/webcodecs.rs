@@ -165,6 +165,9 @@ pub(crate) async fn render(
         "encoder.backend_mismatch: requested {}, received {backend}",
         job.media_backend.as_deref().unwrap_or("auto")
     );
+    if let Some(reason) = opened["config"]["backendFallbackReason"].as_str() {
+        report.record_fallback(reason);
+    }
     ensure!(
         opened["config"]["logicalCodec"].as_str() == Some(codec),
         "encoder.codec_mismatch: requested {codec}, received {}",

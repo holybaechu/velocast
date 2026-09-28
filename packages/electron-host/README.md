@@ -6,8 +6,9 @@ window owns browser media utilities and WebCodecs sessions. Native video encodin
 runs in a regular Node child process. Rust receives metadata and completed media,
 never operating-system GPU handles.
 
-`media-session.cjs` selects a Mediabunny native software session or the explicit
-Chromium WebCodecs session. `native-video-client.cjs` sends JSON control messages
+`media-session.cjs` prefers WebCodecs in automatic mode and selects a native
+software session when the requested browser encoder is unsupported. Explicit
+backend requests remain binding. `native-video-client.cjs` sends JSON control messages
 and bounded BGRA/RGBA frames over a binary pipe to `native-video-worker.cjs`.
 This avoids Electron's allocator restrictions and V8 serialization-version
 coupling. The bitmap path sends pixels directly from Electron main to the worker.
@@ -22,10 +23,11 @@ embedded Electron callers of `createMediaSession` can pass `nodeBinary`.
 Workers stay in the host's process group/job, exit on owner disconnect, and are
 joined before successful finalization or cancellation completes.
 
-The auto backend uses native codecs, except VP9 on Windows x64, where the pinned
-NodeAV binding terminates with `STATUS_ILLEGAL_INSTRUCTION`. Auto uses WebCodecs
-there; explicit native VP9 requests fail before entering the binding. All native
-encoding currently uses software. See the [public media guide](../../docs/webcodecs.md)
+Automatic common-codec renders start with shared textures; ProRes and explicit
+native renders start with bitmap capture. Browser encoder support is checked
+before frame submission, and automatic native fallback is reported. On Windows
+x64, the pinned native VP9 binding is unavailable, so VP9 requires WebCodecs.
+All native encoding currently uses software. See the [public media guide](../../docs/webcodecs.md)
 for the codec/container matrix, timestamp precision, and output limits.
 
 ## Protocol and lifecycle

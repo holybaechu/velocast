@@ -230,7 +230,7 @@ Useful public options, also available as corresponding `renderer` config fields:
 | `--codec h264`                  | Video codec: h264, hevc, av1, vp8, vp9, or prores                         |
 | `--container webm`              | mp4, mov, webm, or mkv; otherwise inferred from the output path           |
 | `--audio-codec opus`            | Explicit audio codec; auto uses AAC for MP4/MOV and Opus for WebM/MKV     |
-| `--media-backend native`        | Native software codecs (the auto default), or explicit webcodecs          |
+| `--media-backend auto`          | Prefer WebCodecs; use native codecs when the requested encoder is unsupported |
 | `--video-profile hq`            | ProRes profile: standard or hq                                            |
 | `--bitrate 64M`                 | Requested video bitrate, not a guarantee of achieved bitrate              |
 | `--acceleration required`       | Unsupported: WebCodecs cannot guarantee hardware acceleration             |

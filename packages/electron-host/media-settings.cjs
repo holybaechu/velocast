@@ -1,5 +1,6 @@
 "use strict";
 const path = require("node:path");
+const { supportedEncoderConfig } = require("./webcodecs-codec.cjs");
 const VIDEO_CODECS = ["h264", "hevc", "av1", "vp8", "vp9", "prores"];
 const AUDIO_CODECS = [
   "aac",
@@ -70,15 +71,15 @@ function mediaSettings(settings) {
     logicalCodec === "vp9";
   if (blockedNativeVp9 && backend === "native")
     throw new Error(
-      "media.encoder_unavailable: native VP9 is unavailable in the pinned Windows x64 binding; use auto or webcodecs",
+      "media.encoder_unavailable: native VP9 is unavailable in the pinned Windows x64 binding; use webcodecs",
     );
   return {
     container,
     backend:
       backend === "auto"
-        ? blockedNativeVp9
-          ? "webcodecs"
-          : "native"
+        ? logicalCodec === "prores"
+          ? "native"
+          : "webcodecs"
         : backend,
     logicalCodec,
     pixelFormat,
@@ -88,4 +89,33 @@ function mediaSettings(settings) {
         : videoProfile,
   };
 }
-module.exports = { containerFor, mediaSettings, VIDEO_CODECS, AUDIO_CODECS };
+
+async function resolveMediaSettings(
+  settings,
+  VideoEncoder = globalThis.VideoEncoder,
+) {
+  const selected = mediaSettings(settings);
+  if (
+    (settings.mediaBackend ?? "auto") !== "auto" ||
+    selected.backend === "native"
+  )
+    return selected;
+  const support = await supportedEncoderConfig(
+    { ...settings, codec: selected.logicalCodec },
+    VideoEncoder,
+  );
+  if (support.config) return selected;
+  const native = mediaSettings({ ...settings, mediaBackend: "native" });
+  return {
+    ...native,
+    backendFallbackReason: `${support.reason}; using native video encoding`,
+  };
+}
+
+module.exports = {
+  containerFor,
+  mediaSettings,
+  resolveMediaSettings,
+  VIDEO_CODECS,
+  AUDIO_CODECS,
+};

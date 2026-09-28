@@ -122,6 +122,22 @@ test(
           i * 4,
         );
       fs.writeFileSync(source, Buffer.concat([wavHeader(4800, 48000, 1), pcm]));
+      const autoWithAudio = await session.run({
+        kind: "encode-frames",
+        mediaBackend: "auto",
+        codec: "h264",
+        container: "mp4",
+        audioCodec: "aac",
+        audioPath: source,
+        width: 160,
+        height: 100,
+        fps: 30,
+        bitrate: 2_000_000,
+        framePaths,
+        outputPath: path.join(directory, "auto-with-audio.mp4"),
+      });
+      assert.equal(autoWithAudio.video.frameCount, 3);
+      assert.equal(autoWithAudio.audio.codec, "aac");
       for (const [codec, container, profile] of [
         ["h264", "mp4"],
         ["hevc", "mov"],

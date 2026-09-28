@@ -1,13 +1,14 @@
 "use strict";
 const { mb, outputFile, probe, absolute } = require("./media-io.cjs");
 const fs = require("node:fs");
-const { mediaSettings } = require("./media-settings.cjs");
+const { mediaSettings, resolveMediaSettings } = require("./media-settings.cjs");
 const { registerNativeMedia } = require("./native-media.cjs");
 const { NativeVideoClient } = require("./native-video-client.cjs");
 const {
   CodecSession,
   encoderConfig,
   frameTiming,
+  isUnsupportedWebCodecsError,
 } = require("./webcodecs-codec.cjs");
 
 // Native encoders may delay or reorder packets. Awaiting source.add bounds input
@@ -22,7 +23,7 @@ class NativeMediaSession {
   async open(settings) {
     if (this.sink) throw new Error("media.already_open");
     encoderConfig({ ...settings, codec: "av1" });
-    const selected = mediaSettings(settings);
+    const selected = mediaSettings({ ...settings, mediaBackend: "native" });
     registerNativeMedia();
     this.settings = settings;
     this.config = {
@@ -142,23 +143,6 @@ class NativeMediaSession {
               ? [data[at + 2], data[at + 1], data[at]]
               : [data[at], data[at + 1], data[at + 2]],
         };
-        if (width === 3840 && height === 2160) {
-          const barcodeRgb = Array.from({ length: 8 }, (_, bit) => {
-            const x = 66 + 60 * bit;
-            const pixel = (66 * width + x) * 4;
-            return format === "BGRA"
-              ? [data[pixel + 2], data[pixel + 1], data[pixel]]
-              : [data[pixel], data[pixel + 1], data[pixel + 2]];
-          });
-          const bits = barcodeRgb.map((rgb) => {
-            const average = (rgb[0] + rgb[1] + rgb[2]) / 3;
-            return average < 70 ? 0 : average > 180 ? 1 : null;
-          });
-          trace.barcodeRgb = barcodeRgb;
-          trace.frameBarcode = bits.includes(null)
-            ? null
-            : bits.reduce((frame, bit, shift) => frame | (bit << shift), 0);
-        }
         fs.appendFileSync(
           absolute(process.env.VELOCAST_MEDIA_TRACE),
           JSON.stringify(trace) + "\n",
@@ -205,17 +189,39 @@ class NativeMediaSession {
 class MediaSession {
   async open(settings) {
     this.settings = settings;
-    const selected = mediaSettings(settings);
-    this.session =
-      selected.backend === "native"
-        ? process.versions.electron
-          ? new NativeVideoClient()
-          : new NativeMediaSession()
-        : new CodecSession(VideoEncoder, VideoFrame);
-    const result = await this.session.open({
-      ...settings,
-      codec: selected.logicalCodec,
-    });
+    let selected = await resolveMediaSettings(
+      settings,
+      globalThis.VideoEncoder,
+    );
+    const openSelected = () => {
+      this.session =
+        selected.backend === "native"
+          ? process.versions.electron
+            ? new NativeVideoClient()
+            : new NativeMediaSession()
+          : new CodecSession(globalThis.VideoEncoder, globalThis.VideoFrame);
+      return this.session.open({
+        ...settings,
+        codec: selected.logicalCodec,
+        mediaBackend: selected.backend,
+      });
+    };
+    let result;
+    try {
+      result = await openSelected();
+    } catch (error) {
+      if (
+        (settings.mediaBackend ?? "auto") !== "auto" ||
+        selected.backend !== "webcodecs" ||
+        !isUnsupportedWebCodecsError(error)
+      )
+        throw error;
+      selected = {
+        ...mediaSettings({ ...settings, mediaBackend: "native" }),
+        backendFallbackReason: `${error.message}; using native video encoding`,
+      };
+      result = await openSelected();
+    }
     return {
       ...result,
       ...selected,

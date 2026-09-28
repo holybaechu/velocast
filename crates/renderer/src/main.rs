@@ -191,7 +191,7 @@ async fn run_coordinator_render(
                 };
                 fallback_reasons.push(match next_mode {
                     browser_surface::BrowserSurfaceMode::Bitmap => format!(
-                        "Shared texture capture unavailable; using bitmap capture with WebCodecs: {error}"
+                        "Shared texture capture unavailable; using bitmap capture: {error}"
                     ),
                     browser_surface::BrowserSurfaceMode::CpuBitmap => format!(
                         "GPU compositor unavailable; retrying bitmap capture with CPU compositing: {error}"
@@ -209,10 +209,18 @@ async fn run_coordinator_render(
     }
 }
 fn initial_surface_for_job(job: &RenderJob) -> browser_surface::BrowserSurfaceMode {
+    initial_surface(
+        job,
+        std::env::var("VELOCAST_ELECTRON_FORCE_BITMAP").as_deref() == Ok("1"),
+    )
+}
+
+fn initial_surface(job: &RenderJob, force_bitmap: bool) -> browser_surface::BrowserSurfaceMode {
     if job.operation != RenderOperation::Render {
         browser_surface::BrowserSurfaceMode::Software
-    } else if job.media_backend.as_deref() != Some("webcodecs")
-        || std::env::var("VELOCAST_ELECTRON_FORCE_BITMAP").as_deref() == Ok("1")
+    } else if job.media_backend.as_deref() == Some("native")
+        || job.codec.eq_ignore_ascii_case("prores")
+        || force_bitmap
     {
         // Native software encoding already needs CPU pixels. Use compositor
         // bitmap capture as its portable reference, avoiding a GPU texture
@@ -627,6 +635,33 @@ mod tests {
         assert_eq!(next_surface_after_failure(Bitmap, 0, &paint_timeout), None);
         assert_eq!(next_surface_after_failure(Bitmap, 1, &unavailable), None);
         assert_eq!(next_surface_after_failure(CpuBitmap, 0, &unavailable), None);
+    }
+    #[test]
+    fn automatic_common_codecs_start_with_shared_texture_capture() {
+        use browser_surface::BrowserSurfaceMode::{Bitmap, Software, WebCodecs};
+        let mut job: RenderJob = serde_json::from_value(serde_json::json!({
+            "mode": "composition", "serve_url": "http://localhost",
+            "output": "movie.mp4", "codec": "h264"
+        }))
+        .unwrap();
+        for backend in [None, Some("auto"), Some("webcodecs")] {
+            job.media_backend = backend.map(str::to_owned);
+            for codec in ["h264", "hevc", "h265", "av1", "vp8", "vp9"] {
+                job.codec = codec.into();
+                assert_eq!(initial_surface(&job, false), WebCodecs);
+                assert_eq!(initial_surface(&job, true), Bitmap);
+            }
+        }
+        job.media_backend = Some("native".into());
+        assert_eq!(initial_surface(&job, false), Bitmap);
+        job.media_backend = Some("auto".into());
+        job.codec = "ProRes".into();
+        assert_eq!(initial_surface(&job, false), Bitmap);
+        for operation in [RenderOperation::Inspect, RenderOperation::Frame] {
+            job.operation = operation;
+            assert_eq!(initial_surface(&job, false), Software);
+            assert_eq!(initial_surface(&job, true), Software);
+        }
     }
     #[test]
     fn failures_remain_primary_when_report_writes_also_fail() {

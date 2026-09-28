@@ -159,3 +159,12 @@ This follow-up verifies correctness, not new performance figures. Compositor
 synchronization adds work; the pre-fix timings above must not be used as
 performance estimates for the corrected pipeline. A controlled benchmark of the
 corrected pipeline remains outstanding.
+
+Automatic selection now prefers WebCodecs and shared textures for supported
+browser encoder configurations, with native codecs as a compatibility fallback.
+The table's `auto` measurements refer specifically to commit `be9671b`, whose
+automatic mode selected native encoding; they do not measure this newer policy.
+An additional 24-frame 4K H.264 automatic render selected shared-texture WebCodecs
+with zero application CPU-readback frames and no fallback. Independent FFmpeg
+verified every frame identity. This confirms the fast-path selection, not a
+hardware-encoder guarantee or a new performance measurement.

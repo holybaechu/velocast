@@ -152,6 +152,20 @@ impl RenderTelemetry {
                 as u64
         };
     }
+    pub fn record_fallback(&mut self, reason: &str) {
+        if reason.is_empty() {
+            return;
+        }
+        self.fallback_used = true;
+        match &mut self.fallback_reason {
+            Some(existing) if !existing.contains(reason) => {
+                existing.push_str("; ");
+                existing.push_str(reason);
+            }
+            None => self.fallback_reason = Some(reason.to_owned()),
+            _ => {}
+        }
+    }
     pub fn merge_worker(&mut self, worker: &Self) {
         self.frames_rendered += worker.frames_rendered;
         self.frames_encoded += worker.frames_encoded;
@@ -161,6 +175,10 @@ impl RenderTelemetry {
         self.cpu_readback_frames += worker.cpu_readback_frames;
         self.dropped_frames += worker.dropped_frames;
         self.stale_frames += worker.stale_frames;
+        self.fallback_used |= worker.fallback_used;
+        if let Some(reason) = &worker.fallback_reason {
+            self.record_fallback(reason);
+        }
     }
 }
 pub async fn write_report(path: &Path, report: &RenderTelemetry) -> anyhow::Result<()> {
@@ -180,5 +198,18 @@ mod tests {
         t.mark_finished(2000);
         assert_eq!(t.effective_fps_millis, 30000);
         assert!(t.webcodecs.is_none());
+    }
+    #[test]
+    fn worker_backend_fallback_keeps_capture_reason_without_duplicates() {
+        let mut coordinator = RenderTelemetry::new(RenderModeLabel::ParallelSegments);
+        coordinator.record_fallback("Shared texture capture unavailable");
+        let mut worker = RenderTelemetry::new(RenderModeLabel::ReferenceNative);
+        worker.record_fallback("WebCodecs configuration unsupported; using native codec");
+        coordinator.merge_worker(&worker);
+        coordinator.merge_worker(&worker);
+        assert!(coordinator.fallback_used);
+        assert_eq!(coordinator.fallback_reason.as_deref(), Some(
+            "Shared texture capture unavailable; WebCodecs configuration unsupported; using native codec"
+        ));
     }
 }

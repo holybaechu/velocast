@@ -2,11 +2,12 @@
 
 Electron renders compositions. Rust owns exact frame scheduling, cancellation,
 validation, and transactional publication. Mediabunny owns containers and
-sample-based encoding. `mediaBackend: "auto"` selects native NodeAV/FFmpeg
-software codecs; `"webcodecs"` explicitly selects Chromium's video encoder.
-On Windows x64, `auto` selects WebCodecs for VP9 because the pinned native
-binding fails with an illegal instruction. Explicit native VP9 fails with a
-diagnostic before invoking that binding.
+sample-based encoding. `mediaBackend: "auto"` prefers Chromium WebCodecs and
+shared-texture capture. Unsupported browser encoder configurations and ProRes
+use the stock Node native codec worker. Explicit `"native"` and `"webcodecs"`
+choices remain binding. Hardware acceleration is a preference, not a guarantee.
+On Windows x64, native VP9 is unavailable in the pinned binding; automatic VP9
+selection therefore requires WebCodecs support.
 
 ## Format selection
 

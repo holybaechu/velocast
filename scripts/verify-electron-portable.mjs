@@ -358,6 +358,114 @@ for (let run = 1; run <= repeats; run++)
       ...(await checkAudio(video, frames)),
     };
   });
+await gate("auto-h264-prefers-webcodecs", async () => {
+  const video = join(output, "auto-h264.mp4"),
+    telemetry = join(output, "auto-h264.json");
+  await invoke([
+    "render",
+    "portable",
+    "--media-backend",
+    "auto",
+    "--output",
+    video,
+    "--report",
+    telemetry,
+  ]);
+  const decoded = await checkPixels(
+    video,
+    states.map((_, frame) => frame),
+  );
+  const data = JSON.parse(await readFile(telemetry, "utf8"));
+  if (
+    data.mode !== "reference_web_codecs" ||
+    data.encoder_backend !== "electron_webcodecs_h264" ||
+    data.conversion_backend !== "chromium_webcodecs" ||
+    !["electron_shared_texture", "electron_bitmap"].includes(
+      data.capture_backend,
+    ) ||
+    data.frames_expected !== frames ||
+    data.frames_rendered !== frames ||
+    data.frames_encoded !== frames ||
+    data.cpu_readback_frames !==
+      (data.capture_backend === "electron_bitmap" ? frames : 0) ||
+    data.dropped_frames !== 0 ||
+    data.stale_frames !== 0
+  )
+    throw new Error(`Wrong auto H.264 selection: ${JSON.stringify(data)}`);
+  return {
+    decodedFrames: decoded,
+    captureBackend: data.capture_backend,
+    encoderBackend: data.encoder_backend,
+    ...(await checkAudio(video, frames)),
+  };
+});
+await gate("auto-prores-falls-back-to-native", async () => {
+  const video = join(output, "auto-prores.mov"),
+    telemetry = join(output, "auto-prores.json");
+  await invoke([
+    "render",
+    "portable",
+    "--media-backend",
+    "auto",
+    "--codec",
+    "prores",
+    "--video-profile",
+    "hq",
+    "--pixel-format",
+    "yuv422p10le",
+    "--audio-codec",
+    "pcm-s16",
+    "--output",
+    video,
+    "--report",
+    telemetry,
+  ]);
+  const decoded = await checkPixels(
+    video,
+    states.map((_, frame) => frame),
+  );
+  const [data, metadata, bytes] = await Promise.all([
+    readFile(telemetry, "utf8").then(JSON.parse),
+    media({ kind: "probe", path: video }),
+    readFile(video),
+  ]);
+  const sampleDescription = bytes.indexOf(Buffer.from("stsd"));
+  const profile =
+    sampleDescription >= 4 && sampleDescription + 20 <= bytes.length
+      ? bytes.toString("ascii", sampleDescription + 16, sampleDescription + 20)
+      : null;
+  if (
+    data.mode !== "reference_native" ||
+    data.encoder_backend !== "electron_native_prores" ||
+    data.conversion_backend !== "mediabunny_native" ||
+    data.capture_backend !== "electron_bitmap" ||
+    data.surface_format_encoder !== "yuv422p10le" ||
+    data.frames_expected !== frames ||
+    data.frames_rendered !== frames ||
+    data.frames_encoded !== frames ||
+    data.cpu_readback_frames !== frames ||
+    data.dropped_frames !== 0 ||
+    data.stale_frames !== 0 ||
+    metadata.container !== "mov" ||
+    !["prores", "prores-422"].includes(metadata.video?.codec) ||
+    profile !== "apch"
+  )
+    throw new Error(
+      `Wrong auto ProRes fallback/profile: ${JSON.stringify({ data, metadata, profile })}`,
+    );
+  if (
+    data.fallback_used &&
+    (typeof data.fallback_reason !== "string" || !data.fallback_reason.trim())
+  )
+    throw new Error("Auto ProRes fallback lacks a reason");
+  return {
+    decodedFrames: decoded,
+    profile,
+    captureBackend: data.capture_backend,
+    encoderBackend: data.encoder_backend,
+    fallbackReason: data.fallback_reason,
+  };
+});
 await gate(`${encoder}-range`, async () => {
   const video = join(output, "range.mp4");
   await invoke([
