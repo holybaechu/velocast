@@ -99,6 +99,10 @@ jobs:
           xvfb-run -a node scripts/verify-media-formats.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/media-formats"
       - name: Validate native 4K DOM capture (Linux)
         if: runner.os == 'Linux'
+        env:
+          ELECTRON_ENABLE_LOGGING: "1"
+          ELECTRON_ENABLE_STACK_DUMPING: "1"
+          ELECTRON_LOG_FILE: ${{ runner.temp }}/native-capture-electron.log
         run: xvfb-run -a node scripts/verify-native-capture.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/native-capture" --frames 24 --repeats 3 --mode both --all-frames true
       - name: Validate native Mediabunny formats (macOS)
         if: runner.os == 'macOS'
@@ -132,5 +136,6 @@ jobs:
             ${{ runner.temp }}/native-capture/reference-*.json
             ${{ runner.temp }}/native-capture/segments-*.json
             ${{ runner.temp }}/native-capture/*.mp4
+            ${{ runner.temp }}/native-capture-electron.log
             ${{ runner.temp }}/aac-timing.log
             ${{ runner.temp }}/aac-timing.json
