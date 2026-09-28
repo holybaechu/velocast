@@ -13,7 +13,7 @@
     "test": "turbo run test",
     "test:rust": "cargo test --workspace",
     "test:policy": "cargo test -p velocast-protocol -p velocast-renderer-policy",
-    "check:fast": "pnpm contracts:check && pnpm check-types && pnpm lint && pnpm test && pnpm test:electron-oracle && pnpm test:policy",
+    "check:fast": "pnpm contracts:check && pnpm test:policy && pnpm check-types && pnpm lint && pnpm test --concurrency=1 && pnpm test:electron-oracle",
     "test:electron-oracle": "node --test scripts/tests/electron-*.test.mjs",
     "contracts:generate": "node scripts/generate-renderer-contracts.mjs",
     "contracts:check": "node scripts/generate-renderer-contracts.mjs --check",
