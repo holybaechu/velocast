@@ -3,6 +3,7 @@
 - [Architecture and development boundaries](architecture.md)
 - [Electron renderer and platform support](electron-renderer.md)
 - [WebCodecs rendering](webcodecs.md)
+- [Proposed cross-platform media backend and broader formats](cross-platform-library-evaluation.md)
 - [Declarative composition authoring](composition-authoring.md)
 - [React starter](react-project-starter.md)
 - [Agent composition checks](agent-composition-checks.md)
