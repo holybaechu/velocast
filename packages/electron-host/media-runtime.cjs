@@ -71,8 +71,13 @@ async function decodeAudio(op) {
       throw new Error(
         "media.unsupported_channel_layout: only mono/stereo sources are supported",
       );
+    // Negative packet timestamps represent decoder preroll before presentation
+    // time zero (for example an MP4 edit list). Decode them, but never rebase
+    // that padding into the authored timeline.
+    const encodedFirst = await track.getFirstTimestamp();
+    const first = Math.max(0, encodedFirst);
     const duration = Math.min(
-      await track.computeDuration(),
+      Math.max(0, (await track.computeDuration()) - first),
       op.duration ?? Infinity,
     );
     const count = Math.max(0, Math.round(duration * op.sampleRate));
@@ -84,7 +89,6 @@ async function decodeAudio(op) {
     fs.ftruncateSync(fd, header + count * op.channels * 4);
     // Decode and resample with bounded history and anti-alias filtering. Packet
     // boundaries do not reset the filter or change the requested output timing.
-    const first = await track.getFirstTimestamp();
     const resampler = new StreamingAudioResampler({
       sourceRate: await track.getSampleRate(),
       targetRate: op.sampleRate,
@@ -103,7 +107,7 @@ async function decodeAudio(op) {
       },
     });
     for await (const sample of new mb.AudioSampleSink(track).samples(
-      first,
+      encodedFirst,
       first + duration + resampler.lookaheadSeconds,
     )) {
       let current;
@@ -470,13 +474,34 @@ async function audioEncoding(track, requested) {
 }
 
 async function encodeAudioTrack(track, source, selection) {
-  const first = await track.getFirstTimestamp();
+  const first = Math.max(0, await track.getFirstTimestamp());
+  // Chromium's AudioToolbox AAC encoder emits 2112 leading PCM samples but
+  // timestamps the first packet at the submitted input timestamp. Verified by
+  // the pinned macOS encode/decode impulse test (Windows AAC has no such shift).
+  // Public AudioSample timestamps carry this offset into encoded packets;
+  // Mediabunny writes the corresponding standard MP4 edit list. Keep decoder
+  // preroll; do not delete compressed packets or widen duration tolerances.
+  // https://chromium.googlesource.com/chromium/src/+/refs/tags/130.0.6723.62/media/audio/audio_encoders_unittest.cc
+  const primingSamples =
+    selection.codec === "aac" && process.platform === "darwin" ? 2112 : 0;
+  selection.appliedEncoderPrimingSamples = primingSamples;
+  const primingSeconds = primingSamples / selection.sampleRate;
   if (selection.sourceSampleRate === selection.sampleRate) {
     for await (const sample of new mb.AudioSampleSink(track).samples()) {
+      let trimmed;
       try {
-        sample.setTimestamp(sample.timestamp - first);
-        await source.add(sample);
+        const trimFrames = Math.max(
+          0,
+          Math.round((first - sample.timestamp) * sample.sampleRate),
+        );
+        if (trimFrames >= sample.numberOfFrames) continue;
+        const presented = trimFrames
+          ? (trimmed = sample.trim(trimFrames))
+          : sample;
+        presented.setTimestamp(presented.timestamp - first - primingSeconds);
+        await source.add(presented);
       } finally {
+        trimmed?.close();
         sample.close();
       }
     }
@@ -500,7 +525,7 @@ async function encodeAudioTrack(track, source, selection) {
           format: "f32",
           numberOfChannels: selection.numberOfChannels,
           sampleRate: selection.sampleRate,
-          timestamp: startFrame / selection.sampleRate,
+          timestamp: (startFrame - primingSamples) / selection.sampleRate,
         }),
       );
     },
@@ -555,6 +580,7 @@ function audioSelectionMetadata(metadata, selection, copied = false) {
     requestedCodec: selection.requestedCodec,
     fallbackUsed: selection.fallbackUsed,
     sourceSampleRate: selection.sourceSampleRate,
+    appliedEncoderPrimingSamples: selection.appliedEncoderPrimingSamples ?? 0,
     copied,
   });
   return metadata;
@@ -641,7 +667,7 @@ async function mux(op) {
     };
     const addAudio = async () => {
       if (!audioTrack) return;
-      const first = await audioTrack.getFirstTimestamp();
+      const first = Math.max(0, await audioTrack.getFirstTimestamp());
       if (copyAudio) {
         let count = 0;
         const decoderConfig = await audioTrack.getDecoderConfig();
