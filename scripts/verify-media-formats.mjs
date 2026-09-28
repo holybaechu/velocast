@@ -67,6 +67,10 @@ await writeFile(
   `export default ${JSON.stringify({ entry: "source/index.html", renderer: { snapshotRoot: "source", binary: renderer, mediaBackend: "native", acceleration: "off", concurrency: 1, assembly: "reference", bitrate: "2M" } })};\n`,
 );
 const execute = promisify(execFile);
+const backendFor = (codec) =>
+  codec === "vp9" && process.platform === "win32" && process.arch === "x64"
+    ? "webcodecs"
+    : "native";
 const cli = async (file, codec, audioCodec, extra = []) => {
   const { stdout } = await execute(
     process.execPath,
@@ -160,8 +164,18 @@ try {
     assert.ok(rms > 0.04 && rms < 0.1, `unexpected audio RMS ${rms}`);
     const telemetry = JSON.parse(await readFile(`${file}.json`, "utf8"));
     assert.equal(telemetry.frames_encoded, frames);
-    assert.equal(telemetry.capture_backend, "electron_bitmap");
-    assert.equal(telemetry.cpu_readback_frames, frames);
+    if (backendFor(codec) === "native")
+      assert.equal(telemetry.capture_backend, "electron_bitmap");
+    else
+      assert.ok(
+        ["electron_shared_texture", "electron_bitmap"].includes(
+          telemetry.capture_backend,
+        ),
+      );
+    assert.equal(
+      telemetry.cpu_readback_frames,
+      telemetry.capture_backend === "electron_bitmap" ? frames : 0,
+    );
     assert.match(
       telemetry.encoder_backend,
       codec === "vp9" && process.platform === "win32" && process.arch === "x64"
@@ -180,13 +194,13 @@ try {
     ["prores", "pcm-s16", "mov"],
   ]) {
     const file = join(output, `${codec}.${container}`);
-    await cli(file, codec, audioCodec, ["--media-backend", "auto"]);
+    await cli(file, codec, audioCodec, ["--media-backend", backendFor(codec)]);
     await verify(file, codec, audioCodec, 6);
   }
   const range = join(output, "range.webm");
   await cli(range, "vp9", "opus", [
     "--media-backend",
-    "auto",
+    backendFor("vp9"),
     "--start-frame",
     "1",
     "--end-frame",
