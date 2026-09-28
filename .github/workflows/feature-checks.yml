@@ -74,7 +74,10 @@ jobs:
         run: |
           $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
           $output = Join-Path $env:RUNNER_TEMP 'native-capture'
-          node scripts/verify-native-capture.mjs --renderer $renderer --output $output --frames 24 --repeats 3 --mode both
+          $env:VELOCAST_WEBCODECS_TEST_BINARY = node -p "require('./packages/electron-host/node_modules/electron')"
+          node --test --test-name-pattern="bitmap CPU compositor" packages/electron-host/test/webcodecs-runtime.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-native-capture.mjs --renderer $renderer --output $output --frames 24 --repeats 3 --mode both --all-frames true
           exit $LASTEXITCODE
       - name: Save native capture evidence (Windows)
         if: always() && runner.os == 'Windows'
@@ -86,3 +89,4 @@ jobs:
             ${{ runner.temp }}/native-capture/results.json
             ${{ runner.temp }}/native-capture/reference-*.json
             ${{ runner.temp }}/native-capture/segments-*.json
+            ${{ runner.temp }}/native-capture/*.mp4

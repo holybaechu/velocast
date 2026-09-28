@@ -323,12 +323,20 @@ try {
           const decoded = join(output, `${name}-${frame}.rgba`);
           const pts = probe.video.frames[frame].pts;
           const timeBase = probe.video.timeBase;
+          const timestamp = (pts * timeBase.numerator) / timeBase.denominator;
+          assert.ok(
+            Math.abs(timestamp - frame / 60) < 0.00001,
+            `${name}: unexpected timestamp for frame ${frame}`,
+          );
           let decodeError;
           try {
             await media.run({
               kind: "frame",
               path: video,
-              timestamp: (pts * timeBase.numerator) / timeBase.denominator,
+              // Decode inside the frame interval. Native chunks round to
+              // microseconds; an exact container boundary can select the
+              // preceding sample without indicating wrong encoded pixels.
+              timestamp: timestamp + 0.5 / 60,
               outputPath: decoded,
               format: "rgba",
             });

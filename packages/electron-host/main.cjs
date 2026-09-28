@@ -130,6 +130,12 @@ function onPaint(event, dirtyRect, image) {
     releaseTexture(event.texture);
     const waiter = paintWaiter;
     if (!waiter || !image || image.isEmpty()) return;
+    // invalidate() can synchronously replay the cached bitmap. Keep waiting
+    // for an asynchronous capturer callback instead of accepting that replay.
+    if (waiter.asyncPaint && waiter.refreshPending) {
+      waiter.cachedPaints++;
+      return;
+    }
     const size = image.getSize(1);
     if (
       size.width !== waiter.request.expectedWidth ||
@@ -144,7 +150,7 @@ function onPaint(event, dirtyRect, image) {
     clearTimeout(waiter.retryTimer);
     try {
       if (bitmap) {
-        // Observe a size-matched compositor paint before the correlated
+        // Observe a size-matched compositor paint before the subsequent
         // capturePage copy. RAF callbacks alone can precede GPU presentation.
         waiter.resolve({});
         return;
@@ -213,9 +219,36 @@ function schedulePaintRetry(waiter) {
   if (waiter.retryTimer) return;
   waiter.retryTimer = setTimeout(() => {
     waiter.retryTimer = null;
-    if (paintWaiter === waiter && window && !window.isDestroyed())
-      browser().invalidate();
+    if (paintWaiter === waiter && window && !window.isDestroyed()) {
+      try {
+        refreshPaint(waiter, bitmap);
+      } catch (error) {
+        abortPending(error);
+      }
+    }
   }, 50);
+}
+
+function refreshPaint(waiter, restartCapturer) {
+  waiter.refreshPending = true;
+  try {
+    if (restartCapturer) {
+      browser().stopPainting();
+      browser().startPainting();
+    }
+    browser().invalidate();
+  } finally {
+    waiter.refreshPending = false;
+  }
+}
+
+function needsAsyncBitmapPaint() {
+  if (!bitmap || !app.isHardwareAccelerationEnabled()) return false;
+  // CPU compositing has no asynchronous video capturer for unchanged content.
+  // Use its existing RAF/paint/copy path based on the reported compositor,
+  // never by weakening a GPU wait after it times out.
+  const status = app.getGPUFeatureStatus().gpu_compositing;
+  return status !== "disabled_software" && status !== "unavailable_software";
 }
 
 function armLeaseTimeout() {
@@ -322,11 +355,12 @@ async function waitForPaint(request) {
       if (paintWaiter?.request !== request) return;
       const missingGpuPaints = paintWaiter.missingGpuPaints;
       const staleSizePaints = paintWaiter.staleSizePaints;
+      const cachedPaints = paintWaiter.cachedPaints;
       clearTimeout(paintWaiter.retryTimer);
       paintWaiter = null;
       reject(
         new Error(
-          `Electron ${surfaceMode} paint timed out (${missingGpuPaints} null textures, ${staleSizePaints} old-size textures)`,
+          `Electron ${surfaceMode} paint timed out (${missingGpuPaints} null textures, ${staleSizePaints} old-size textures, ${cachedPaints} cached replays)`,
         ),
       );
     }, PAINT_TIMEOUT_MS);
@@ -337,20 +371,21 @@ async function waitForPaint(request) {
       reject,
       missingGpuPaints: 0,
       staleSizePaints: 0,
+      cachedPaints: 0,
       retryTimer: null,
+      refreshPending: true,
+      asyncPaint: needsAsyncBitmapPaint(),
     };
+    const waiter = paintWaiter;
     try {
       // Invalidate alone can produce a software paint with no shared texture
       // when the composition is unchanged. Restarting the offscreen capturer
       // requests a fresh GPU texture without changing page pixels or layout.
-      if (!software) {
-        browser().stopPainting();
-        browser().startPainting();
-      }
-      browser().invalidate();
+      refreshPaint(waiter, !software);
     } catch (error) {
       paintWaiter = null;
       clearTimeout(timer);
+      clearTimeout(waiter.retryTimer);
       reject(error);
     }
   });
@@ -406,7 +441,7 @@ async function commandLoad(command) {
     window.setContentSize(width, height);
   }
   await deadline(window.loadURL(url), LOAD_TIMEOUT_MS, "Electron page load");
-  if (software) {
+  if (software || bitmap) {
     // loadURL resolves before the offscreen output device has presented its
     // first surface. Consume that size-matched startup paint before ACKing load;
     // otherwise the first correlated capture can receive the initial blank
@@ -536,10 +571,9 @@ async function dispatch(command) {
       )
         throw new Error("webcodecs.invalid_sequence");
       const generation = command.index + 1;
-      // Both paths must drain queued startup/resize paints for each worker.
-      // Later bitmap frames already await RAF and a size-matched paint before
-      // their compositor copy; shared textures keep their two observations.
-      const settlingPaints = command.index === 0 ? 6 : bitmap ? 0 : 2;
+      // Drain queued startup/resize paints, then settle each new generation
+      // on both capture paths before accepting the frame.
+      const settlingPaints = command.index === 0 ? 6 : 2;
       for (let paint = 0; paint < settlingPaints; paint++) {
         await waitForPaint({ generation, copy: false });
       }

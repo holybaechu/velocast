@@ -121,21 +121,27 @@ frame-72 preview in three of five fresh processes. A temporary probe found frame
 the codec or muxer.
 
 Bitmap capture previously acknowledged animation callbacks without consuming a
-compositor paint. It now observes a paint at the expected size and uses the
-existing startup settling sequence for each worker before accepting its first
-frame. Subsequent bitmap frames retain a page animation fence and a compositor
-paint acknowledgment; the shared-texture sequence is unchanged.
+compositor paint. Further probing showed that `invalidate()` could satisfy a
+paint waiter synchronously with cached pixels. GPU capture now rejects those
+replays and awaits asynchronous capturer callbacks at the expected size. CPU
+compositing keeps its software paint/copy path based on the reported compositor
+state. Load establishes the initial viewport before adapter initialization, and
+both paths retain startup and per-frame settling.
 
-The corrected host passed three reference and three four-worker exports of the
-full 4K scene: 240 frames at 60 fps, native H.264, 64 Mbps target. Independent
-FFmpeg decoding verified all **1,440 frame identities** and presentation
-timestamps, including segment boundaries, with no stale frames.
+The corrected host passed reference and four-worker exports of the full 4K
+scene: 240 frames at 60 fps, native H.264, 64 Mbps target. Independent FFmpeg
+decoding verified all **480 frame identities** and presentation timestamps,
+including segment boundaries, with no stale frames. Three reference and three
+four-worker 24-frame exports also passed every decoded identity. Unchanged blue
+and black frames passed with GPU and CPU compositing.
 
 The regression gate is now maintained in
 [`scripts/verify-native-capture.mjs`](../../scripts/verify-native-capture.mjs).
 Its default short scene preserves the nonzero initial preview and checks native
 capture, the actual worker plan, and decoded frame identity. Windows, macOS, and
 Linux CI run it with three reference and three four-worker repetitions.
+It validates container timestamps and samples inside each frame interval to
+avoid confusing timestamp-boundary rounding with incorrect encoded content.
 
 This follow-up verifies correctness, not new performance figures. Compositor
 synchronization adds work; the pre-fix timings above must not be used as

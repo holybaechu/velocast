@@ -50,9 +50,13 @@ it remains the fallback for unavailable shared-texture import. Native encoding
 reports CPU readback even when the capture transport uses a shared texture.
 
 Bitmap capture observes a compositor paint at the expected size after the page's
-animation-frame fence. Each worker also drains queued startup/resize paints
-before its first encoded frame. Animation callbacks alone do not guarantee GPU
-presentation and can leave the initial preview in the first output frame.
+animation-frame fence. GPU mode rejects synchronous cached replays from
+`invalidate()` and waits for an asynchronous capturer callback, including on
+paint retries. CPU compositing retains its software paint/copy path because
+unchanged content need not emit asynchronous paints; selection uses Electron's
+[reported compositor state](https://www.electronjs.org/docs/latest/api/structures/gpu-feature-status),
+never a timeout fallback. The initial viewport is observed before adapter
+initialization, and both capture paths drain queued startup and per-frame paints.
 
 ## Audio and codec adapters
 
@@ -113,5 +117,5 @@ The native capture gate uses the 4K DOM scene with an initial frame-72 preview.
 It verifies native bitmap capture and decoded identities at reference and
 four-worker segment starts. Pass `--renderer <binary> --output <new-temp-dir>`;
 `--frames 240 --all-frames true` expands verification to every frame of the full
-scene. The default 24-frame, three-repeat gate runs on Windows, Linux, and macOS
-CI without requiring a standalone FFmpeg executable.
+scene. Windows, Linux, and macOS CI run the 24-frame, three-repeat gate with
+`--all-frames true`, without requiring a standalone FFmpeg executable.

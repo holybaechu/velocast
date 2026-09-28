@@ -9,9 +9,13 @@ const { spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { hostResponses } = require("./host-responses.cjs");
 
-for (const mode of ["webcodecs", "bitmap"])
+for (const [mode, cpuCompositor] of [
+  ["webcodecs", false],
+  ["bitmap", false],
+  ["bitmap", true],
+])
   test(
-    `${mode} captures encode changing and repeated frames through real WebCodecs`,
+    `${mode}${cpuCompositor ? " CPU compositor" : ""} captures encode changing and repeated frames through real WebCodecs`,
     {
       skip: !process.env.VELOCAST_WEBCODECS_TEST_BINARY,
       timeout: 60_000,
@@ -34,9 +38,18 @@ for (const mode of ["webcodecs", "bitmap"])
         VELOCAST_ELECTRON_PROFILE_DIRECTORY: profile,
       };
       delete env.ELECTRON_RUN_AS_NODE;
+      let hostScript = path.resolve(__dirname, "../main.cjs");
+      if (cpuCompositor) {
+        const wrapper = path.join(directory, "cpu-host.cjs");
+        fs.writeFileSync(
+          wrapper,
+          `require("electron").app.disableHardwareAcceleration();require(${JSON.stringify(hostScript)});\n`,
+        );
+        hostScript = wrapper;
+      }
       const child = spawn(
         process.env.VELOCAST_WEBCODECS_TEST_BINARY,
-        [path.resolve(__dirname, "../main.cjs")],
+        [hostScript],
         { env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
       );
       const responses = hostResponses(child);
@@ -97,7 +110,12 @@ for (const mode of ["webcodecs", "bitmap"])
           sources: {},
         },
       });
-      assert.equal(opened.config.hardwareAcceleration, "prefer-hardware");
+      assert.ok(
+        (cpuCompositor
+          ? ["prefer-hardware", "no-preference"]
+          : ["prefer-hardware"]
+        ).includes(opened.config.hardwareAcceleration),
+      );
       const colors = [
         [0, 255, 0],
         [255, 0, 0],
