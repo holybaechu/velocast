@@ -167,7 +167,8 @@ const requireHost = createRequire(
   join(root, "packages/electron-host/package.json"),
 );
 const { createMediaSession } = requireHost("./media-client.cjs");
-const electronBinary = requireHost("electron");
+const electronBinary =
+  process.env.VELOCAST_ELECTRON_BINARY ?? requireHost("electron");
 const env = {
   ...process.env,
   VELOCAST_RENDERER_BINARY: renderer,

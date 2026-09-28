@@ -250,6 +250,14 @@ function needsAsyncBitmapPaint() {
   return bitmap && !cpuBitmap;
 }
 
+function gpuCompositorFailure() {
+  if (!bitmap || cpuBitmap) return null;
+  const status = app.getGPUFeatureStatus().gpu_compositing;
+  return status === "disabled_software" || status === "unavailable_software"
+    ? new Error(`capture.gpu_compositor_unavailable: ${status}`)
+    : null;
+}
+
 function armLeaseTimeout() {
   leaseTimer = setTimeout(() => {
     process.stderr.write("Electron frame release timed out\n");
@@ -328,12 +336,8 @@ async function captureSoftware(request) {
 }
 
 async function waitForPaint(request) {
-  if (bitmap && !cpuBitmap) {
-    const status = app.getGPUFeatureStatus().gpu_compositing;
-    if (status === "disabled_software" || status === "unavailable_software") {
-      throw new Error(`capture.gpu_compositor_unavailable: ${status}`);
-    }
-  }
+  const compositorFailure = gpuCompositorFailure();
+  if (compositorFailure) throw compositorFailure;
   if (software && request.copy) return captureSoftware(request);
   if (software || bitmap) {
     // Observation fences establish the loaded/resized surface before capture.
@@ -364,10 +368,13 @@ async function waitForPaint(request) {
       const lastPaintSize = paintWaiter.lastPaintSize;
       clearTimeout(paintWaiter.retryTimer);
       paintWaiter = null;
+      // A GPU process can become unavailable after this wait starts. Report
+      // confirmed software fallback so the controller can restart the host.
       reject(
-        new Error(
-          `Electron ${surfaceMode} paint timed out (${missingGpuPaints} null textures, ${staleSizePaints} old-size textures, ${cachedPaints} cached replays; expected ${request.expectedWidth}x${request.expectedHeight}, last ${lastPaintSize ? `${lastPaintSize.width}x${lastPaintSize.height}` : "none"}, viewport ${width}x${height})`,
-        ),
+        gpuCompositorFailure() ??
+          new Error(
+            `Electron ${surfaceMode} paint timed out (${missingGpuPaints} null textures, ${staleSizePaints} old-size textures, ${cachedPaints} cached replays; expected ${request.expectedWidth}x${request.expectedHeight}, last ${lastPaintSize ? `${lastPaintSize.width}x${lastPaintSize.height}` : "none"}, viewport ${width}x${height})`,
+          ),
       );
     }, PAINT_TIMEOUT_MS);
     paintWaiter = {
