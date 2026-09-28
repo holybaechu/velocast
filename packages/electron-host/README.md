@@ -63,6 +63,15 @@ initialization, and both capture paths drain queued startup and per-frame paints
 
 ## Audio and codec adapters
 
+On Linux Electron, `native-binding.cjs` loads NodeAV with `RTLD_DEEPBIND` before
+the server, audio, or ProRes adapters import it. x264's large-buffer allocator
+requests 2 MiB alignment, exceeding Chromium's 1 MiB alignment limit on x64.
+The scoped loader lets the addon use its allocator dependencies and restores
+the process loader immediately after import. It rejects an earlier uncontrolled
+NodeAV load; other platforms use the ordinary module loader. See
+[x264 allocation](https://github.com/mirror/x264/blob/master/common/base.c) and
+[Chromium's alignment limit](https://github.com/chromium/chromium/blob/152.0.7977.130/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_constants.h).
+
 The mixer preserves source trims, sample offsets, gain, and linear envelopes.
 It uses 4096-sample blocks, file-backed PCM and filtered streaming resampling.
 Mono duplicates at unity into stereo; stereo-to-mono averages channels. The

@@ -1,7 +1,7 @@
 "use strict";
-const { createRequire } = require("node:module");
+const { loadNodeAv } = require("./native-binding.cjs");
 const mb = require("mediabunny");
-const av = createRequire(require.resolve("@mediabunny/server"))("node-av");
+const av = loadNodeAv();
 const ids = {
   aac: av.AV_CODEC_ID_AAC,
   opus: av.AV_CODEC_ID_OPUS,

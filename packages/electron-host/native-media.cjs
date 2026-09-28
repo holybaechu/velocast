@@ -1,9 +1,10 @@
 "use strict";
 let registered = false;
+const { loadNodeAv } = require("./native-binding.cjs");
 // DEBUG-native-stage: temporary first-frame crash probe; remove after diagnosis.
 function installNativeStageProbe() {
   const trace = process.env.VELOCAST_MEDIA_TRACE;
-  if (!trace) return;
+  if (!trace) return loadNodeAv();
   const fs = require("node:fs");
   const log = (operation, phase, target, args, error) => {
     try {
@@ -29,9 +30,7 @@ function installNativeStageProbe() {
     }
   };
   log("node-av.load", "before", null, []);
-  const native = require("node:module").createRequire(
-    require.resolve("@mediabunny/server"),
-  )("node-av");
+  const native = loadNodeAv();
   log("node-av.load", "after", null, []);
   for (const [name, method] of [
     ["CodecContext", "open2"],
@@ -62,6 +61,7 @@ function installNativeStageProbe() {
       return result;
     };
   }
+  return native;
 }
 function registerNativeMedia() {
   if (!registered) {

@@ -182,13 +182,31 @@ class NativeMediaSession {
       });
       if (process.env.VELOCAST_MEDIA_TRACE) {
         const at = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4;
+        const trace = {
+          pid: process.pid,
+          index,
+          stage: "native-bitmap-input",
+          cpuBitmap: process.env.VELOCAST_ELECTRON_CPU_BITMAP === "1",
+          rgb: [data[at + 2], data[at + 1], data[at]],
+        };
+        if (width === 3840 && height === 2160) {
+          const barcodeRgb = Array.from({ length: 8 }, (_, bit) => {
+            const x = 66 + 60 * bit;
+            const pixel = (66 * width + x) * 4;
+            return [data[pixel + 2], data[pixel + 1], data[pixel]];
+          });
+          const bits = barcodeRgb.map((rgb) => {
+            const average = (rgb[0] + rgb[1] + rgb[2]) / 3;
+            return average < 70 ? 0 : average > 180 ? 1 : null;
+          });
+          trace.barcodeRgb = barcodeRgb;
+          trace.frameBarcode = bits.includes(null)
+            ? null
+            : bits.reduce((frame, bit, shift) => frame | (bit << shift), 0);
+        }
         fs.appendFileSync(
           absolute(process.env.VELOCAST_MEDIA_TRACE),
-          JSON.stringify({
-            index,
-            stage: "native-bitmap-input",
-            rgb: [data[at + 2], data[at + 1], data[at]],
-          }) + "\n",
+          JSON.stringify(trace) + "\n",
           { mode: 0o600 },
         );
       }

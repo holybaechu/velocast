@@ -72,6 +72,8 @@ jobs:
       - name: Validate native 4K DOM capture (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          VELOCAST_MEDIA_TRACE: ${{ runner.temp }}/native-capture-input.jsonl
         run: |
           $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
           $output = Join-Path $env:RUNNER_TEMP 'native-capture'
@@ -83,6 +85,8 @@ jobs:
       - name: Validate CPU compositor 4K capture (Windows)
         if: ${{ !cancelled() && runner.os == 'Windows' && steps.native_capture_build.outcome == 'success' }}
         shell: pwsh
+        env:
+          VELOCAST_MEDIA_TRACE: ${{ runner.temp }}/native-capture-cpu-input.jsonl
         run: |
           $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
           $output = Join-Path $env:RUNNER_TEMP 'native-capture-cpu'
@@ -102,3 +106,5 @@ jobs:
             ${{ runner.temp }}/native-capture-cpu/results.json
             ${{ runner.temp }}/native-capture-cpu/reference-*.json
             ${{ runner.temp }}/native-capture-cpu/*.mp4
+            ${{ runner.temp }}/native-capture-input.jsonl
+            ${{ runner.temp }}/native-capture-cpu-input.jsonl
