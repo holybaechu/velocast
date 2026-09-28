@@ -75,8 +75,13 @@ pub async fn render_segments(
         command
             .arg("--job-json")
             .arg(serde_json::to_string(&worker)?);
-        if browser.surface_mode() == crate::browser_surface::BrowserSurfaceMode::Bitmap {
+        if browser.surface_mode().is_bitmap() {
             command.env("VELOCAST_ELECTRON_FORCE_BITMAP", "1");
+        }
+        if browser.surface_mode() == crate::browser_surface::BrowserSurfaceMode::CpuBitmap {
+            command.env("VELOCAST_ELECTRON_CPU_BITMAP", "1");
+        } else {
+            command.env_remove("VELOCAST_ELECTRON_CPU_BITMAP");
         }
         #[cfg(windows)]
         {

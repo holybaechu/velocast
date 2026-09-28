@@ -52,10 +52,13 @@ reports CPU readback even when the capture transport uses a shared texture.
 Bitmap capture observes a compositor paint at the expected size after the page's
 animation-frame fence. GPU mode rejects synchronous cached replays from
 `invalidate()` and waits for an asynchronous capturer callback, including on
-paint retries. CPU compositing retains its software paint/copy path because
-unchanged content need not emit asynchronous paints; selection uses Electron's
-[reported compositor state](https://www.electronjs.org/docs/latest/api/structures/gpu-feature-status),
-never a timeout fallback. The initial viewport is observed before adapter
+paint retries. When Electron's
+[reported compositor state](https://www.electronjs.org/docs/latest/api/structures/gpu-feature-status)
+indicates unavailable GPU compositing, the coordinator starts a fresh host with
+hardware acceleration disabled. This bounded retry is allowed only before any
+frames are encoded and propagates to segment workers. Explicit CPU compositing
+uses the software paint/copy path for unchanged content, which need not emit
+asynchronous paints. The initial viewport is observed before adapter
 initialization, and both capture paths drain queued startup and per-frame paints.
 
 ## Audio and codec adapters

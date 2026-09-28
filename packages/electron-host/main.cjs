@@ -28,6 +28,7 @@ if (!["software", "webcodecs", "bitmap"].includes(surfaceMode)) {
 }
 const software = surfaceMode === "software";
 const bitmap = surfaceMode === "bitmap";
+const cpuBitmap = bitmap && process.env.VELOCAST_ELECTRON_CPU_BITMAP === "1";
 const webcodecs = surfaceMode === "webcodecs" || bitmap;
 let webcodecsEncoder = null;
 // Older protocol-1 controllers do not provide an owned profile directory.
@@ -38,7 +39,7 @@ if (process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY !== undefined)
     process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY,
   );
 // This must happen before app.whenReady and before any renderer process exists.
-if (software) app.disableHardwareAcceleration();
+if (software || cpuBitmap) app.disableHardwareAcceleration();
 const softwareFrames = software
   ? new SoftwareFrameLease(process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY)
   : null;
@@ -244,12 +245,9 @@ function refreshPaint(waiter, restartCapturer) {
 }
 
 function needsAsyncBitmapPaint() {
-  if (!bitmap || !app.isHardwareAccelerationEnabled()) return false;
-  // CPU compositing has no asynchronous video capturer for unchanged content.
-  // Use its existing RAF/paint/copy path based on the reported compositor,
-  // never by weakening a GPU wait after it times out.
-  const status = app.getGPUFeatureStatus().gpu_compositing;
-  return status !== "disabled_software" && status !== "unavailable_software";
+  // Explicit CPU compositing has no asynchronous video capturer for unchanged
+  // content. Normal bitmap mode requires one.
+  return bitmap && !cpuBitmap;
 }
 
 function armLeaseTimeout() {
@@ -330,6 +328,12 @@ async function captureSoftware(request) {
 }
 
 async function waitForPaint(request) {
+  if (bitmap && !cpuBitmap) {
+    const status = app.getGPUFeatureStatus().gpu_compositing;
+    if (status === "disabled_software" || status === "unavailable_software") {
+      throw new Error(`capture.gpu_compositor_unavailable: ${status}`);
+    }
+  }
   if (software && request.copy) return captureSoftware(request);
   if (software || bitmap) {
     // Observation fences establish the loaded/resized surface before capture.

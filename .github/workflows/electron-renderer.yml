@@ -73,6 +73,7 @@ jobs:
           export VELOCAST_ELECTRON_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
           node --test packages/electron-host/test/software-runtime.test.cjs
       - name: Build and test renderer
+        id: renderer_build
         run: |
           cargo test -p velocast-renderer
           cargo build -p velocast-renderer
@@ -98,7 +99,7 @@ jobs:
           xvfb-run -a node --test packages/electron-host/test/native-media.integration.test.cjs
           xvfb-run -a node scripts/verify-media-formats.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/media-formats"
       - name: Validate native 4K DOM capture (Linux)
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.renderer_build.outcome == 'success' }}
         env:
           ELECTRON_ENABLE_LOGGING: "1"
           ELECTRON_ENABLE_STACK_DUMPING: "1"
@@ -107,6 +108,14 @@ jobs:
         run: |
           export VELOCAST_CAPTURE_RENDERER="$CARGO_TARGET_DIR/debug/velocast-renderer"
           export VELOCAST_CAPTURE_STDERR="$RUNNER_TEMP/native-capture-stderr.log"
+          export VELOCAST_CAPTURE_ELECTRON="$(node -p "require('./packages/electron-host/node_modules/electron')")"
+          export VELOCAST_CAPTURE_STDOUT="$RUNNER_TEMP/native-capture-stdout.log"
+          export VELOCAST_ELECTRON_BINARY="$RUNNER_TEMP/native-electron-trace"
+          cat > "$VELOCAST_ELECTRON_BINARY" <<'EOF'
+          #!/usr/bin/env bash
+          exec "$VELOCAST_CAPTURE_ELECTRON" "$@" > >(tee -a "$VELOCAST_CAPTURE_STDOUT")
+          EOF
+          chmod +x "$VELOCAST_ELECTRON_BINARY"
           cat > "$RUNNER_TEMP/native-renderer-trace" <<'EOF'
           #!/usr/bin/env bash
           exec "$VELOCAST_CAPTURE_RENDERER" "$@" 2> >(tee -a "$VELOCAST_CAPTURE_STDERR" >&2)
@@ -147,6 +156,7 @@ jobs:
             ${{ runner.temp }}/native-capture/*.mp4
             ${{ runner.temp }}/native-capture-electron.log
             ${{ runner.temp }}/native-capture-stderr.log
+            ${{ runner.temp }}/native-capture-stdout.log
             ${{ runner.temp }}/native-capture-input.jsonl
             ${{ runner.temp }}/aac-timing.log
             ${{ runner.temp }}/aac-timing.json

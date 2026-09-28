@@ -177,34 +177,36 @@ async fn run_coordinator_render(
     resources: &mut render_job::RenderJobResources,
     context: &mut output_result::OutputContext,
 ) -> anyhow::Result<()> {
-    let mode = initial_surface_for_job(job);
-    let result =
-        run_coordinator_render_with_mode(job, report, events, resources, context, mode).await;
-    if let Err(error) = &result {
-        if mode == browser_surface::BrowserSurfaceMode::WebCodecs
-            && report.frames_encoded == 0
-            && shared_texture_unavailable(error)
+    let mut mode = initial_surface_for_job(job);
+    let mut fallback_reasons = Vec::new();
+    loop {
+        match run_coordinator_render_with_mode(job, report, events, resources, context, mode).await
         {
-            let reason = format!(
-                "Shared texture capture unavailable; using bitmap capture with WebCodecs: {error}"
-            );
-            resources.reset_attempt().await?;
-            *report = coordinator_telemetry_for(job);
-            report.fallback_used = true;
-            report.fallback_reason = Some(reason);
-            *context = output_result::OutputContext::default();
-            return run_coordinator_render_with_mode(
-                job,
-                report,
-                events,
-                resources,
-                context,
-                browser_surface::BrowserSurfaceMode::Bitmap,
-            )
-            .await;
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                let Some(next_mode) =
+                    next_surface_after_failure(mode, report.frames_encoded, &error)
+                else {
+                    return Err(error);
+                };
+                fallback_reasons.push(match next_mode {
+                    browser_surface::BrowserSurfaceMode::Bitmap => format!(
+                        "Shared texture capture unavailable; using bitmap capture with WebCodecs: {error}"
+                    ),
+                    browser_surface::BrowserSurfaceMode::CpuBitmap => format!(
+                        "GPU compositor unavailable; retrying bitmap capture with CPU compositing: {error}"
+                    ),
+                    _ => unreachable!("fallback target must be a bitmap mode"),
+                });
+                resources.reset_attempt().await?;
+                *report = coordinator_telemetry_for(job);
+                report.fallback_used = true;
+                report.fallback_reason = Some(fallback_reasons.join("; "));
+                *context = output_result::OutputContext::default();
+                mode = next_mode;
+            }
         }
     }
-    result
 }
 fn initial_surface_for_job(job: &RenderJob) -> browser_surface::BrowserSurfaceMode {
     if job.operation != RenderOperation::Render {
@@ -229,6 +231,36 @@ fn shared_texture_unavailable(error: &anyhow::Error) -> bool {
         message.starts_with("capture.shared_texture_unavailable:")
             || message.starts_with("Electron webcodecs paint timed out")
     })
+}
+
+fn gpu_compositor_unavailable(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        let message = cause.to_string();
+        let message = message
+            .strip_prefix("electron.host_error: ")
+            .unwrap_or(&message);
+        message.starts_with("capture.gpu_compositor_unavailable:")
+    })
+}
+
+fn next_surface_after_failure(
+    mode: browser_surface::BrowserSurfaceMode,
+    frames_encoded: u32,
+    error: &anyhow::Error,
+) -> Option<browser_surface::BrowserSurfaceMode> {
+    use browser_surface::BrowserSurfaceMode;
+    if frames_encoded != 0 {
+        return None;
+    }
+    match mode {
+        BrowserSurfaceMode::WebCodecs if shared_texture_unavailable(error) => {
+            Some(BrowserSurfaceMode::Bitmap)
+        }
+        BrowserSurfaceMode::Bitmap if gpu_compositor_unavailable(error) => {
+            Some(BrowserSurfaceMode::CpuBitmap)
+        }
+        _ => None,
+    }
 }
 
 async fn run_coordinator_render_with_mode(
@@ -318,7 +350,7 @@ async fn run_coordinator_render_with_mode(
             effective_concurrency: plan.concurrency,
             probe_tier: "media_metadata".into(),
             segment_count: plan.ranges.len(),
-            capture_mode: if mode == browser_surface::BrowserSurfaceMode::Bitmap {
+            capture_mode: if mode.is_bitmap() {
                 "electron_bitmap"
             } else {
                 "electron_shared_texture"
@@ -486,7 +518,12 @@ async fn run_worker(mut job: RenderJob) -> anyhow::Result<()> {
             job.event_log_path.as_deref(),
         ));
         resources.check_cancellation()?;
-        let renderer = NativeBrowser::new(initial_surface_for_job(&job))?;
+        let mode = if std::env::var("VELOCAST_ELECTRON_CPU_BITMAP").as_deref() == Ok("1") {
+            browser_surface::BrowserSurfaceMode::CpuBitmap
+        } else {
+            initial_surface_for_job(&job)
+        };
+        let renderer = NativeBrowser::new(mode)?;
         let load_started = Instant::now();
         renderer.load(&job).await?;
         report.page_load_ms += load_started.elapsed().as_millis();
@@ -567,6 +604,29 @@ mod tests {
             "electron.host_error: webcodecs.unsupported_config"
         )));
         assert!(!shared_texture_unavailable(&anyhow::anyhow!("electron.host_error: composition failed: capture.shared_texture_unavailable: authored text")));
+    }
+    #[test]
+    fn compositor_retry_is_capability_based_and_bounded() {
+        use browser_surface::BrowserSurfaceMode::{Bitmap, CpuBitmap, WebCodecs};
+        let unavailable = anyhow::anyhow!(
+            "electron.host_error: capture.gpu_compositor_unavailable: disabled_software"
+        );
+        let shared_texture = anyhow::anyhow!(
+            "electron.host_error: capture.shared_texture_unavailable: import failed"
+        );
+        let paint_timeout = anyhow::anyhow!("Electron bitmap paint timed out");
+        assert_eq!(
+            next_surface_after_failure(WebCodecs, 0, &shared_texture),
+            Some(Bitmap)
+        );
+        assert_eq!(
+            next_surface_after_failure(Bitmap, 0, &unavailable),
+            Some(CpuBitmap)
+        );
+        assert_eq!(next_surface_after_failure(WebCodecs, 0, &unavailable), None);
+        assert_eq!(next_surface_after_failure(Bitmap, 0, &paint_timeout), None);
+        assert_eq!(next_surface_after_failure(Bitmap, 1, &unavailable), None);
+        assert_eq!(next_surface_after_failure(CpuBitmap, 0, &unavailable), None);
     }
     #[test]
     fn failures_remain_primary_when_report_writes_also_fail() {

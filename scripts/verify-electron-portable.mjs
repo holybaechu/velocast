@@ -544,6 +544,8 @@ await gate("shared-texture-auto-falls-back-to-bitmap", async () => {
   const video = join(output, "reference-1.mp4"),
     before = sha(await readFile(video)),
     marker = join(output, "bitmap-start-prior-output.sha256"),
+    cpuMarker = join(output, "cpu-bitmap-start-prior-output.sha256"),
+    attempts = join(output, "fallback-host-attempts.jsonl"),
     telemetry = join(output, "bitmap-fallback.json"),
     wrapper = join(output, "fallback-host.cjs"),
     realHost = join(runtimeHost, "main.cjs");
@@ -551,10 +553,20 @@ await gate("shared-texture-auto-falls-back-to-bitmap", async () => {
     wrapper,
     `"use strict";
 const fs=require("node:fs"),crypto=require("node:crypto");
+const video=process.env.VELOCAST_TEST_FALLBACK_VIDEO,marker=process.env.VELOCAST_TEST_BITMAP_MARKER,
+  cpuMarker=process.env.VELOCAST_TEST_CPU_MARKER,attempts=process.env.VELOCAST_TEST_ATTEMPTS;
 if(process.env.VELOCAST_ELECTRON_SURFACE_MODE==="bitmap"){
-  fs.writeFileSync(${JSON.stringify(marker)},crypto.createHash("sha256").update(fs.readFileSync(${JSON.stringify(video)})).digest("hex"));
+  const cpu=process.env.VELOCAST_ELECTRON_CPU_BITMAP==="1";
+  fs.appendFileSync(attempts,JSON.stringify({mode:"bitmap",cpu})+"\\n");
+  fs.writeFileSync(cpu?cpuMarker:marker,crypto.createHash("sha256").update(fs.readFileSync(video)).digest("hex"));
+  if(process.env.VELOCAST_TEST_GPU_COMPOSITOR_UNAVAILABLE==="1"&&!cpu){
+    const app=require("electron/main").app,original=app.getGPUFeatureStatus.bind(app);
+    app.getGPUFeatureStatus=()=>({...original(),gpu_compositing:"disabled_software"});
+    if(app.getGPUFeatureStatus().gpu_compositing!=="disabled_software")throw Error("GPU status fixture did not install");
+  }
   require(${JSON.stringify(realHost)});
 }else if(process.env.VELOCAST_ELECTRON_SURFACE_MODE==="webcodecs"){
+  fs.appendFileSync(attempts,JSON.stringify({mode:"webcodecs",cpu:false})+"\\n");
   process.stdout.write(JSON.stringify({event:"ready",version:3,pid:process.pid})+"\\n");
   const input=fs.createReadStream(null,{fd:0,autoClose:true});let pending="";
   input.on("data",data=>{pending+=data.toString();const end=pending.indexOf("\\n");if(end<0)return;
@@ -589,6 +601,10 @@ if(process.env.VELOCAST_ELECTRON_SURFACE_MODE==="bitmap"){
         ...env,
         VELOCAST_ELECTRON_BINARY: electronBinary,
         VELOCAST_ELECTRON_HOST_SCRIPT: wrapper,
+        VELOCAST_TEST_FALLBACK_VIDEO: video,
+        VELOCAST_TEST_BITMAP_MARKER: marker,
+        VELOCAST_TEST_CPU_MARKER: cpuMarker,
+        VELOCAST_TEST_ATTEMPTS: attempts,
       },
     },
   );
@@ -600,6 +616,84 @@ if(process.env.VELOCAST_ELECTRON_SURFACE_MODE==="bitmap"){
     throw new Error(`Wrong bitmap fallback telemetry: ${JSON.stringify(data)}`);
   if (sha(await readFile(video)) === before)
     throw new Error("Bitmap fallback did not publish new output");
+  await checkPixels(video, Array(6).fill(0), { exactStatic: true });
+  return { captureBackend: data.capture_backend, frames: data.frames_encoded };
+});
+await gate("gpu-compositor-auto-falls-back-to-fresh-cpu-bitmap", async () => {
+  const video = join(output, "cpu-bitmap-fallback.mp4"),
+    marker = join(output, "bitmap-start-prior-output.sha256"),
+    cpuMarker = join(output, "cpu-bitmap-start-prior-output.sha256"),
+    attempts = join(output, "fallback-host-attempts.jsonl"),
+    telemetry = join(output, "cpu-bitmap-fallback.json"),
+    wrapper = join(output, "fallback-host.cjs");
+  // Begin with a valid, visibly changing prior video. The CPU retry must
+  // preserve it until publication, then replace it with the static scene.
+  await cp(join(output, "range.mp4"), video);
+  const before = sha(await readFile(video));
+  const electronBinary =
+    mediaOptions.electronBinary ??
+    require(join(root, "packages/electron-host/node_modules/electron"));
+  await writeFile(attempts, "");
+  await command(
+    renderer,
+    [
+      "--job-json",
+      JSON.stringify({
+        mode: "composition",
+        composition_id: "static",
+        serve_url: pathToFileURL(join(source, "index.html")).href,
+        output: video,
+        report_path: telemetry,
+        codec: "h264",
+        media_backend: "webcodecs",
+        acceleration: "auto",
+        pixel_format: "yuv420p",
+        assembly: "reference",
+        concurrency: 1,
+      }),
+    ],
+    {
+      environment: {
+        ...env,
+        VELOCAST_ELECTRON_BINARY: electronBinary,
+        VELOCAST_ELECTRON_HOST_SCRIPT: wrapper,
+        VELOCAST_TEST_GPU_COMPOSITOR_UNAVAILABLE: "1",
+        VELOCAST_TEST_FALLBACK_VIDEO: video,
+        VELOCAST_TEST_BITMAP_MARKER: marker,
+        VELOCAST_TEST_CPU_MARKER: cpuMarker,
+        VELOCAST_TEST_ATTEMPTS: attempts,
+      },
+    },
+  );
+  const observed = (await readFile(attempts, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  if (
+    JSON.stringify(observed) !==
+    JSON.stringify([
+      { mode: "webcodecs", cpu: false },
+      { mode: "bitmap", cpu: false },
+      { mode: "bitmap", cpu: true },
+    ])
+  )
+    throw new Error(`Wrong retry sequence: ${JSON.stringify(observed)}`);
+  if (
+    (await readFile(marker, "utf8")) !== before ||
+    (await readFile(cpuMarker, "utf8")) !== before
+  )
+    throw new Error("Previous output changed before fresh CPU retry started");
+  const data = JSON.parse(await readFile(telemetry, "utf8"));
+  assertWebCodecsTelemetry(data, "electron", 6);
+  if (
+    !data.fallback_used ||
+    !data.fallback_reason?.includes("capture.shared_texture_unavailable") ||
+    !data.fallback_reason?.includes("capture.gpu_compositor_unavailable") ||
+    data.capture_backend !== "electron_bitmap"
+  )
+    throw new Error(`Wrong CPU fallback telemetry: ${JSON.stringify(data)}`);
+  if (sha(await readFile(video)) === before)
+    throw new Error("CPU bitmap retry did not publish new output");
   await checkPixels(video, Array(6).fill(0), { exactStatic: true });
   return { captureBackend: data.capture_backend, frames: data.frames_encoded };
 });

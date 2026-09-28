@@ -123,9 +123,11 @@ the codec or muxer.
 Bitmap capture previously acknowledged animation callbacks without consuming a
 compositor paint. Further probing showed that `invalidate()` could satisfy a
 paint waiter synchronously with cached pixels. GPU capture now rejects those
-replays and awaits asynchronous capturer callbacks at the expected size. CPU
-compositing keeps its software paint/copy path based on the reported compositor
-state. Load establishes the initial viewport before adapter initialization, and
+replays and awaits asynchronous capturer callbacks at the expected size. An
+unavailable GPU compositor triggers a fresh host with hardware acceleration
+disabled, before encoding any frames. This also propagates to segment workers.
+Explicit CPU compositing uses its software paint/copy path. Load establishes the
+initial viewport before adapter initialization, and
 both paths retain startup and per-frame settling.
 
 The corrected host passed reference and four-worker exports of the full 4K

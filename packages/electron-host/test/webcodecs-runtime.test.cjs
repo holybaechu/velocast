@@ -34,6 +34,7 @@ for (const [mode, cpuCompositor] of [
       const env = {
         ...process.env,
         VELOCAST_ELECTRON_SURFACE_MODE: mode,
+        VELOCAST_ELECTRON_CPU_BITMAP: "0",
         VELOCAST_ELECTRON_FRAME_DIRECTORY: directory,
         VELOCAST_ELECTRON_PROFILE_DIRECTORY: profile,
       };
@@ -43,7 +44,7 @@ for (const [mode, cpuCompositor] of [
         const wrapper = path.join(directory, "cpu-host.cjs");
         fs.writeFileSync(
           wrapper,
-          `require("electron").app.disableHardwareAcceleration();require(${JSON.stringify(hostScript)});\n`,
+          `process.env.VELOCAST_ELECTRON_CPU_BITMAP="1";require("electron").app.disableHardwareAcceleration();require(${JSON.stringify(hostScript)});\n`,
         );
         hostScript = wrapper;
       }

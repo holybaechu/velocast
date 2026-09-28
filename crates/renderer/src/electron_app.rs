@@ -462,8 +462,16 @@ impl HostProcess {
                 "VELOCAST_ELECTRON_SURFACE_MODE",
                 match mode {
                     BrowserSurfaceMode::Software => "software",
-                    BrowserSurfaceMode::Bitmap => "bitmap",
+                    BrowserSurfaceMode::Bitmap | BrowserSurfaceMode::CpuBitmap => "bitmap",
                     BrowserSurfaceMode::WebCodecs => "webcodecs",
+                },
+            )
+            .env(
+                "VELOCAST_ELECTRON_CPU_BITMAP",
+                if mode == BrowserSurfaceMode::CpuBitmap {
+                    "1"
+                } else {
+                    "0"
                 },
             )
             .env(
