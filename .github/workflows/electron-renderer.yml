@@ -49,6 +49,19 @@ jobs:
           sudo chown root:root "$sandbox"
           sudo chmod 4755 "$sandbox"
       - run: pnpm build
+      - name: Probe AAC impulse timing (macOS)
+        id: aac_timing
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node --test packages/electron-host/test/audio-aac-timing.integration.test.cjs 2>&1 | tee "$RUNNER_TEMP/aac-timing.log"
+      - name: Save AAC timing evidence (macOS)
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          node -e 'const fs=require("node:fs");const logPath=process.env.RUNNER_TEMP+"/aac-timing.log";const log=fs.existsSync(logPath)?fs.readFileSync(logPath,"utf8"):"";const marker="AAC_TIMING_EVIDENCE ";const line=log.split(/\r?\n/).find(value=>value.includes(marker));const evidence=line?JSON.parse(line.slice(line.indexOf(marker)+marker.length)):{status:"missing-evidence"};fs.writeFileSync(process.env.RUNNER_TEMP+"/aac-timing.json",JSON.stringify(evidence,null,2)+"\n");'
       - name: Verify Electron media host (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -78,6 +91,9 @@ jobs:
       - name: Validate authored footage and audio (macOS)
         if: runner.os == 'macOS'
         run: node scripts/verify-footage-native.mjs "$CARGO_TARGET_DIR/debug/velocast-renderer" "$RUNNER_TEMP/footage-native"
+      - name: Enforce AAC timing probe result (macOS)
+        if: always() && runner.os == 'macOS' && steps.aac_timing.outcome == 'failure'
+        run: exit 1
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -86,3 +102,5 @@ jobs:
             ${{ runner.temp }}/electron-portable
             ${{ runner.temp }}/footage-native/verification.json
             ${{ runner.temp }}/electron-cargo-tree.txt
+            ${{ runner.temp }}/aac-timing.log
+            ${{ runner.temp }}/aac-timing.json

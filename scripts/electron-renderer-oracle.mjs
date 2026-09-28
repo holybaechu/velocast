@@ -151,26 +151,51 @@ export function median(values) {
 export function assertWebCodecsTelemetry(report, backend, expectedFrames) {
   if (backend !== "electron")
     throw new Error("Only the Electron browser host is supported");
-  const captures = ["electron_shared_texture", "electron_software_bgra"];
+  const captures = ["electron_shared_texture", "electron_bitmap"];
   if (!captures.includes(report.capture_backend))
     throw new Error(
       `capture_backend ${report.capture_backend}; expected Electron capture`,
+    );
+  if (report.capture_backend === "electron_bitmap") {
+    if (
+      !report.fallback_used ||
+      typeof report.fallback_reason !== "string" ||
+      !report.fallback_reason.trim()
+    )
+      throw new Error("Bitmap capture requires a recorded fallback reason");
+    if (report.cpu_readback_frames !== expectedFrames)
+      throw new Error(
+        `Bitmap readback count ${report.cpu_readback_frames}; expected ${expectedFrames}`,
+      );
+  } else if (
+    report.fallback_used ||
+    report.fallback_reason ||
+    report.cpu_readback_frames !== 0
+  ) {
+    throw new Error("Shared-texture capture reported fallback or CPU readback");
+  }
+  const hardwarePreference = report.webcodecs?.hardware_acceleration;
+  if (
+    hardwarePreference !== undefined &&
+    !["prefer-hardware", "prefer-software", "no-preference"].includes(
+      hardwarePreference,
+    )
+  )
+    throw new Error(
+      `Unknown WebCodecs hardware preference: ${hardwarePreference}`,
     );
   if (report.conversion_backend !== "chromium_webcodecs")
     throw new Error(
       `conversion_backend ${report.conversion_backend} is not Chromium WebCodecs`,
     );
-  if (!/^electron_webcodecs_(h264|hevc|av1)$/.test(report.encoder_backend ?? ""))
+  if (
+    !/^electron_webcodecs_(h264|hevc|av1)$/.test(report.encoder_backend ?? "")
+  )
     throw new Error(
       `encoder_backend ${report.encoder_backend} is not WebCodecs`,
     );
-  if (
-    report.dropped_frames !== 0 ||
-    report.stale_frames !== 0
-  )
-    throw new Error(
-      `WebCodecs frame drop/stale: ${JSON.stringify(report)}`,
-    );
+  if (report.dropped_frames !== 0 || report.stale_frames !== 0)
+    throw new Error(`WebCodecs frame drop/stale: ${JSON.stringify(report)}`);
   for (const field of ["frames_expected", "frames_rendered", "frames_encoded"])
     if (report[field] !== expectedFrames)
       throw new Error(`${field} ${report[field]}; expected ${expectedFrames}`);

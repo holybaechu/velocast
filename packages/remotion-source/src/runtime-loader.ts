@@ -45,7 +45,8 @@ function isProjectDependency(
     const candidate = join(directory, "node_modules", name, "package.json");
     if (
       existsSync(candidate) &&
-      realpathSync(candidate) === realpathSync(resolvedPath)
+      // Native realpath also normalizes Windows drive casing and short names.
+      realpathSync.native(candidate) === realpathSync.native(resolvedPath)
     )
       return true;
     if (dirname(directory) === directory) return false;
@@ -63,7 +64,7 @@ export function loadProjectRemotionRuntime(
       const path = projectRequire.resolve(`${name}/package.json`);
       if (!isProjectDependency(entryPoint, name, path))
         throw new Error(
-          "Resolved outside the entry project's dependency tree (for example, through NODE_PATH)",
+          `Resolved outside the entry project's dependency tree (for example, through NODE_PATH): ${path}`,
         );
       const manifest = projectRequire(path) as { version?: unknown };
       if (typeof manifest.version !== "string")
@@ -106,7 +107,7 @@ export function loadProjectRemotionRuntime(
       : ["remotion", "react", "react-dom"]) {
       let actual: string;
       try {
-        actual = realpathSync(
+        actual = realpathSync.native(
           ownerRequire.resolve(`${dependency}/package.json`),
         );
       } catch (cause) {
@@ -115,7 +116,7 @@ export function loadProjectRemotionRuntime(
           { cause },
         );
       }
-      if (actual !== realpathSync(packages.get(dependency)!.path))
+      if (actual !== realpathSync.native(packages.get(dependency)!.path))
         throw new Error(
           `${owner} resolves a different ${dependency} installation than the entry project. Deduplicate the project's ${dependency} dependency to preserve a single runtime.`,
         );

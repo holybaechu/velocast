@@ -6,6 +6,8 @@ const fs = require("node:fs"),
   vm = require("node:vm");
 const { EventEmitter } = require("node:events");
 const { createRequire } = require("node:module");
+const os = require("node:os");
+const { createMediaSession } = require("../media-client.cjs");
 
 function fixture({
   transientLocks = 0,
@@ -14,6 +16,7 @@ function fixture({
   osGone = false,
   cooperative = false,
   probeDenied = false,
+  inheritedPipes = false,
 } = {}) {
   const events = [],
     directories = [];
@@ -29,7 +32,8 @@ function fixture({
     parentComplete = true;
     main.exitCode = code;
     events.push("parent-exit");
-    main.emit("close", code);
+    main.emit("exit", code);
+    if (!inheritedPipes) main.emit("close", code);
   };
   const spawn = (binary, _args, options) => {
     const child = new EventEmitter();
@@ -51,6 +55,25 @@ function fixture({
       main = child;
       child.stdin = new EventEmitter();
       child.stderr = new EventEmitter();
+      for (const [name, stream] of [
+        ["stdin", child.stdin],
+        ["stderr", child.stderr],
+      ]) {
+        stream.destroy = () => {
+          if (stream.destroyed) return;
+          stream.destroyed = true;
+          events.push(`${name}-destroy`);
+          if (
+            inheritedPipes &&
+            parentComplete &&
+            child.stdin.destroyed &&
+            child.stderr.destroyed
+          ) {
+            events.push("pipes-close");
+            child.emit("close", child.exitCode);
+          }
+        };
+      }
       child.stdin.end = () => {
         events.push("stdin-end");
         if (cooperative) setTimeout(() => finishMain(0), 5);
@@ -200,6 +223,59 @@ test("successful cooperative shutdown also yields between delayed profile-unlock
   }
 });
 
+test(
+  "cooperative exit releases inherited pipe ends without waiting for descendant EOF",
+  { timeout: 3000 },
+  async () => {
+    const f = fixture({ cooperative: true, inheritedPipes: true });
+    try {
+      const result = await f.client.runMediaOperation(
+        { kind: "probe" },
+        { electronBinary: "fake-electron", timeoutMs: 1000 },
+      );
+      assert.equal(result.decoded, true);
+      assert.equal(f.events.includes("taskkill-start"), false);
+      assert.ok(
+        f.events.indexOf("stdin-destroy") > f.events.indexOf("parent-exit"),
+      );
+      assert.ok(
+        f.events.indexOf("stderr-destroy") > f.events.indexOf("parent-exit"),
+      );
+      assert.ok(f.events.indexOf("remove") > f.events.indexOf("pipes-close"));
+      assert.equal(fs.existsSync(f.directories[0]), false);
+    } finally {
+      await f.cleanup();
+    }
+  },
+);
+
+test(
+  "forced exit waits for tree termination before releasing inherited pipes",
+  { timeout: 3000 },
+  async () => {
+    const f = fixture({ inheritedPipes: true });
+    try {
+      await assert.rejects(
+        f.client.runMediaOperation(
+          { kind: "probe" },
+          { electronBinary: "fake-electron", timeoutMs: 1000 },
+        ),
+        /fixture operation failed/,
+      );
+      assert.ok(
+        f.events.indexOf("stdin-destroy") > f.events.indexOf("taskkill-exit"),
+      );
+      assert.ok(
+        f.events.indexOf("stderr-destroy") > f.events.indexOf("taskkill-exit"),
+      );
+      assert.ok(f.events.indexOf("remove") > f.events.indexOf("pipes-close"));
+      assert.equal(fs.existsSync(f.directories[0]), false);
+    } finally {
+      await f.cleanup();
+    }
+  },
+);
+
 test("taskkill255 accepts OS absence while still awaiting delayed Node process close", async () => {
   const f = fixture({ killerCode: 255, osGone: true });
   try {
@@ -219,6 +295,61 @@ test("taskkill255 accepts OS absence while still awaiting delayed Node process c
     await f.cleanup();
   }
 });
+
+test(
+  "real process exit releases stderr still inherited by a live descendant",
+  { skip: process.platform !== "win32", timeout: 20000 },
+  async () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "velocast-inherited-pipe-test-"),
+    );
+    const started = path.join(directory, "started"),
+      finished = path.join(directory, "finished");
+    const waitFor = async (predicate) => {
+      const deadline = Date.now() + 12000;
+      while (!predicate()) {
+        assert.ok(Date.now() < deadline, "fixture did not finish");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    };
+    let session;
+    try {
+      session = await createMediaSession({
+        electronBinary: process.execPath,
+        hostScript: path.join(__dirname, "support/media-main.cjs"),
+        env: { PIPE_TEST_ROOT: directory },
+        timeoutMs: 5000,
+      });
+      await waitFor(() => fs.existsSync(started));
+      assert.equal((await session.run({ kind: "probe" })).complete, true);
+      await session.close();
+      session = null;
+      assert.equal(
+        fs.existsSync(finished),
+        false,
+        "session close waited for descendant EOF instead of releasing its pipe ends",
+      );
+      assert.doesNotThrow(
+        () => process.kill(Number(fs.readFileSync(started, "utf8")), 0),
+        "fixture descendant must still own the inherited write end",
+      );
+    } finally {
+      fs.writeFileSync(path.join(directory, "stop"), "stop");
+      await session?.close();
+      const pid = Number(fs.readFileSync(started, "utf8"));
+      // Existence probes are read-only; never signal a potentially recycled PID.
+      await waitFor(() => {
+        try {
+          process.kill(pid, 0);
+          return false;
+        } catch (error) {
+          return error.code === "ESRCH";
+        }
+      });
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("persistent cleanup failures retain the original operation error and report cleanup failure", async () => {
   const f = fixture({ removalError: "EACCES" });

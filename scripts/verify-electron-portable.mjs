@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   assertFrameOracle,
+  assertWebCodecsTelemetry,
   COLORS,
   FRAME_STATES,
   HEIGHT,
@@ -289,17 +290,10 @@ for (let run = 1; run <= repeats; run++)
       states.map((_, frame) => frame),
     );
     const data = JSON.parse(await readFile(telemetry, "utf8"));
-    if (
-      !["electron_shared_texture", "electron_software_bgra"].includes(data.capture_backend) ||
-      data.frames_encoded !== frames
-    )
-      throw new Error(`Wrong ${encoder} telemetry: ${JSON.stringify(data)}`);
-    if (
-      data.encoder_backend !== "electron_webcodecs_h264" ||
-      data.conversion_backend !== "chromium_webcodecs"
-    ) {
-      throw new Error(`Wrong WebCodecs telemetry: ${JSON.stringify(data)}`);
-    }
+    assertWebCodecsTelemetry(data, "electron", frames);
+    if (data.encoder_backend !== "electron_webcodecs_h264" ||
+        !["prefer-hardware", "no-preference"].includes(data.webcodecs?.hardware_acceleration))
+      throw new Error(`Wrong ${encoder} selection: ${JSON.stringify(data)}`);
     return {
       decodedFrames: decoded,
       captureBackend: data.capture_backend,
@@ -496,8 +490,8 @@ if(process.env.VELOCAST_ELECTRON_SURFACE_MODE==="bitmap"){
   if ((await readFile(marker, "utf8")) !== before)
     throw new Error("Previous output changed before bitmap retry started");
   const data = JSON.parse(await readFile(telemetry, "utf8"));
-  if (!data.fallback_used || data.capture_backend !== "electron_bitmap" ||
-      data.cpu_readback_frames !== 6 || data.frames_encoded !== 6)
+  assertWebCodecsTelemetry(data, "electron", 6);
+  if (data.capture_backend !== "electron_bitmap")
     throw new Error(`Wrong bitmap fallback telemetry: ${JSON.stringify(data)}`);
   if (sha(await readFile(video)) === before)
     throw new Error("Bitmap fallback did not publish new output");

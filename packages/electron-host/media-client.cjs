@@ -76,6 +76,16 @@ async function createMediaSession(options = {}) {
     tail = Promise.resolve(),
     closePromise;
   let joined = Promise.resolve();
+  let transportJoined = Promise.resolve();
+  const closeTransport = async () => {
+    // Child `exit` proves the process has ended; `close` also waits for pipe
+    // EOF. Chromium descendants can inherit stderr past Electron's exit. We
+    // own these pipe ends and must release them instead of awaiting that EOF.
+    child?.stdin?.destroy();
+    child?.stdout?.destroy();
+    child?.stderr?.destroy();
+    await waitBounded(transportJoined, 1000, "media.transport_close_timeout");
+  };
   const sessionAbort = () => {
     void close(true).catch(() => {});
   };
@@ -163,10 +173,12 @@ async function createMediaSession(options = {}) {
         }
         if (killPromise) await killPromise;
         await waitBounded(joined, 10000, "media.process_join_timeout");
+        await closeTransport();
       } catch (error) {
         child?.kill();
         try {
           await waitBounded(joined, 10000, "media.process_join_timeout");
+          await closeTransport();
         } catch (joinError) {
           error = cleanupFailure(error, joinError);
         }
@@ -235,15 +247,27 @@ async function createMediaSession(options = {}) {
     child.stderr.on("data", (data) => {
       stderr = (stderr + data).slice(-16000);
     });
+    let resolveTransport;
+    transportJoined = new Promise((resolve) => {
+      resolveTransport = resolve;
+    });
     joined = new Promise((resolve) => {
-      child.once("error", (error) => {
-        exitError = error;
-      });
-      child.once("close", (code) => {
+      const recordExit = (code) => {
+        if (exited) return;
         exited = true;
         if (code !== 0)
           exitError ??= new Error(`media.host_failed (${code}): ${stderr}`);
         resolve();
+      };
+      child.once("error", (error) => {
+        exitError = error;
+        // A failed spawn has no process and never emits `exit`.
+        if (!child.pid) recordExit(null);
+      });
+      child.once("exit", recordExit);
+      child.once("close", (code) => {
+        recordExit(code);
+        resolveTransport();
       });
     });
     const result = await readResult(
