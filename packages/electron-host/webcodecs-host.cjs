@@ -79,8 +79,12 @@ class WebCodecsHost {
     this.window.webContents.on("will-attach-webview", (event) =>
       event.preventDefault(),
     );
-    this.window.webContents.on("render-process-gone", () =>
-      this.pending?.reject(new Error("webcodecs.renderer_exited")),
+    this.window.webContents.on("render-process-gone", (_event, details) =>
+      this.pending?.reject(
+        new Error(
+          `webcodecs.renderer_exited: ${details.reason} (exit ${details.exitCode})`,
+        ),
+      ),
     );
     this.window.webContents.on("preload-error", (_event, _path, error) =>
       this.pending?.reject(

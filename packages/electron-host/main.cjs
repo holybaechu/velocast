@@ -142,6 +142,7 @@ function onPaint(event, dirtyRect, image) {
       size.height !== waiter.request.expectedHeight
     ) {
       waiter.staleSizePaints++;
+      waiter.lastPaintSize = size;
       schedulePaintRetry(waiter);
       return;
     }
@@ -356,11 +357,12 @@ async function waitForPaint(request) {
       const missingGpuPaints = paintWaiter.missingGpuPaints;
       const staleSizePaints = paintWaiter.staleSizePaints;
       const cachedPaints = paintWaiter.cachedPaints;
+      const lastPaintSize = paintWaiter.lastPaintSize;
       clearTimeout(paintWaiter.retryTimer);
       paintWaiter = null;
       reject(
         new Error(
-          `Electron ${surfaceMode} paint timed out (${missingGpuPaints} null textures, ${staleSizePaints} old-size textures, ${cachedPaints} cached replays)`,
+          `Electron ${surfaceMode} paint timed out (${missingGpuPaints} null textures, ${staleSizePaints} old-size textures, ${cachedPaints} cached replays; expected ${request.expectedWidth}x${request.expectedHeight}, last ${lastPaintSize ? `${lastPaintSize.width}x${lastPaintSize.height}` : "none"}, viewport ${width}x${height})`,
         ),
       );
     }, PAINT_TIMEOUT_MS);
@@ -409,6 +411,7 @@ async function commandLoad(command) {
       width,
       height,
       useContentSize: true,
+      enableLargerThanScreen: true,
       frame: false,
       backgroundColor: "#000000",
       webPreferences: {
@@ -437,9 +440,10 @@ async function commandLoad(command) {
       cleanup();
     });
     window.on("closed", () => cleanup());
-  } else {
-    window.setContentSize(width, height);
   }
+  // Some window managers clamp constructor bounds to the display work area.
+  // Apply the requested offscreen viewport explicitly before observing it.
+  window.setContentSize(width, height);
   await deadline(window.loadURL(url), LOAD_TIMEOUT_MS, "Electron page load");
   if (software || bitmap) {
     // loadURL resolves before the offscreen output device has presented its

@@ -85,9 +85,12 @@ for (const [mode, cpuCompositor] of [
       await request({
         method: "load",
         url: pathToFileURL(html).href,
-        width: 160,
-        height: 100,
+        // Exercise constructor clamping on displays smaller than the viewport.
+        width: cpuCompositor ? 4096 : 160,
+        height: cpuCompositor ? 2160 : 100,
       });
+      if (cpuCompositor)
+        await request({ method: "resize", width: 160, height: 100 });
       const audioRate = mode === "bitmap" ? 44100 : 48000;
       const audioSamples = audioRate / 5;
       const opened = await request({
