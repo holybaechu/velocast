@@ -89,6 +89,7 @@ const cli = async (file, codec, audioCodec, extra = []) => {
     ],
     {
       cwd: output,
+      env: { ...process.env, VELOCAST_MEDIA_TRACE: `${file}.pixels.jsonl` },
       windowsHide: true,
       timeout: 180000,
       maxBuffer: 4 * 1024 * 1024,

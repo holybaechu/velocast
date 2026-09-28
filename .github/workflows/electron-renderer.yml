@@ -115,6 +115,7 @@ jobs:
             ${{ runner.temp }}/footage-native/verification.json
             ${{ runner.temp }}/footage-native/composed.mp4
             ${{ runner.temp }}/footage-native/report.json
+            ${{ runner.temp }}/footage-native/capture-pixels.jsonl
             ${{ runner.temp }}/electron-cargo-tree.txt
             ${{ runner.temp }}/media-formats
             ${{ runner.temp }}/aac-timing.log

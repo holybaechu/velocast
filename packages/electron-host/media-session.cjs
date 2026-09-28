@@ -1,5 +1,6 @@
 "use strict";
-const { mb, outputFile, probe } = require("./media-io.cjs");
+const { mb, outputFile, probe, absolute } = require("./media-io.cjs");
+const fs = require("node:fs");
 const { mediaSettings } = require("./media-settings.cjs");
 const { registerNativeMedia } = require("./native-media.cjs");
 const {
@@ -126,17 +127,7 @@ class NativeMediaSession {
           fullRange: true,
         },
       });
-      const before = this.bytes ?? 0;
-      await this.source.add(sample);
-      this.frames++;
-      return {
-        index,
-        ...timing,
-        frames: this.frames,
-        encodedFrames: this.packets,
-        bytes: (this.bytes ?? 0) - before,
-        colorSpace: this.colorSpace,
-      };
+      return await this.submit(sample, index, timing);
     } catch (error) {
       await this.cancel();
       throw error;
@@ -144,6 +135,69 @@ class NativeMediaSession {
       sample?.close();
       frame?.close();
       imported.release();
+      this.busy = false;
+    }
+  }
+  async submit(sample, index, timing) {
+    const before = this.bytes ?? 0;
+    await this.source.add(sample);
+    this.frames++;
+    return {
+      index,
+      ...timing,
+      frames: this.frames,
+      encodedFrames: this.packets,
+      bytes: (this.bytes ?? 0) - before,
+      colorSpace: this.colorSpace,
+    };
+  }
+  async encodeBitmap(data, index) {
+    if (this.busy) throw new Error("media.busy");
+    this.busy = true;
+    let sample;
+    try {
+      if (!this.sink || this.finished || index !== this.frames)
+        throw new Error("media.invalid_sequence");
+      const { width, height, fps } = this.settings;
+      if (
+        !(data instanceof Uint8Array) ||
+        data.byteLength !== width * height * 4
+      )
+        throw new Error("media.invalid_bitmap");
+      const timing = frameTiming(index, fps);
+      // The compositor has already provided CPU pixels. Do not upload these
+      // bytes into a VideoFrame/Canvas solely to read them back again.
+      sample = new mb.VideoSample(data, {
+        format: "BGRA",
+        codedWidth: width,
+        codedHeight: height,
+        timestamp: timing.timestamp / 1e6,
+        duration: timing.duration / 1e6,
+        colorSpace: {
+          primaries: "bt709",
+          transfer: "iec61966-2-1",
+          matrix: "rgb",
+          fullRange: true,
+        },
+      });
+      if (process.env.VELOCAST_MEDIA_TRACE) {
+        const at = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4;
+        fs.appendFileSync(
+          absolute(process.env.VELOCAST_MEDIA_TRACE),
+          JSON.stringify({
+            index,
+            stage: "native-bitmap-input",
+            rgb: [data[at + 2], data[at + 1], data[at]],
+          }) + "\n",
+          { mode: 0o600 },
+        );
+      }
+      return await this.submit(sample, index, timing);
+    } catch (error) {
+      await this.cancel();
+      throw error;
+    } finally {
+      sample?.close();
       this.busy = false;
     }
   }
@@ -177,6 +231,7 @@ class NativeMediaSession {
 
 class MediaSession {
   async open(settings) {
+    this.settings = settings;
     const selected = mediaSettings(settings);
     this.session =
       selected.backend === "native"
@@ -194,6 +249,34 @@ class MediaSession {
   }
   encode(...args) {
     return this.session.encode(...args);
+  }
+  encodeBitmap(settings) {
+    if (
+      settings.width !== this.settings.width ||
+      settings.height !== this.settings.height
+    )
+      throw new Error("media.invalid_bitmap_geometry");
+    if (this.session instanceof NativeMediaSession)
+      return this.session.encodeBitmap(settings.data, settings.index);
+    return this.session.encode(
+      {
+        getVideoFrame: () =>
+          new VideoFrame(settings.data, {
+            format: "BGRA",
+            codedWidth: settings.width,
+            codedHeight: settings.height,
+            timestamp: 0,
+            colorSpace: {
+              primaries: "bt709",
+              transfer: "iec61966-2-1",
+              matrix: "rgb",
+              fullRange: true,
+            },
+          }),
+        release() {},
+      },
+      settings.index,
+    );
   }
   finish() {
     return this.session.finish();
