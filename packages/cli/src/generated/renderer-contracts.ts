@@ -704,6 +704,10 @@ export interface RenderJob {
   selector?: string | null;
   output: string;
   codec: string;
+  container?: string | null;
+  audio_codec?: string | null;
+  media_backend?: string | null;
+  video_profile?: string | null;
   pixel_format?: string | null;
   bitrate_bps?: number | null;
   acceleration?: RendererAcceleration;
@@ -777,6 +781,30 @@ export function validateRenderJob(value: unknown): asserts value is RenderJob {
     throw new Error("RenderJob.output must match string");
   if (!(typeof record.codec === "string"))
     throw new Error("RenderJob.codec must match string");
+  if (!(
+    record.container === undefined ||
+    record.container === null ||
+    typeof record.container === "string"
+  ))
+    throw new Error("RenderJob.container must match string");
+  if (!(
+    record.audio_codec === undefined ||
+    record.audio_codec === null ||
+    typeof record.audio_codec === "string"
+  ))
+    throw new Error("RenderJob.audio_codec must match string");
+  if (!(
+    record.media_backend === undefined ||
+    record.media_backend === null ||
+    typeof record.media_backend === "string"
+  ))
+    throw new Error("RenderJob.media_backend must match string");
+  if (!(
+    record.video_profile === undefined ||
+    record.video_profile === null ||
+    typeof record.video_profile === "string"
+  ))
+    throw new Error("RenderJob.video_profile must match string");
   if (!(
     record.pixel_format === undefined ||
     record.pixel_format === null ||

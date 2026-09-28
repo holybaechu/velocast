@@ -48,11 +48,12 @@ pub async fn render_segments(
     report: &mut RenderTelemetry,
     events: &mut crate::events::RendererEventSink,
 ) -> anyhow::Result<()> {
+    let container = crate::webcodecs::container(job)?;
     let paths: Vec<PathBuf> = plan
         .ranges
         .iter()
         .enumerate()
-        .map(|(i, _)| directory.join(format!("segment-{i:04}.mp4")))
+        .map(|(i, _)| directory.join(format!("segment-{i:04}.{container}")))
         .collect();
     let reports: Vec<PathBuf> = paths
         .iter()
@@ -74,8 +75,13 @@ pub async fn render_segments(
         command
             .arg("--job-json")
             .arg(serde_json::to_string(&worker)?);
-        if browser.surface_mode() == crate::browser_surface::BrowserSurfaceMode::Bitmap {
+        if browser.surface_mode().is_bitmap() {
             command.env("VELOCAST_ELECTRON_FORCE_BITMAP", "1");
+        }
+        if browser.surface_mode() == crate::browser_surface::BrowserSurfaceMode::CpuBitmap {
+            command.env("VELOCAST_ELECTRON_CPU_BITMAP", "1");
+        } else {
+            command.env_remove("VELOCAST_ELECTRON_CPU_BITMAP");
         }
         #[cfg(windows)]
         {
@@ -138,10 +144,12 @@ pub async fn render_segments(
     }
     let now = std::time::Instant::now();
     let metadata = browser.media_operation(
-        json!({"kind":"concat","paths":paths,"outputPath":std::path::absolute(output)?}),
+        json!({"kind":"concat","paths":paths,"outputPath":std::path::absolute(output)?,"fps":composition.fps}),
     )?;
     report.mux_or_remux_ms += now.elapsed().as_millis();
     crate::output_media::validate_video(&metadata, composition, composition.duration_frames)?;
+    crate::output_media::validate_codec(&metadata, crate::webcodecs::codec(job)?)?;
+    crate::output_media::validate_container(&metadata, crate::webcodecs::container(job)?)?;
     report.worker_backend_compatibility = Some("compatible".into());
     resources.check_cancellation()?;
     Ok(())

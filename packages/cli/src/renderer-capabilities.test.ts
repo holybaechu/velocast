@@ -19,8 +19,9 @@ describe("Electron-only capability negotiation", () => {
       outputApiVersion: 1,
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 2,
+      electronHostProtocolVersion: 3,
       videoEncoderBackend: "webcodecs",
+      supportedMediaBackends: ["webcodecs", "native"],
       mediaRuntime: "mediabunny",
       hardwareAccelerationGuarantee: false,
     };
@@ -40,8 +41,9 @@ describe("Electron-only capability negotiation", () => {
       probe({
         browserHosts: ["cef", "electron"],
         defaultBrowserHost: "cef",
-        electronHostProtocolVersion: 2,
+        electronHostProtocolVersion: 3,
         videoEncoderBackend: "webcodecs",
+        supportedMediaBackends: ["webcodecs", "native"],
         mediaRuntime: "mediabunny",
         hardwareAccelerationGuarantee: false,
       }).available,
@@ -61,8 +63,9 @@ describe("Electron-only capability negotiation", () => {
           outputApiVersion: 1,
           browserHosts: ["electron"],
           defaultBrowserHost: "electron",
-          electronHostProtocolVersion: 2,
+          electronHostProtocolVersion: 3,
           videoEncoderBackend: "webcodecs",
+          supportedMediaBackends: ["webcodecs", "native"],
           mediaRuntime: "mediabunny",
           hardwareAccelerationGuarantee: false,
         },
@@ -71,7 +74,7 @@ describe("Electron-only capability negotiation", () => {
     ).toBe(true);
   });
 
-  it.each([0, 1, "2", true, null])(
+  it.each([0, 1, 2, "3", true, null])(
     "rejects unsupported host protocol %s",
     (version) => {
       expect(
@@ -82,4 +85,22 @@ describe("Electron-only capability negotiation", () => {
       ).toBe(false);
     },
   );
+
+  it("requires both negotiated media backends while retaining the legacy encoder field", () => {
+    const caps = {
+      outputApiVersion: 1,
+      browserHosts: ["electron"],
+      defaultBrowserHost: "electron",
+      electronHostProtocolVersion: 3,
+      videoEncoderBackend: "webcodecs",
+      supportedMediaBackends: ["webcodecs"],
+      mediaRuntime: "mediabunny",
+      hardwareAccelerationGuarantee: false,
+    };
+    expect(probe(caps).available).toBe(false);
+    expect(
+      probe({ ...caps, supportedMediaBackends: ["webcodecs", "native"] })
+        .available,
+    ).toBe(true);
+  });
 });

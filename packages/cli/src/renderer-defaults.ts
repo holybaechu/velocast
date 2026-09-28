@@ -4,7 +4,8 @@ export const defaultRendererAcceleration: RendererAcceleration = "auto";
 
 export function defaultRendererPixelFormat(
   acceleration: RendererAcceleration,
+  codec?: string,
 ): string {
-  // Auto prioritizes the GPU-compatible path; explicit formats remain binding.
-  return acceleration === "off" ? "yuv444p" : "nv12";
+  void acceleration;
+  return codec === "prores" ? "yuv422p10le" : "yuv420p";
 }

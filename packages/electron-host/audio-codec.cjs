@@ -1,17 +1,25 @@
 "use strict";
+const { AUDIO_CODECS } = require("./media-settings.cjs");
 
 async function selectAudioEncoder(requested = "auto", format, isSupported) {
-  if (!["auto", "aac", "opus"].includes(requested)) {
-    throw new Error("media.invalid_audio_codec: use auto, aac or opus");
+  if (!["auto", ...AUDIO_CODECS].includes(requested)) {
+    throw new Error("media.invalid_audio_codec");
   }
-  for (const codec of requested === "auto" ? ["aac", "opus"] : [requested]) {
+  const candidates = ["webm", "mkv"].includes(format.container)
+    ? ["opus", "aac"]
+    : ["aac", "opus"];
+  for (const codec of requested === "auto" ? candidates : [requested]) {
+    if (format.container === "webm" && !["opus", "vorbis"].includes(codec))
+      continue;
     // Opus timestamps and MP4 playback use the native 48 kHz clock. Resampling
     // is performed explicitly by the filtered streaming PCM path before encode.
     const sampleRate = codec === "opus" ? 48000 : format.sampleRate;
     const options = {
       sampleRate,
       numberOfChannels: format.numberOfChannels,
-      bitrate: 192000,
+      ...(!codec.startsWith("pcm-") && codec !== "flac"
+        ? { bitrate: 192000 }
+        : {}),
     };
     if (await isSupported(codec, options)) {
       return {
@@ -19,7 +27,7 @@ async function selectAudioEncoder(requested = "auto", format, isSupported) {
         ...options,
         requestedCodec: requested,
         sourceSampleRate: format.sampleRate,
-        fallbackUsed: requested === "auto" && codec === "opus",
+        fallbackUsed: requested === "auto" && codec !== candidates[0],
       };
     }
   }

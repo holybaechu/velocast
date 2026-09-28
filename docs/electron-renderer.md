@@ -1,20 +1,21 @@
 # Electron renderer
 
-Electron is Velocast's browser host. Chromium WebCodecs encodes video and
-Mediabunny reads and writes media. Standard Cargo builds include the renderer
+Electron is Velocast's browser host. Mediabunny supplies native software codecs
+and container I/O; Chromium WebCodecs remains an explicit video backend.
+Standard Cargo builds include the renderer
 without feature flags. The CLI discovers the installed workspace host or uses
 the host inside a prepared runtime.
 
 The native renderer retains exact frame scheduling, deterministic composition
 inspection, cancellation, and transactional output publication. A single-frame
-PNG request uses Electron's bitmap capture. Video frames use Electron's
-shared-texture path when available. The actual Chromium encoder implementation
+PNG requests and native video use Electron's bitmap capture. Explicit WebCodecs
+video uses shared textures when available. The actual Chromium encoder implementation
 and internal GPU copies are not observable by Velocast.
 
-`auto` acceleration asks Chromium to prefer hardware; `off` asks it to prefer
-software. `required` is unsupported because WebCodecs cannot guarantee that
-hardware was selected. H.264 is the portable baseline; HEVC and AV1 depend on
-platform codec support. See [WebCodecs rendering](webcodecs.md) for scope.
+The native backend reads frames into CPU memory and uses software codecs.
+WebCodecs acceleration `auto` prefers hardware and `off` prefers software;
+`required` remains unsupported. See [media backends and formats](webcodecs.md)
+for supported combinations and the Windows x64 VP9 fallback.
 
 ## Build and run
 
@@ -33,7 +34,8 @@ display or Xvfb. The checked-in release manifest has no published native
 artifacts; a source build or private candidate is required.
 
 The native binary reports one browser host, `electron`, host protocol version
-2, `videoEncoderBackend: webcodecs`, and `mediaRuntime: mediabunny`. The CLI
+3, `supportedMediaBackends: [webcodecs, native]`, the legacy
+`videoEncoderBackend: webcodecs` field, and `mediaRuntime: mediabunny`. The CLI
 rejects older binaries and incompatible host protocols. A prepared runtime's
 adjacent `electron-runtime.json` selects its bundled Electron, host scripts,
 and media package. See [Windows runtime preparation](windows-runtime-candidate-prep.md).
@@ -43,6 +45,7 @@ and media package. See [Windows runtime preparation](windows-runtime-candidate-p
 ```sh
 pnpm check:fast
 pnpm electron:verify-portable --renderer ABSOLUTE_RENDERER --output NEW-TEMP-DIR
+node scripts/verify-media-formats.mjs --renderer ABSOLUTE_RENDERER --output ANOTHER-NEW-TEMP-DIR
 ```
 
 The portable gate checks frame identity and order, PNG and offset capture,

@@ -9,9 +9,13 @@ const { spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { hostResponses } = require("./host-responses.cjs");
 
-for (const mode of ["webcodecs", "bitmap"])
+for (const [mode, cpuCompositor] of [
+  ["webcodecs", false],
+  ["bitmap", false],
+  ["bitmap", true],
+])
   test(
-    `${mode} captures encode changing and repeated frames through real WebCodecs`,
+    `${mode}${cpuCompositor ? " CPU compositor" : ""} captures encode changing and repeated frames through real WebCodecs`,
     {
       skip: !process.env.VELOCAST_WEBCODECS_TEST_BINARY,
       timeout: 60_000,
@@ -30,13 +34,23 @@ for (const mode of ["webcodecs", "bitmap"])
       const env = {
         ...process.env,
         VELOCAST_ELECTRON_SURFACE_MODE: mode,
+        VELOCAST_ELECTRON_CPU_BITMAP: "0",
         VELOCAST_ELECTRON_FRAME_DIRECTORY: directory,
         VELOCAST_ELECTRON_PROFILE_DIRECTORY: profile,
       };
       delete env.ELECTRON_RUN_AS_NODE;
+      let hostScript = path.resolve(__dirname, "../main.cjs");
+      if (cpuCompositor) {
+        const wrapper = path.join(directory, "cpu-host.cjs");
+        fs.writeFileSync(
+          wrapper,
+          `process.env.VELOCAST_ELECTRON_CPU_BITMAP="1";require("electron").app.disableHardwareAcceleration();require(${JSON.stringify(hostScript)});\n`,
+        );
+        hostScript = wrapper;
+      }
       const child = spawn(
         process.env.VELOCAST_WEBCODECS_TEST_BINARY,
-        [path.resolve(__dirname, "../main.cjs")],
+        [hostScript],
         { env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
       );
       const responses = hostResponses(child);
@@ -72,14 +86,18 @@ for (const mode of ["webcodecs", "bitmap"])
       await request({
         method: "load",
         url: pathToFileURL(html).href,
-        width: 160,
-        height: 100,
+        // Exercise constructor clamping on displays smaller than the viewport.
+        width: cpuCompositor ? 4096 : 160,
+        height: cpuCompositor ? 2160 : 100,
       });
+      if (cpuCompositor)
+        await request({ method: "resize", width: 160, height: 100 });
       const audioRate = mode === "bitmap" ? 44100 : 48000;
       const audioSamples = audioRate / 5;
       const opened = await request({
         method: "webcodecs-open",
         settings: {
+          mediaBackend: "webcodecs",
           width: 160,
           height: 100,
           fps: 30,
@@ -96,7 +114,12 @@ for (const mode of ["webcodecs", "bitmap"])
           sources: {},
         },
       });
-      assert.equal(opened.config.hardwareAcceleration, "prefer-hardware");
+      assert.ok(
+        (cpuCompositor
+          ? ["prefer-hardware", "no-preference"]
+          : ["prefer-hardware"]
+        ).includes(opened.config.hardwareAcceleration),
+      );
       const colors = [
         [0, 255, 0],
         [255, 0, 0],
@@ -158,7 +181,10 @@ for (const mode of ["webcodecs", "bitmap"])
         const offset = (50 * 160 + 80) * 4;
         for (let channel = 0; channel < 3; channel++) {
           assert.ok(
-            Math.abs(pixels[offset + channel] - color[channel]) < 12,
+            // The hardware H.264 path quantizes saturated primaries (blue 243
+            // for source 255, confirmed with both Chromium and native decode).
+            // Still reject the larger error from a wrong YUV color matrix.
+            Math.abs(pixels[offset + channel] - color[channel]) <= 16,
             `frame ${index}: decoded ${[...pixels.subarray(offset, offset + 3)]}, expected ${color}`,
           );
         }

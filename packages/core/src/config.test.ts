@@ -7,6 +7,10 @@ describe("defineConfig", () => {
       renderer: {
         acceleration: "required",
         concurrency: "auto",
+        container: "mov",
+        audioCodec: "pcm-s24",
+        mediaBackend: "native",
+        videoProfile: "prores_ks",
       },
     } as const;
 
@@ -18,10 +22,18 @@ describe("defineConfig", () => {
       renderer: {
         acceleration: "required",
         concurrency: "auto",
+        container: "mov",
+        audioCodec: "pcm-s24",
+        mediaBackend: "native",
+        videoProfile: "prores_ks",
       },
     });
 
     expectTypeOf(config.renderer.acceleration).toEqualTypeOf<"required">();
     expectTypeOf(config.renderer.concurrency).toEqualTypeOf<"auto">();
+    expectTypeOf(config.renderer.container).toEqualTypeOf<"mov">();
+    expectTypeOf(config.renderer.audioCodec).toEqualTypeOf<"pcm-s24">();
+    expectTypeOf(config.renderer.mediaBackend).toEqualTypeOf<"native">();
+    expectTypeOf(config.renderer.videoProfile).toEqualTypeOf<"prores_ks">();
   });
 });

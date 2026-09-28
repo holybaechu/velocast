@@ -1,11 +1,5 @@
 import { existsSync } from "node:fs";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -61,7 +55,7 @@ it("serializes the default preview range job with its actual wire pixel format",
   expect(jobs[0]).toMatchObject({
     mode: "composition",
     composition_id: "scene",
-    pixel_format: "nv12",
+    pixel_format: "yuv420p",
     acceleration: "auto",
     assembly_mode: "reference",
     concurrency: 1,
@@ -70,10 +64,7 @@ it("serializes the default preview range job with its actual wire pixel format",
     event_log_path: events,
   });
   expect(jobs[0]!.operation).toBeUndefined();
-  await writeFile(
-    join(cwd, "wire-job.json"),
-    JSON.stringify(jobs[0], null, 2),
-  );
+  await writeFile(join(cwd, "wire-job.json"), JSON.stringify(jobs[0], null, 2));
   expect(
     JSON.parse(await readFile(join(cwd, "wire-job.json"), "utf8")),
   ).toEqual(jobs[0]);

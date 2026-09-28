@@ -67,6 +67,8 @@ for (const name of [
   "electron-host/media-runtime.cjs",
   "electron-host/node_modules/mediabunny/package.json",
   "electron-host/node_modules/mediabunny/LICENSE",
+  "electron-host/node_modules/@mediabunny/server/package.json",
+  "electron-host/node_modules/node-av/package.json",
 ])
   if (!paths.has(name)) throw new Error(`candidate.audit_required: ${name}`);
 if (
@@ -75,9 +77,10 @@ if (
   throw new Error("candidate.audit_cef_files: CEF files are forbidden");
 if (
   manifest.rendererCapabilities?.defaultBrowserHost !== "electron" ||
-  manifest.rendererCapabilities?.electronHostProtocolVersion !== 2 ||
+  manifest.rendererCapabilities?.electronHostProtocolVersion !== 3 ||
   manifest.rendererCapabilities?.videoEncoderBackend !== "webcodecs" ||
   manifest.rendererCapabilities?.mediaRuntime !== "mediabunny" ||
+  !manifest.rendererCapabilities?.supportedMediaBackends?.includes("native") ||
   JSON.stringify(manifest.rendererCapabilities?.browserHosts) !== '["electron"]'
 )
   throw new Error(

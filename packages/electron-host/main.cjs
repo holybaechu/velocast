@@ -3,7 +3,7 @@
 // This file is Electron's main process. The composition stays in a sandboxed
 // page without native commands or GPU handles. The optional trusted encoder
 // preload lives in a separate window that never loads composition content.
-const { app, BrowserWindow } = require("electron/main");
+const { app, BrowserWindow, nativeImage } = require("electron/main");
 const fs = require("node:fs");
 const {
   MAX_LINE_BYTES,
@@ -28,7 +28,19 @@ if (!["software", "webcodecs", "bitmap"].includes(surfaceMode)) {
 }
 const software = surfaceMode === "software";
 const bitmap = surfaceMode === "bitmap";
+const cpuBitmap = bitmap && process.env.VELOCAST_ELECTRON_CPU_BITMAP === "1";
 const webcodecs = surfaceMode === "webcodecs" || bitmap;
+// Electron's capability status is usable only after its first GPU info update.
+let gpuInfoAvailable = false;
+let paintWaiter = null;
+let titleWaiter = null;
+app.on("gpu-info-update", () => {
+  gpuInfoAvailable = true;
+  if (paintWaiter) {
+    const failure = gpuCompositorFailure();
+    if (failure) abortPending(failure);
+  }
+});
 let webcodecsEncoder = null;
 // Older protocol-1 controllers do not provide an owned profile directory.
 // Keep their existing startup behavior; updated controllers always isolate it.
@@ -38,7 +50,7 @@ if (process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY !== undefined)
     process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY,
   );
 // This must happen before app.whenReady and before any renderer process exists.
-if (software) app.disableHardwareAcceleration();
+if (software || cpuBitmap) app.disableHardwareAcceleration();
 const softwareFrames = software
   ? new SoftwareFrameLease(process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY)
   : null;
@@ -46,11 +58,10 @@ app.commandLine.appendSwitch("force-device-scale-factor", "1");
 app.commandLine.appendSwitch("disable-background-timer-throttling");
 
 let window = null;
-let paintWaiter = null;
-let titleWaiter = null;
 let closed = false;
 let leaseTimer = null;
 let inputStream = null;
+let snapshotViewport = null;
 const debug = (...parts) => {
   if (process.env.VELOCAST_ELECTRON_HOST_DEBUG === "1") {
     process.stderr.write(`[electron-host] ${parts.join(" ")}\n`);
@@ -90,7 +101,7 @@ function abortPending(error) {
   }
 }
 
-function cleanup() {
+async function cleanup() {
   debug("cleanup entered");
   if (closed) return;
   closed = true;
@@ -100,7 +111,7 @@ function cleanup() {
   inputStream?.destroy();
   inputStream = null;
   try {
-    webcodecsEncoder?.dispose();
+    await webcodecsEncoder?.dispose();
     softwareFrames?.releaseAll();
   } catch (error) {
     process.stderr.write(`${error}\n`);
@@ -126,33 +137,36 @@ function browser() {
 }
 
 function onPaint(event, dirtyRect, image) {
-  if (bitmap) {
+  if (software) {
     releaseTexture(event.texture);
     return;
   }
-  if (software) {
+  if (bitmap) {
     releaseTexture(event.texture);
     const waiter = paintWaiter;
     if (!waiter || !image || image.isEmpty()) return;
+    // invalidate() can synchronously replay the cached bitmap. Keep waiting
+    // for an asynchronous capturer callback instead of accepting that replay.
+    if (waiter.asyncPaint && waiter.refreshPending) {
+      waiter.cachedPaints++;
+      return;
+    }
     const size = image.getSize(1);
     if (
       size.width !== waiter.request.expectedWidth ||
       size.height !== waiter.request.expectedHeight
     ) {
       waiter.staleSizePaints++;
+      waiter.lastPaintSize = size;
       schedulePaintRetry(waiter);
       return;
     }
     paintWaiter = null;
     clearTimeout(waiter.timer);
     clearTimeout(waiter.retryTimer);
-    try {
-      const metadata = softwareFrames.capture(image, waiter.request);
-      if (waiter.request.copy) armLeaseTimeout();
-      waiter.resolve(metadata);
-    } catch (error) {
-      waiter.reject(error);
-    }
+    // Direct paint requests only observe the OSR surface. Encoded bitmap
+    // frames use the CDP screenshot path below.
+    waiter.resolve({});
     return;
   }
   debug(
@@ -211,9 +225,43 @@ function schedulePaintRetry(waiter) {
   if (waiter.retryTimer) return;
   waiter.retryTimer = setTimeout(() => {
     waiter.retryTimer = null;
-    if (paintWaiter === waiter && window && !window.isDestroyed())
-      browser().invalidate();
+    if (paintWaiter === waiter && window && !window.isDestroyed()) {
+      try {
+        refreshPaint(waiter, bitmap && !cpuBitmap);
+      } catch (error) {
+        abortPending(error);
+      }
+    }
   }, 50);
+}
+
+function refreshPaint(waiter, restartCapturer) {
+  waiter.refreshPending = true;
+  try {
+    if (restartCapturer) {
+      browser().stopPainting();
+      browser().startPainting();
+    }
+    browser().invalidate();
+  } finally {
+    waiter.refreshPending = false;
+  }
+}
+
+function needsAsyncBitmapPaint() {
+  // Direct bitmap paint requests need an asynchronous GPU capturer callback.
+  // Explicit CPU compositing has no such callback for unchanged content.
+  return bitmap && !cpuBitmap;
+}
+
+function gpuCompositorFailure() {
+  if (software || cpuBitmap || !gpuInfoAvailable) return null;
+  const status = app.getGPUFeatureStatus().gpu_compositing;
+  return status === "disabled_software" || status === "unavailable_software"
+    ? new Error(
+        `${bitmap ? "capture.gpu_compositor_unavailable" : "capture.shared_texture_unavailable"}: ${status}`,
+      )
+    : null;
 }
 
 function armLeaseTimeout() {
@@ -257,27 +305,10 @@ function waitForTitle(token) {
 async function captureSoftware(request) {
   if (softwareFrames.occupied)
     throw new Error("Release the previous software frame first");
-  const contents = browser();
-  const [width, height] = window.getContentSize();
-  await deadline(
-    contents.executeJavaScript(
-      "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
-    ),
-    PAINT_TIMEOUT_MS,
-    "Electron software compositor fence",
-  );
-  // OSR invalidate() synchronously emits CompositeFrame from its cached backing
-  // bitmap. It does not request a new compositor frame. capturePage instead
-  // resolves this request through OSR CopyFromSurface/CopyFromCompositingSurface.
-  const image = await deadline(
-    contents.capturePage(
-      { x: 0, y: 0, width, height },
-      { stayHidden: true, stayAwake: true },
-    ),
-    PAINT_TIMEOUT_MS,
-    "Electron software compositor copy",
-  );
-  if (closed) throw new Error("Electron host closed during software capture");
+  if (!snapshotViewport)
+    throw new Error("capture.snapshot_viewport_unavailable");
+  const { width, height } = snapshotViewport;
+  const image = await captureSnapshot(width, height);
   const size = image.getSize(1);
   if (
     image.isEmpty() ||
@@ -293,28 +324,75 @@ async function captureSoftware(request) {
   return metadata;
 }
 
-async function waitForPaint(request) {
-  if (bitmap) {
-    await deadline(
-      browser().executeJavaScript(
-        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-      ),
-      PAINT_TIMEOUT_MS,
-      "Electron bitmap compositor fence",
+function snapshotDebugger() {
+  const debuggerSession = browser().debugger;
+  if (!debuggerSession.isAttached()) debuggerSession.attach();
+  return debuggerSession;
+}
+
+async function setSnapshotViewport(width, height) {
+  await deadline(
+    snapshotDebugger().sendCommand("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    }),
+    PAINT_TIMEOUT_MS,
+    "Electron snapshot viewport override",
+  );
+  const actual = await deadline(
+    browser().executeJavaScript("({width: innerWidth, height: innerHeight})"),
+    PAINT_TIMEOUT_MS,
+    "Electron snapshot viewport measurement",
+  );
+  if (actual?.width !== width || actual?.height !== height)
+    throw new Error(
+      `capture.invalid_snapshot_viewport: expected ${width}x${height}, received ${actual?.width}x${actual?.height}`,
     );
-    return {};
-  }
-  if (software && request.copy) return captureSoftware(request);
-  if (software) {
-    // Observation fences establish the loaded/resized surface before capture.
-    // Pixel-bearing requests use captureSoftware's correlated compositor copy;
-    // a paint notification alone can still contain cached prior-frame pixels.
+  snapshotViewport = { width, height };
+}
+
+async function captureSnapshot(width, height) {
+  const compositorFailure = gpuCompositorFailure();
+  if (compositorFailure) throw compositorFailure;
+  // Page.captureScreenshot(fromSurface) asks Chromium to force a redraw before
+  // copying the surface. OSR paint/invalidate and capturePage can replay a
+  // previous bitmap or present the wrong size after an offscreen resize.
+  const snapshot = await deadline(
+    snapshotDebugger().sendCommand("Page.captureScreenshot", {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: false,
+      clip: { x: 0, y: 0, width, height, scale: 1 },
+    }),
+    PAINT_TIMEOUT_MS,
+    "Electron compositor snapshot",
+  );
+  if (closed || typeof snapshot?.data !== "string" || !snapshot.data)
+    throw new Error("capture.invalid_snapshot");
+  const image = nativeImage.createFromBuffer(
+    Buffer.from(snapshot.data, "base64"),
+  );
+  const size = image.getSize(1);
+  if (image.isEmpty() || size.width !== width || size.height !== height)
+    throw new Error("capture.invalid_snapshot_geometry");
+  return image;
+}
+
+async function waitForPaint(request) {
+  const compositorFailure = gpuCompositorFailure();
+  if (compositorFailure) throw compositorFailure;
+  if (software) return captureSoftware(request);
+  if (bitmap) {
+    // Direct bitmap paint requests observe the compositor after the page's RAF
+    // callbacks. Encoded bitmap frames use CDP instead.
     await deadline(
       browser().executeJavaScript(
         "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
       ),
       PAINT_TIMEOUT_MS,
-      "Electron software compositor fence",
+      `Electron ${surfaceMode} compositor fence`,
     );
   }
   if (paintWaiter)
@@ -329,12 +407,17 @@ async function waitForPaint(request) {
       if (paintWaiter?.request !== request) return;
       const missingGpuPaints = paintWaiter.missingGpuPaints;
       const staleSizePaints = paintWaiter.staleSizePaints;
+      const cachedPaints = paintWaiter.cachedPaints;
+      const lastPaintSize = paintWaiter.lastPaintSize;
       clearTimeout(paintWaiter.retryTimer);
       paintWaiter = null;
+      // A GPU process can become unavailable after this wait starts. Report
+      // confirmed software fallback so the controller can restart the host.
       reject(
-        new Error(
-          `Electron ${surfaceMode} paint timed out (${missingGpuPaints} null textures, ${staleSizePaints} old-size textures)`,
-        ),
+        gpuCompositorFailure() ??
+          new Error(
+            `Electron ${surfaceMode} paint timed out (${missingGpuPaints} null textures, ${staleSizePaints} old-size textures, ${cachedPaints} cached replays; expected ${request.expectedWidth}x${request.expectedHeight}, last ${lastPaintSize ? `${lastPaintSize.width}x${lastPaintSize.height}` : "none"}, viewport ${width}x${height})`,
+          ),
       );
     }, PAINT_TIMEOUT_MS);
     paintWaiter = {
@@ -344,20 +427,21 @@ async function waitForPaint(request) {
       reject,
       missingGpuPaints: 0,
       staleSizePaints: 0,
+      cachedPaints: 0,
       retryTimer: null,
+      refreshPending: true,
+      asyncPaint: needsAsyncBitmapPaint(),
     };
+    const waiter = paintWaiter;
     try {
       // Invalidate alone can produce a software paint with no shared texture
       // when the composition is unchanged. Restarting the offscreen capturer
       // requests a fresh GPU texture without changing page pixels or layout.
-      if (!software) {
-        browser().stopPainting();
-        browser().startPainting();
-      }
-      browser().invalidate();
+      refreshPaint(waiter, !software && !cpuBitmap);
     } catch (error) {
       paintWaiter = null;
       clearTimeout(timer);
+      clearTimeout(waiter.retryTimer);
       reject(error);
     }
   });
@@ -375,12 +459,15 @@ async function commandLoad(command) {
   const height = positiveSize(command.height, "browser height");
   if (software) byteLength(width, height);
   abortPending(new Error("Electron browser is loading another page"));
+  const initialCompositorFailure = gpuCompositorFailure();
+  if (initialCompositorFailure) throw initialCompositorFailure;
   if (!window || window.isDestroyed()) {
     window = new BrowserWindow({
       show: false,
       width,
       height,
       useContentSize: true,
+      enableLargerThanScreen: true,
       frame: false,
       backgroundColor: "#000000",
       webPreferences: {
@@ -409,22 +496,18 @@ async function commandLoad(command) {
       cleanup();
     });
     window.on("closed", () => cleanup());
-  } else {
-    window.setContentSize(width, height);
   }
+  // Some window managers clamp constructor bounds to the display work area.
+  // Apply the requested offscreen viewport explicitly before observing it.
+  window.setContentSize(width, height);
   await deadline(window.loadURL(url), LOAD_TIMEOUT_MS, "Electron page load");
-  if (software) {
-    // loadURL resolves before the offscreen output device has presented its
-    // first surface. Consume that size-matched startup paint before ACKing load;
-    // otherwise the first correlated capture can receive the initial blank
-    // viewport even after its animation-frame fence. This observation transfers
-    // no bitmap bytes and accepts legitimate black/transparent compositions.
-    await waitForPaint({
-      generation: 0,
-      copy: false,
-      expectedWidth: width,
-      expectedHeight: height,
-    });
+  const loadedCompositorFailure = gpuCompositorFailure();
+  if (loadedCompositorFailure) throw loadedCompositorFailure;
+  if (software || bitmap) {
+    // Observe the requested logical viewport before the first correlated frame.
+    // A forced snapshot also accepts legitimate black/transparent content.
+    await setSnapshotViewport(width, height);
+    await captureSnapshot(width, height);
   }
   debug("load complete");
   if (process.env.VELOCAST_ELECTRON_HOST_DEBUG === "1") {
@@ -481,7 +564,9 @@ async function dispatch(command) {
         process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY,
       );
       return {
-        config: await webcodecsEncoder.open(command.settings, command.audio),
+        config: await webcodecsEncoder.open(command.settings, command.audio, {
+          bitmap,
+        }),
       };
     }
     case "media-operation": {
@@ -496,42 +581,44 @@ async function dispatch(command) {
     }
     case "png": {
       const { absolute } = require("./media-io.cjs");
-      const contents = browser(),
-        [width, height] = window.getContentSize();
+      const [physicalWidth, physicalHeight] = window.getContentSize();
+      const width = positiveSize(
+        command.expectedWidth ?? snapshotViewport?.width ?? physicalWidth,
+        "PNG width",
+      );
+      const height = positiveSize(
+        command.expectedHeight ?? snapshotViewport?.height ?? physicalHeight,
+        "PNG height",
+      );
       byteLength(width, height);
-      await deadline(
-        contents.executeJavaScript(
-          "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-        ),
-        PAINT_TIMEOUT_MS,
-        "PNG compositor fence",
-      );
-      const image = await deadline(
-        contents.capturePage(
-          { x: 0, y: 0, width, height },
-          { stayHidden: true, stayAwake: true },
-        ),
-        PAINT_TIMEOUT_MS,
-        "PNG compositor copy",
-      );
-      const size = image.getSize(1);
       if (
-        image.isEmpty() ||
-        size.width !== (command.expectedWidth ?? width) ||
-        size.height !== (command.expectedHeight ?? height)
+        snapshotViewport &&
+        (snapshotViewport.width !== width || snapshotViewport.height !== height)
       )
         throw new Error("media.invalid_png_geometry");
+      const temporaryViewport = !snapshotViewport;
+      let image;
+      try {
+        if (temporaryViewport) await setSnapshotViewport(width, height);
+        image = await captureSnapshot(width, height);
+      } finally {
+        if (temporaryViewport) {
+          snapshotViewport = null;
+          await deadline(
+            snapshotDebugger().sendCommand(
+              "Emulation.clearDeviceMetricsOverride",
+            ),
+            PAINT_TIMEOUT_MS,
+            "Electron PNG viewport restore",
+          );
+        }
+      }
       const bytes = image.toPNG();
       fs.writeFileSync(absolute(command.outputPath), bytes, {
         flag: "wx",
         mode: 0o600,
       });
-      return {
-        path: command.outputPath,
-        width: size.width,
-        height: size.height,
-        bytes: bytes.length,
-      };
+      return { path: command.outputPath, width, height, bytes: bytes.length };
     }
     case "webcodecs-frame": {
       if (
@@ -542,22 +629,12 @@ async function dispatch(command) {
         command.index < 0
       )
         throw new Error("webcodecs.invalid_sequence");
-      const generation = command.index + 1;
       if (bitmap) {
-        const [width, height] = window.getContentSize();
+        if (!snapshotViewport)
+          throw new Error("capture.snapshot_viewport_unavailable");
+        const { width, height } = snapshotViewport;
         byteLength(width, height);
-        await waitForPaint({ generation });
-        const image = await deadline(
-          browser().capturePage(
-            { x: 0, y: 0, width, height },
-            { stayHidden: true, stayAwake: true },
-          ),
-          PAINT_TIMEOUT_MS,
-          "Electron bitmap compositor copy",
-        );
-        const size = image.getSize(1);
-        if (image.isEmpty() || size.width !== width || size.height !== height)
-          throw new Error("webcodecs.invalid_bitmap_geometry");
+        const image = await captureSnapshot(width, height);
         return {
           ...(await webcodecsEncoder.encodeBitmap(
             image.getBitmap(),
@@ -570,8 +647,11 @@ async function dispatch(command) {
           cpuReadback: true,
         };
       }
-      // Match the native reference path's initial and per-generation settling.
-      for (let paint = 0; paint < (command.index === 0 ? 6 : 2); paint++) {
+      const generation = command.index + 1;
+      // Drain queued startup/resize paints, then settle each new generation
+      // on the shared-texture path before accepting the frame.
+      const settlingPaints = command.index === 0 ? 6 : 2;
+      for (let paint = 0; paint < settlingPaints; paint++) {
         await waitForPaint({ generation, copy: false });
       }
       const { texture, metadata } = await waitForPaint({
@@ -585,7 +665,7 @@ async function dispatch(command) {
         height: metadata.height,
         pixelFormat: metadata.pixelFormat,
         captureBackend: "electron_shared_texture",
-        cpuReadback: false,
+        cpuReadback: webcodecsEncoder.config.backend === "native",
       };
     }
     case "webcodecs-finish": {
@@ -603,8 +683,7 @@ async function dispatch(command) {
           "GPU preparation requires an idle, released capture surface",
         );
       // The native loop discards this preparation paint. Submit it without
-      // waiting for a paint that capture would discard. Actual frame
-      // acceptance still goes through all generation/size/settling fences.
+      // waiting; frame acceptance still goes through its capture provider.
       const contents = browser();
       contents.stopPainting();
       contents.startPainting();
@@ -617,17 +696,23 @@ async function dispatch(command) {
       const width = positiveSize(command.width, "browser width");
       const height = positiveSize(command.height, "browser height");
       if (software) byteLength(width, height);
+      const compositorFailure = gpuCompositorFailure();
+      if (compositorFailure) throw compositorFailure;
       browser();
       window.setContentSize(width, height);
-      // Wait for a size-matched composition paint before adapter init.
-      // Without this fence, Electron can capture the pre-init black surface
-      // forever when subsequent seeks leave an initialized canvas unchanged.
-      await waitForPaint({
-        generation: 0,
-        copy: false,
-        expectedWidth: width,
-        expectedHeight: height,
-      });
+      // Observe the requested viewport before adapter init. Without this
+      // fence, an unchanged canvas can retain the pre-init black surface.
+      if (software || bitmap) {
+        await setSnapshotViewport(width, height);
+        await captureSnapshot(width, height);
+      } else {
+        await waitForPaint({
+          generation: 0,
+          copy: false,
+          expectedWidth: width,
+          expectedHeight: height,
+        });
+      }
       return {};
     }
     case "paint": {
@@ -772,7 +857,7 @@ app
     }
     await writeLine({
       event: "ready",
-      version: 2,
+      version: 3,
       pid: process.pid,
       surfaceMode,
       asyncPaintInvalidation: !software,

@@ -58,6 +58,7 @@ describe("Electron runtime acquisition", () => {
       Path: "C:\\Windows\\System32",
       CEF_PATH: "old-cef",
       VELOCAST_LINUX_RENDERER_RUNTIME_DIR: "old-linux",
+      VELOCAST_NODE_BINARY: "old-node",
     };
     const env = resolveRendererProcessEnv({
       rendererBinary: f.binary,
@@ -73,6 +74,7 @@ describe("Electron runtime acquisition", () => {
     expect(env.VELOCAST_ELECTRON_HOST_SCRIPT).toBe(
       join(f.root, f.manifest.hostScript),
     );
+    expect(env.VELOCAST_NODE_BINARY).toBe(process.execPath);
     expect(env.Path).toBe(`${f.root};C:\\Windows\\System32`);
     expect(env.CEF_PATH).toBeUndefined();
     expect(env.VELOCAST_LINUX_RENDERER_RUNTIME_DIR).toBeUndefined();

@@ -66,13 +66,16 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           export VELOCAST_ELECTRON_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
-          xvfb-run -a node --test packages/electron-host/test/software-runtime.test.cjs
+          export VELOCAST_WEBCODECS_TEST_BINARY="$VELOCAST_ELECTRON_TEST_BINARY"
+          xvfb-run -a node --test packages/electron-host/test/software-runtime.test.cjs packages/electron-host/test/shared-capability-runtime.test.cjs
       - name: Verify Electron media host (macOS)
         if: runner.os == 'macOS'
         run: |
           export VELOCAST_ELECTRON_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
-          node --test packages/electron-host/test/software-runtime.test.cjs
+          export VELOCAST_WEBCODECS_TEST_BINARY="$VELOCAST_ELECTRON_TEST_BINARY"
+          node --test packages/electron-host/test/software-runtime.test.cjs packages/electron-host/test/shared-capability-runtime.test.cjs
       - name: Build and test renderer
+        id: renderer_build
         run: |
           cargo test -p velocast-renderer
           cargo build -p velocast-renderer
@@ -88,6 +91,26 @@ jobs:
       - name: Validate authored footage and audio (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a node scripts/verify-footage-native.mjs "$CARGO_TARGET_DIR/debug/velocast-renderer" "$RUNNER_TEMP/footage-native"
+      - name: Validate native Mediabunny formats (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          export VELOCAST_WEBCODECS_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
+          xvfb-run -a node --test --test-name-pattern="bitmap CPU compositor" packages/electron-host/test/webcodecs-runtime.test.cjs
+          xvfb-run -a node --test packages/electron-host/test/native-media.integration.test.cjs
+          xvfb-run -a node scripts/verify-media-formats.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/media-formats"
+      - name: Validate native 4K DOM capture (Linux)
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.renderer_build.outcome == 'success' }}
+        run: xvfb-run -a node scripts/verify-native-capture.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/native-capture" --frames 24 --repeats 3 --mode both --all-frames true
+      - name: Validate native Mediabunny formats (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          export VELOCAST_WEBCODECS_TEST_BINARY="$(node -p "require('./packages/electron-host/node_modules/electron')")"
+          node --test --test-name-pattern="bitmap CPU compositor" packages/electron-host/test/webcodecs-runtime.test.cjs
+          node --test packages/electron-host/test/native-media.integration.test.cjs
+          node scripts/verify-media-formats.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/media-formats"
+      - name: Validate native 4K DOM capture (macOS)
+        if: runner.os == 'macOS'
+        run: node scripts/verify-native-capture.mjs --renderer "$CARGO_TARGET_DIR/debug/velocast-renderer" --output "$RUNNER_TEMP/native-capture" --frames 24 --repeats 3 --mode both --all-frames true
       - name: Validate authored footage and audio (macOS)
         if: runner.os == 'macOS'
         run: node scripts/verify-footage-native.mjs "$CARGO_TARGET_DIR/debug/velocast-renderer" "$RUNNER_TEMP/footage-native"
@@ -101,6 +124,14 @@ jobs:
           path: |
             ${{ runner.temp }}/electron-portable
             ${{ runner.temp }}/footage-native/verification.json
+            ${{ runner.temp }}/footage-native/composed.mp4
+            ${{ runner.temp }}/footage-native/report.json
+            ${{ runner.temp }}/footage-native/capture-pixels.jsonl
             ${{ runner.temp }}/electron-cargo-tree.txt
+            ${{ runner.temp }}/media-formats
+            ${{ runner.temp }}/native-capture/results.json
+            ${{ runner.temp }}/native-capture/reference-*.json
+            ${{ runner.temp }}/native-capture/segments-*.json
+            ${{ runner.temp }}/native-capture/*.mp4
             ${{ runner.temp }}/aac-timing.log
             ${{ runner.temp }}/aac-timing.json

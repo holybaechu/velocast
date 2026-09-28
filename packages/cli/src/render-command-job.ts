@@ -9,11 +9,15 @@ import {
 } from "./renderer-defaults.js";
 import {
   resolveRendererAcceleration,
+  resolveRendererAudioCodec,
   resolveRendererAssemblyMode,
   resolveRendererBitrate,
   resolveRendererCodec,
+  resolveRendererContainer,
   resolveRendererConcurrency,
+  resolveRendererMediaBackend,
   resolveRendererPixelFormat,
+  resolveRendererVideoProfile,
 } from "./renderer-options.js";
 import {
   assertNonEmptyString,
@@ -28,6 +32,7 @@ import {
   validateRenderJob,
   type RenderJob,
 } from "./generated/renderer-contracts.js";
+import { extname } from "node:path";
 
 // Command preparation guarantees defaults and omits optional null values.
 // All wire fields themselves come from the generated transport contract.
@@ -52,6 +57,10 @@ export interface RenderCommandOptions {
   endFrame?: string | number;
   concurrency?: string | number;
   codec?: string;
+  container?: string;
+  audioCodec?: string;
+  mediaBackend?: string;
+  videoProfile?: string;
   pixelFormat?: string;
   bitrate?: string | number;
   acceleration?: string;
@@ -196,14 +205,25 @@ function prepareRenderCommandJob(
     config,
     options.acceleration,
   );
+  const configuredCodec = resolveRendererCodec(config, options.codec);
+  const container = resolveRendererContainer(config, options.container);
+  const inferredContainer =
+    container ?? extname(source.output).slice(1).toLowerCase();
+  const codec =
+    configuredCodec ?? (inferredContainer === "webm" ? "vp9" : "h264");
 
   return finalizeRenderJob({
     ...source,
-    codec: resolveRendererCodec(config, options.codec),
+    codec,
+    container,
+    audio_codec: resolveRendererAudioCodec(config, options.audioCodec),
+    media_backend: resolveRendererMediaBackend(config, options.mediaBackend),
+    video_profile: resolveRendererVideoProfile(config, options.videoProfile),
     pixel_format: resolveRendererPixelFormat(
       config,
       options.pixelFormat,
       acceleration,
+      codec,
     ),
     bitrate_bps: resolveRendererBitrate(
       config,
@@ -260,7 +280,8 @@ function finalizeRenderJob(fields: RenderJobFields): RustRenderJob {
     selector: fields.selector ?? null,
     codec: fields.codec ?? "h264",
     pixel_format:
-      fields.pixel_format ?? defaultRendererPixelFormat(acceleration),
+      fields.pixel_format ??
+      defaultRendererPixelFormat(acceleration, fields.codec),
     acceleration,
     assembly_mode: fields.assembly_mode ?? "auto",
   };

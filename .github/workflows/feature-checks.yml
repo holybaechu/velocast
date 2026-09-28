@@ -60,3 +60,58 @@ jobs:
       - name: Run feature checks (Windows)
         if: runner.os == 'Windows'
         run: pnpm check:fast
+      - name: Build renderer and CLI for native capture (Windows)
+        id: native_capture_build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pnpm build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p velocast-renderer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Validate automatic media selection (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
+          $output = Join-Path $env:RUNNER_TEMP 'electron-portable'
+          $env:VELOCAST_WEBCODECS_TEST_BINARY = node -p "require('./packages/electron-host/node_modules/electron')"
+          node --test packages/electron-host/test/shared-capability-runtime.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-electron-portable.mjs --renderer $renderer --output $output --frames 8 --repeats 1
+          exit $LASTEXITCODE
+      - name: Validate native 4K DOM capture (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
+          $output = Join-Path $env:RUNNER_TEMP 'native-capture'
+          $env:VELOCAST_WEBCODECS_TEST_BINARY = node -p "require('./packages/electron-host/node_modules/electron')"
+          node --test --test-name-pattern="bitmap CPU compositor" packages/electron-host/test/webcodecs-runtime.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-native-capture.mjs --renderer $renderer --output $output --frames 24 --repeats 3 --mode both --all-frames true
+          exit $LASTEXITCODE
+      - name: Validate CPU compositor 4K capture (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.native_capture_build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
+          $output = Join-Path $env:RUNNER_TEMP 'native-capture-cpu'
+          node scripts/verify-native-capture.mjs --renderer $renderer --output $output --frames 24 --repeats 3 --mode reference --all-frames true --cpu-compositor true
+          exit $LASTEXITCODE
+      - name: Save native capture evidence (Windows)
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-capture-windows
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/electron-portable/results.json
+            ${{ runner.temp }}/electron-portable/auto-*.json
+            ${{ runner.temp }}/native-capture/results.json
+            ${{ runner.temp }}/native-capture/reference-*.json
+            ${{ runner.temp }}/native-capture/segments-*.json
+            ${{ runner.temp }}/native-capture/*.mp4
+            ${{ runner.temp }}/native-capture-cpu/results.json
+            ${{ runner.temp }}/native-capture-cpu/reference-*.json
+            ${{ runner.temp }}/native-capture-cpu/*.mp4

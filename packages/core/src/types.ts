@@ -11,6 +11,21 @@ import type { SourceAdapter } from "./source-adapter.js";
 
 export type { RendererAcceleration, RendererAssemblyMode, RendererConcurrency };
 
+export type RendererVideoCodec =
+  "h264" | "hevc" | "h265" | "av1" | "vp8" | "vp9" | "prores";
+export type RendererContainer = "mp4" | "mov" | "webm" | "mkv";
+export type RendererAudioCodec =
+  | "auto"
+  | "aac"
+  | "opus"
+  | "mp3"
+  | "flac"
+  | "vorbis"
+  | "pcm-s16"
+  | "pcm-s24"
+  | "pcm-f32";
+export type RendererMediaBackend = "auto" | "webcodecs" | "native";
+
 // Authoring accepts omitted optional values. The wire also accepts explicit null.
 type AuthoringFields<T> = { [K in keyof T]: Exclude<T[K], null> };
 export type CompositionManifest = AuthoringFields<WireCompositionManifest>;
@@ -88,7 +103,12 @@ export interface Config {
     snapshotRoot?: string;
     binary?: "auto" | string;
     concurrency?: RendererConcurrency;
-    codec?: string;
+    codec?: RendererVideoCodec;
+    container?: RendererContainer;
+    audioCodec?: RendererAudioCodec;
+    mediaBackend?: RendererMediaBackend;
+    /** Host-specific ProRes profile name. */
+    videoProfile?: string;
     pixelFormat?: string;
     bitrate?: string | number;
     acceleration?: RendererAcceleration;

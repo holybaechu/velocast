@@ -60,6 +60,45 @@ function post(url: string, data: unknown) {
   });
 }
 
+it.each([
+  ["mp4", "video/mp4"],
+  ["mov", "video/quicktime"],
+  ["webm", "video/webm"],
+  ["mkv", "video/x-matroska"],
+] as const)(
+  "preview range artifacts honor %s output and MIME type",
+  async (container, mime) => {
+    const { cwd, config } = await fixture();
+    const server = await createPreviewServer(
+      { ...config, renderer: { ...config.renderer, container } },
+      { pathOptions: { cwd, env: {} } },
+      {
+        runtimeAcquisition: {
+          acquire: async () => ({
+            binary: "native",
+            env: {},
+            source: "local" as const,
+          }),
+        },
+        probeCapabilities: () => ({ available: true, outputApiVersion: 1 }),
+        runRenderer: async (_binary, job) => nativeSuccess(job),
+      },
+    );
+    cleanup.push(server.close);
+    const response = await post(`${server.url}/api/output`, {
+      compositionId: "scene",
+      expectedSourceVersion: server.session().session.sourceVersion,
+      range: { start: 0, end: 3 },
+    });
+    expect(response.status).toBe(200);
+    const artifact = (await response.json()) as { url: string };
+    expect(artifact.url.endsWith(`.${container}`)).toBe(true);
+    const file = await fetch(artifact.url);
+    expect(file.headers.get("content-type")).toBe(mime);
+    expect(await file.text()).toBe("complete output");
+  },
+);
+
 it("serves installed UI and immutable instrumented project versions, refreshes without mutating authored files", async () => {
   const { cwd, config } = await fixture();
   const server = await createPreviewServer(config, {

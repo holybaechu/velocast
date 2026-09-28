@@ -128,9 +128,10 @@ async function artifactFixture(root) {
     rendererCapabilities: {
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 2,
+      electronHostProtocolVersion: 3,
       videoEncoderBackend: "webcodecs",
       mediaRuntime: "mediabunny",
+      supportedMediaBackends: ["webcodecs", "native"],
     },
     files: [...payloads].map(([path, bytes]) => ({
       path,
@@ -183,10 +184,7 @@ async function artifactFixture(root) {
     archiveSize: statSync(archive).size,
     archiveSha256: digest(readFileSync(archive)),
     runtimeFiles: [...payloads.keys()],
-    nativeFiles: [
-      "velocast-renderer.exe",
-      "electron/electron.exe",
-    ],
+    nativeFiles: ["velocast-renderer.exe", "electron/electron.exe"],
   };
 }
 

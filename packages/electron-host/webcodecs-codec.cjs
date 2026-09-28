@@ -53,7 +53,7 @@ function encoderConfig({
       "webcodecs.unsupported_config: geometry, frame rate or bitrate exceeds AVC level 5.2",
     );
   if (
-    !["auto", "h264", "hevc", "av1"].includes(codec) ||
+    !["auto", "h264", "hevc", "av1", "vp8", "vp9"].includes(codec) ||
     !["prefer-hardware", "prefer-software", "no-preference"].includes(
       hardwareAcceleration,
     )
@@ -65,7 +65,11 @@ function encoderConfig({
         ? "hvc1.1.6.L153.B0"
         : codec === "av1"
           ? "av01.0.13M.08"
-          : `avc1.4200${level?.[0] ?? "34"}`,
+          : codec === "vp8"
+            ? "vp8"
+            : codec === "vp9"
+              ? "vp09.00.41.08"
+              : `avc1.4200${level?.[0] ?? "34"}`,
     width,
     height,
     framerate: fps,
@@ -75,9 +79,55 @@ function encoderConfig({
     hardwareAcceleration,
     ...(codec === "hevc"
       ? { hevc: { format: "hevc" } }
-      : codec === "av1"
+      : ["av1", "vp8", "vp9"].includes(codec)
         ? {}
         : { avc: { format: "avc" } }),
+  };
+}
+
+function isUnsupportedWebCodecsError(error) {
+  return (
+    error?.name === "NotSupportedError" ||
+    error?.message?.startsWith("webcodecs.unsupported_config:")
+  );
+}
+
+async function supportedEncoderConfig(settings, VideoEncoder) {
+  if (typeof VideoEncoder?.isConfigSupported !== "function")
+    return { reason: "webcodecs.unavailable: VideoEncoder is unavailable" };
+  let reason;
+  for (const codec of !settings.codec || settings.codec === "auto"
+    ? ["h264", "hevc", "av1"]
+    : [settings.codec]) {
+    let candidate;
+    try {
+      candidate = encoderConfig({ ...settings, codec });
+    } catch (error) {
+      if (!isUnsupportedWebCodecsError(error)) throw error;
+      reason = error.message;
+      continue;
+    }
+    for (const config of [
+      candidate,
+      ...(candidate.hardwareAcceleration === "prefer-hardware"
+        ? [{ ...candidate, hardwareAcceleration: "no-preference" }]
+        : []),
+    ]) {
+      let supported;
+      try {
+        supported = (await VideoEncoder.isConfigSupported(config)).supported;
+      } catch (error) {
+        if (!isUnsupportedWebCodecsError(error)) throw error;
+        reason = `webcodecs.unsupported_config: ${codec}`;
+        continue;
+      }
+      if (supported) return { config, logicalCodec: codec };
+    }
+    reason ??= `webcodecs.unsupported_config: ${codec}`;
+  }
+  return {
+    reason:
+      reason ?? `webcodecs.unsupported_config: ${settings.codec || "auto"}`,
   };
 }
 
@@ -114,38 +164,10 @@ class CodecSession {
 
   async open(settings) {
     if (this.encoder) throw new Error("webcodecs.already_open");
-    let config;
-    for (const codec of !settings.codec || settings.codec === "auto"
-      ? ["h264", "hevc", "av1"]
-      : [settings.codec]) {
-      let candidate;
-      try {
-        candidate = encoderConfig({ ...settings, codec });
-      } catch (error) {
-        if (settings.codec && settings.codec !== "auto") throw error;
-        continue;
-      }
-      if ((await this.VideoEncoder.isConfigSupported(candidate)).supported) {
-        config = candidate;
-        this.codec = codec;
-        break;
-      }
-      if (candidate.hardwareAcceleration === "prefer-hardware") {
-        const fallback = {
-          ...candidate,
-          hardwareAcceleration: "no-preference",
-        };
-        if ((await this.VideoEncoder.isConfigSupported(fallback)).supported) {
-          config = fallback;
-          this.codec = codec;
-          break;
-        }
-      }
-    }
-    if (!config)
-      throw new Error(
-        `webcodecs.unsupported_config: ${settings.codec || "auto"}`,
-      );
+    const support = await supportedEncoderConfig(settings, this.VideoEncoder);
+    if (!support.config) throw new Error(support.reason);
+    const { config } = support;
+    this.codec = support.logicalCodec;
     this.fps = settings.fps;
     this.width = settings.width;
     this.height = settings.height;
@@ -193,7 +215,13 @@ class CodecSession {
         this.error = error;
       },
     });
-    this.encoder.configure(config);
+    try {
+      this.encoder.configure(config);
+    } catch (error) {
+      this.encoder.close();
+      this.encoder = null;
+      throw error;
+    }
     return { ...config, logicalCodec: this.codec };
   }
 
@@ -268,4 +296,11 @@ class CodecSession {
   }
 }
 
-module.exports = { CodecSession, encoderConfig, frameTiming, MAX_PACKET_BYTES };
+module.exports = {
+  CodecSession,
+  encoderConfig,
+  supportedEncoderConfig,
+  isUnsupportedWebCodecsError,
+  frameTiming,
+  MAX_PACKET_BYTES,
+};
