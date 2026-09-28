@@ -20,8 +20,14 @@ import { parseRendererEventLog } from "./renderer-events.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 let fixtureExecutable: string;
-const targetRoot = mkdtempSync(resolve(tmpdir(), "velocast-wire-test-"));
+// CI builds the Rust policy first. Reuse its explicitly configured external
+// target so this fixture does not recompile Rust alongside browser tests.
+const ownsTarget = !process.env.CARGO_TARGET_DIR;
+const targetRoot = process.env.CARGO_TARGET_DIR
+  ? resolve(repoRoot, process.env.CARGO_TARGET_DIR)
+  : mkdtempSync(resolve(tmpdir(), "velocast-wire-test-"));
 afterAll(() => {
+  if (!ownsTarget) return;
   const target = realpathSync(targetRoot);
   if (
     dirname(target) !== realpathSync(tmpdir()) ||
