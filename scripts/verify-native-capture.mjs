@@ -206,6 +206,7 @@ const hostScript = cpuCompositor === "true" ? cpuHostWrapper : realHost;
 const env = {
   ...process.env,
   VELOCAST_RENDERER_BINARY: renderer,
+  VELOCAST_NODE_BINARY: process.execPath,
   VELOCAST_ELECTRON_BINARY: electronBinary,
   VELOCAST_ELECTRON_HOST_SCRIPT: hostScript,
 };

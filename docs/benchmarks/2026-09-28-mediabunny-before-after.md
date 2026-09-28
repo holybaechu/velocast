@@ -121,21 +121,31 @@ frame-72 preview in three of five fresh processes. A temporary probe found frame
 the codec or muxer.
 
 Bitmap capture previously acknowledged animation callbacks without consuming a
-compositor paint. Further probing showed that `invalidate()` could satisfy a
-paint waiter synchronously with cached pixels. GPU capture now rejects those
-replays and awaits asynchronous capturer callbacks at the expected size. An
-unavailable GPU compositor triggers a fresh host with hardware acceleration
-disabled, before encoding any frames. This also propagates to segment workers.
-Explicit CPU compositing uses its software paint/copy path. Load establishes the
-initial viewport before adapter initialization, and
-both paths retain startup and per-frame settling.
+fresh compositor frame. `invalidate()` could satisfy paint waiters with cached
+pixels, including under CPU compositing. Bitmap capture now uses Chromium's
+surface screenshot, which forces a redraw. Device emulation establishes the
+requested logical viewport independently of desktop bounds and display scaling.
+The same provider handles GPU and CPU bitmap capture. An unavailable GPU
+compositor triggers a fresh CPU host before encoding begins and propagates to
+segment workers.
+
+Native video encoding now runs in a separate stock Node process. This avoids a
+Linux incompatibility between x264's large-buffer alignment and Electron's
+allocator. JSON control messages and a bounded raw pixel pipe avoid coupling the
+Node and Electron V8 serialization versions. The parent reserves each output
+exclusively, passes its descriptor to the worker, and joins the worker before
+completion or cleanup.
 
 The corrected host passed reference and four-worker exports of the full 4K
-scene: 240 frames at 60 fps, native H.264, 64 Mbps target. Independent FFmpeg
+scene with forced CPU compositing: 240 frames at 60 fps, native H.264, 16 Mbps
+target. Independent FFmpeg
 decoding verified all **480 frame identities** and presentation timestamps,
 including segment boundaries, with no stale frames. Three reference and three
-four-worker 24-frame exports also passed every decoded identity. Unchanged blue
-and black frames passed with GPU and CPU compositing.
+four-worker 24-frame exports passed every decoded identity under both default
+and forced CPU capture; independent FFmpeg also verified those 288 frames.
+Unchanged blue and black frames passed with GPU and CPU compositing. The
+portable gate passed all 15 cases, including cancellation and preservation of
+an existing output.
 
 The regression gate is now maintained in
 [`scripts/verify-native-capture.mjs`](../../scripts/verify-native-capture.mjs).

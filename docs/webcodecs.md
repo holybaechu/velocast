@@ -46,7 +46,9 @@ reject unsupported options explicitly.
 ## Backend behavior
 
 The native backend uses software codecs and compositor bitmap capture, keeping
-GPU composition available while passing CPU pixels to the encoder. Telemetry records
+GPU composition available while passing CPU pixels to a separate stock Node
+encoder process. The CLI reuses its Node runtime; direct renderer integrations
+must set `VELOCAST_NODE_BINARY` to an absolute Node executable. Telemetry records
 the actual backend and readback. Native hardware interop is outside this route.
 
 With WebCodecs, `auto` acceleration requests hardware preference and `off`

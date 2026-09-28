@@ -3,6 +3,7 @@ const { mb, outputFile, probe, absolute } = require("./media-io.cjs");
 const fs = require("node:fs");
 const { mediaSettings } = require("./media-settings.cjs");
 const { registerNativeMedia } = require("./native-media.cjs");
+const { NativeVideoClient } = require("./native-video-client.cjs");
 const {
   CodecSession,
   encoderConfig,
@@ -12,7 +13,8 @@ const {
 // Native encoders may delay or reorder packets. Awaiting source.add bounds input
 // backpressure; only finalization establishes the complete output packet count.
 class NativeMediaSession {
-  constructor() {
+  constructor({ outputFd } = {}) {
+    this.outputFd = outputFd;
     this.frames = 0;
     this.packets = 0;
     this.busy = false;
@@ -52,7 +54,11 @@ class NativeMediaSession {
       }))
     )
       throw new Error(`media.encoder_unavailable: ${codec}`);
-    this.sink = outputFile(settings.outputPath, selected.container);
+    this.sink = outputFile(
+      settings.outputPath,
+      selected.container,
+      this.outputFd,
+    );
     this.source = new mb.VideoSampleSource({
       ...options,
       onEncodedPacket: (packet, metadata) => {
@@ -74,70 +80,6 @@ class NativeMediaSession {
     }
     return this.config;
   }
-  async encode(imported, index, override) {
-    let frame, sample;
-    if (this.busy) {
-      imported.release();
-      throw new Error("media.busy");
-    }
-    this.busy = true;
-    try {
-      if (!this.sink || this.finished || index !== this.frames)
-        throw new Error("media.invalid_sequence");
-      const timing = override ?? frameTiming(index, this.settings.fps);
-      if (
-        !Number.isSafeInteger(timing.timestamp) ||
-        timing.timestamp < 0 ||
-        !Number.isSafeInteger(timing.duration) ||
-        timing.duration <= 0
-      )
-        throw new Error("media.invalid_timing");
-      frame = imported.getVideoFrame();
-      if (
-        frame.displayWidth !== this.settings.width ||
-        frame.displayHeight !== this.settings.height
-      )
-        throw new Error("media.invalid_geometry");
-      // Canvas readback provides a consistent SDR RGBA source even when the
-      // imported VideoFrame is a GPU texture whose native pixel layout is opaque.
-      this.canvas ??= new OffscreenCanvas(
-        this.settings.width,
-        this.settings.height,
-      );
-      const context = this.canvas.getContext("2d", {
-        willReadFrequently: true,
-      });
-      context.drawImage(frame, 0, 0);
-      const data = context.getImageData(
-        0,
-        0,
-        this.settings.width,
-        this.settings.height,
-      ).data;
-      sample = new mb.VideoSample(data, {
-        format: "RGBA",
-        codedWidth: this.settings.width,
-        codedHeight: this.settings.height,
-        timestamp: timing.timestamp / 1e6,
-        duration: timing.duration / 1e6,
-        colorSpace: {
-          primaries: "bt709",
-          transfer: "iec61966-2-1",
-          matrix: "rgb",
-          fullRange: true,
-        },
-      });
-      return await this.submit(sample, index, timing);
-    } catch (error) {
-      await this.cancel();
-      throw error;
-    } finally {
-      sample?.close();
-      frame?.close();
-      imported.release();
-      this.busy = false;
-    }
-  }
   async submit(sample, index, timing) {
     const before = this.bytes ?? 0;
     await this.source.add(sample);
@@ -151,7 +93,7 @@ class NativeMediaSession {
       colorSpace: this.colorSpace,
     };
   }
-  async encodeBitmap(data, index) {
+  async encodeBitmap(data, index, format = "BGRA", override) {
     if (this.busy) throw new Error("media.busy");
     this.busy = true;
     let sample;
@@ -161,14 +103,22 @@ class NativeMediaSession {
       const { width, height, fps } = this.settings;
       if (
         !(data instanceof Uint8Array) ||
-        data.byteLength !== width * height * 4
+        data.byteLength !== width * height * 4 ||
+        !["BGRA", "RGBA"].includes(format)
       )
         throw new Error("media.invalid_bitmap");
-      const timing = frameTiming(index, fps);
+      const timing = override ?? frameTiming(index, fps);
+      if (
+        !Number.isSafeInteger(timing.timestamp) ||
+        timing.timestamp < 0 ||
+        !Number.isSafeInteger(timing.duration) ||
+        timing.duration <= 0
+      )
+        throw new Error("media.invalid_timing");
       // The compositor has already provided CPU pixels. Do not upload these
       // bytes into a VideoFrame/Canvas solely to read them back again.
       sample = new mb.VideoSample(data, {
-        format: "BGRA",
+        format,
         codedWidth: width,
         codedHeight: height,
         timestamp: timing.timestamp / 1e6,
@@ -187,13 +137,18 @@ class NativeMediaSession {
           index,
           stage: "native-bitmap-input",
           cpuBitmap: process.env.VELOCAST_ELECTRON_CPU_BITMAP === "1",
-          rgb: [data[at + 2], data[at + 1], data[at]],
+          rgb:
+            format === "BGRA"
+              ? [data[at + 2], data[at + 1], data[at]]
+              : [data[at], data[at + 1], data[at + 2]],
         };
         if (width === 3840 && height === 2160) {
           const barcodeRgb = Array.from({ length: 8 }, (_, bit) => {
             const x = 66 + 60 * bit;
             const pixel = (66 * width + x) * 4;
-            return [data[pixel + 2], data[pixel + 1], data[pixel]];
+            return format === "BGRA"
+              ? [data[pixel + 2], data[pixel + 1], data[pixel]]
+              : [data[pixel], data[pixel + 1], data[pixel + 2]];
           });
           const bits = barcodeRgb.map((rgb) => {
             const average = (rgb[0] + rgb[1] + rgb[2]) / 3;
@@ -253,7 +208,9 @@ class MediaSession {
     const selected = mediaSettings(settings);
     this.session =
       selected.backend === "native"
-        ? new NativeMediaSession()
+        ? process.versions.electron
+          ? new NativeVideoClient()
+          : new NativeMediaSession()
         : new CodecSession(VideoEncoder, VideoFrame);
     const result = await this.session.open({
       ...settings,
@@ -274,6 +231,8 @@ class MediaSession {
       settings.height !== this.settings.height
     )
       throw new Error("media.invalid_bitmap_geometry");
+    if (this.session instanceof NativeVideoClient)
+      return this.session.encodeBitmap(settings);
     if (this.session instanceof NativeMediaSession)
       return this.session.encodeBitmap(settings.data, settings.index);
     return this.session.encode(

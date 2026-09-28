@@ -2,15 +2,25 @@
 
 The Rust renderer starts `main.cjs`. Authored compositions remain sandboxed in
 an offscreen window without Node or trusted media IPC. A separate trusted local
-window owns media sessions and utilities. Rust receives metadata and completed
-media, never operating-system GPU handles.
+window owns browser media utilities and WebCodecs sessions. Native video encoding
+runs in a regular Node child process. Rust receives metadata and completed media,
+never operating-system GPU handles.
 
 `media-session.cjs` selects a Mediabunny native software session or the explicit
-Chromium WebCodecs session. Native submissions use CPU RGBA readback and can
-buffer packets. Finalization drains the encoder before validating packet counts,
+Chromium WebCodecs session. `native-video-client.cjs` sends JSON control messages
+and bounded BGRA/RGBA frames over a binary pipe to `native-video-worker.cjs`.
+This avoids Electron's allocator restrictions and V8 serialization-version
+coupling. The bitmap path sends pixels directly from Electron main to the worker.
+Native submissions can buffer packets. Finalization drains the encoder before validating packet counts,
 dimensions, timestamps, codec and container. Capture leases are released only
 after the consumer has closed its frames. WebCodecs retains its conservative
 per-frame flush and packet acknowledgment.
+
+The CLI supplies its own Node executable through `VELOCAST_NODE_BINARY`.
+Direct renderer integrations must supply an absolute stock Node executable;
+embedded Electron callers of `createMediaSession` can pass `nodeBinary`.
+Workers stay in the host's process group/job, exit on owner disconnect, and are
+joined before successful finalization or cancellation completes.
 
 The auto backend uses native codecs, except VP9 on Windows x64, where the pinned
 NodeAV binding terminates with `STATUS_ILLEGAL_INSTRUCTION`. Auto uses WebCodecs
@@ -49,28 +59,18 @@ keeps GPU composition enabled while transferring BGRA frames to the encoder;
 it remains the fallback for unavailable shared-texture import. Native encoding
 reports CPU readback even when the capture transport uses a shared texture.
 
-Bitmap capture observes a compositor paint at the expected size after the page's
-animation-frame fence. GPU mode rejects synchronous cached replays from
-`invalidate()` and waits for an asynchronous capturer callback, including on
-paint retries. When Electron's
+Bitmap capture uses Chromium's `Page.captureScreenshot` surface snapshot, which
+forces a redraw before copying pixels. The requested logical viewport is set
+through device emulation, avoiding display-size and DPI-dependent window bounds.
+This provider works with GPU and CPU composition. When Electron's
 [reported compositor state](https://www.electronjs.org/docs/latest/api/structures/gpu-feature-status)
 indicates unavailable GPU compositing, the coordinator starts a fresh host with
 hardware acceleration disabled. This bounded retry is allowed only before any
-frames are encoded and propagates to segment workers. Explicit CPU compositing
-uses the software paint/copy path for unchanged content, which need not emit
-asynchronous paints. The initial viewport is observed before adapter
-initialization, and both capture paths drain queued startup and per-frame paints.
+frames are encoded and propagates to segment workers. The initial viewport is
+observed before adapter initialization. Shared-texture capture retains its
+startup and per-frame paint observations.
 
 ## Audio and codec adapters
-
-On Linux Electron, `native-binding.cjs` loads NodeAV with `RTLD_DEEPBIND` before
-the server, audio, or ProRes adapters import it. x264's large-buffer allocator
-requests 2 MiB alignment, exceeding Chromium's 1 MiB alignment limit on x64.
-The scoped loader lets the addon use its allocator dependencies and restores
-the process loader immediately after import. It rejects an earlier uncontrolled
-NodeAV load; other platforms use the ordinary module loader. See
-[x264 allocation](https://github.com/mirror/x264/blob/master/common/base.c) and
-[Chromium's alignment limit](https://github.com/chromium/chromium/blob/152.0.7977.130/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_constants.h).
 
 The mixer preserves source trims, sample offsets, gain, and linear envelopes.
 It uses 4096-sample blocks, file-backed PCM and filtered streaming resampling.
@@ -131,3 +131,5 @@ four-worker segment starts. Pass `--renderer <binary> --output <new-temp-dir>`;
 `--frames 240 --all-frames true` expands verification to every frame of the full
 scene. Windows, Linux, and macOS CI run the 24-frame, three-repeat gate with
 `--all-frames true`, without requiring a standalone FFmpeg executable.
+`--cpu-compositor true` verifies the explicit CPU fallback and worker propagation;
+Windows CI also runs three reference repetitions of that mode.

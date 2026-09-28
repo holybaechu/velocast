@@ -111,7 +111,7 @@ class WebCodecsHost {
     }
   }
 
-  async open(settings, audio) {
+  async open(settings, audio, { bitmap = false } = {}) {
     if (this.settings) throw new Error("webcodecs.already_open");
     const selected = mediaSettings(settings);
     this.settings = settings;
@@ -120,6 +120,15 @@ class WebCodecsHost {
     this.videoFile = audio
       ? path.join(this.directory, `encoded-video.${selected.container}`)
       : this.file;
+    if (selected.backend === "native" && bitmap) {
+      const { NativeVideoClient } = require("./native-video-client.cjs");
+      this.nativeSession = new NativeVideoClient();
+      this.config = await this.nativeSession.open({
+        ...settings,
+        outputPath: this.videoFile,
+      });
+      return this.config;
+    }
     await this.initialize();
     const config = await this.command("open", {
       ...settings,
@@ -249,14 +258,18 @@ class WebCodecsHost {
   async finish() {
     if (!this.config || this.finished)
       throw new Error("webcodecs.invalid_finish");
-    const result = await this.command("finish");
+    const result = this.nativeSession
+      ? await this.nativeSession.finish()
+      : await this.command("finish");
     if (result.frames !== this.frames || !this.frames)
       throw new Error("webcodecs.frame_count_mismatch");
+    this.colorSpace = result.colorSpace ?? this.colorSpace;
     if (this.sink) {
       this.source.close();
       await this.sink.output.finalize();
       this.sink.close();
     }
+    if (this.audio && !this.window) await this.initialize();
     const metadata = this.audio
       ? await this.command("media-operation", {
           kind: "mux-audio-plan",
@@ -299,12 +312,15 @@ class WebCodecsHost {
       data.byteLength !== this.settings.width * this.settings.height * 4
     )
       throw new Error("webcodecs.invalid_bitmap");
-    const result = await this.command("bitmap", {
+    const settings = {
       data,
       index,
       width: this.settings.width,
       height: this.settings.height,
-    });
+    };
+    const result = this.nativeSession
+      ? await this.nativeSession.encodeBitmap(settings)
+      : await this.command("bitmap", settings);
     const timing = frameTiming(index, this.settings.fps);
     if (this.config.backend === "native") {
       this.validateAcknowledgement(result, index, timing);
@@ -352,15 +368,22 @@ class WebCodecsHost {
       throw new Error("media.invalid_acknowledgement");
   }
 
-  dispose() {
+  async dispose() {
     this.pending?.reject(new Error("webcodecs.closed"));
     ipcMain.off("velocast:webcodecs:result", this.onResult);
-    this.sink?.close();
-    if (this.window && !this.window.isDestroyed()) this.window.destroy();
-    this.window = null;
-    if (!this.finished && this.config) {
-      // Destroying the trusted utility releases native encoder/file resources.
-      fs.rmSync(this.videoFile, { force: true, maxRetries: 8, retryDelay: 50 });
+    try {
+      await this.nativeSession?.cancel();
+    } finally {
+      this.sink?.close();
+      if (this.window && !this.window.isDestroyed()) this.window.destroy();
+      this.window = null;
+      if (!this.finished && this.config) {
+        fs.rmSync(this.videoFile, {
+          force: true,
+          maxRetries: 8,
+          retryDelay: 50,
+        });
+      }
     }
   }
 }

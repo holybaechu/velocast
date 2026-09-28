@@ -51,6 +51,15 @@ async function removeOwnedDirectory(directory) {
 
 async function createMediaSession(options = {}) {
   options.signal?.throwIfAborted();
+  const nodeBinary =
+    options.nodeBinary ??
+    (process.versions?.electron
+      ? (options.env?.VELOCAST_NODE_BINARY ?? process.env.VELOCAST_NODE_BINARY)
+      : process.execPath);
+  if (!nodeBinary || !path.isAbsolute(nodeBinary))
+    throw new Error(
+      "media.node_binary_required: provide an absolute stock Node.js executable",
+    );
   const directory = fs.mkdtempSync(
     path.join(os.tmpdir(), "velocast-media-client-"),
   );
@@ -60,6 +69,7 @@ async function createMediaSession(options = {}) {
   const env = {
     ...process.env,
     ...options.env,
+    VELOCAST_NODE_BINARY: nodeBinary,
     VELOCAST_MEDIA_READY: ready,
     VELOCAST_ELECTRON_PROFILE_DIRECTORY: profile,
     VELOCAST_MEDIA_SCRATCH: directory,

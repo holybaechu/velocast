@@ -55,9 +55,17 @@ function inputFile(file) {
     }),
   });
 }
-function outputFile(file, container) {
+function outputFile(file, container, inheritedFd) {
   const format = outputFormat(containerFor(file, container));
-  const fd = fs.openSync(absolute(file), "wx", 0o600);
+  absolute(file);
+  if (
+    inheritedFd !== undefined &&
+    (!Number.isSafeInteger(inheritedFd) ||
+      inheritedFd < 0 ||
+      !fs.fstatSync(inheritedFd).isFile())
+  )
+    throw new Error("media.invalid_output_descriptor");
+  const fd = inheritedFd ?? fs.openSync(file, "wx", 0o600);
   let closed = false;
   const close = () => {
     if (!closed) {

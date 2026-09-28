@@ -1,8 +1,8 @@
 "use strict";
-const { loadNodeAv } = require("./native-binding.cjs");
+const { createRequire } = require("node:module");
 const mb = require("mediabunny");
-const av = loadNodeAv();
 const server = require("@mediabunny/server");
+const av = createRequire(require.resolve("@mediabunny/server"))("node-av");
 const check = (status) =>
   av.FFmpegError.throwIfError(status, "ProRes decoding");
 

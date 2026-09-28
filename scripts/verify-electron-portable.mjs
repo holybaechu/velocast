@@ -55,7 +55,11 @@ if (
   repeats > 20
 )
   throw new Error("Invalid frame/repeat bounds");
-const env = { ...process.env, VELOCAST_RENDERER_BINARY: renderer };
+const env = {
+  ...process.env,
+  VELOCAST_RENDERER_BINARY: renderer,
+  VELOCAST_NODE_BINARY: process.execPath,
+};
 const encoder = "webcodecs";
 if (options.has("--encoder") && options.get("--encoder") !== "webcodecs")
   throw new Error(
