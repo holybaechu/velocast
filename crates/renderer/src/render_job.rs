@@ -771,7 +771,9 @@ mod tests {
                 )])?;
                 wait_until_exists(&ready).await;
                 std::fs::write(ready.with_extension("flood"), b"")?;
-                for _ in 0..100 {
+                // Windows schedules a blocking task for each stderr read.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while std::time::Instant::now() < deadline {
                     resources.check_workers().await?;
                     // Electron frame requests are synchronous. Disabled events
                     // must not prevent the worker's stderr reader from running.
@@ -782,8 +784,14 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(error.to_string().contains("worker 0..1 failed"));
-        assert!(error.to_string().contains("noisy worker failure"));
+        assert!(
+            error.to_string().contains("worker 0..1 failed"),
+            "unexpected worker result: {error:#}"
+        );
+        assert!(
+            error.to_string().contains("noisy worker failure"),
+            "missing worker diagnostic: {error:#}"
+        );
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
 
