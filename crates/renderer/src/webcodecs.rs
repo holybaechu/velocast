@@ -1,7 +1,7 @@
 //! Browser-owned encoding and muxing; Rust retains scheduling and publication.
 use crate::browser_protocol::BrowserDriver;
+use crate::electron_app::ElectronRenderer;
 use crate::events::{RendererEvent, RendererEventSink};
-use crate::native_browser::NativeBrowser;
 use crate::render_job::RenderJobResources;
 use crate::telemetry::{AudioTelemetry, RenderTelemetry, WebCodecsTelemetry};
 use anyhow::{ensure, Context};
@@ -97,7 +97,7 @@ pub(crate) fn validate_geometry(composition: &CompositionManifest) -> anyhow::Re
 pub(crate) async fn render(
     job: &RenderJob,
     composition: &CompositionManifest,
-    browser: &NativeBrowser,
+    browser: &ElectronRenderer,
     output: &Path,
     audio: Option<&Value>,
     resources: &mut RenderJobResources,
