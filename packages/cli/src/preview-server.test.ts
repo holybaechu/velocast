@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createPreviewServer } from "./preview-server.js";
 import { failedOutputResult } from "./output-result.js";
 import type { RustRenderJob } from "./render-command-job.js";
+import * as snapshotModule from "./input-snapshot.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -344,25 +345,93 @@ it("stages a new source for browser validation and only replaces the active sour
   await expect(fetch(before.snapshotUrl)).rejects.toThrow();
 });
 
-it("keeps automatic source updates opt-out and releases an uncommitted candidate on close", async () => {
-  const { cwd, config } = await fixture();
-  const server = await createPreviewServer(config, {
-    autoRefresh: false,
-    pathOptions: { cwd, env: {} },
-  });
-  cleanup.push(server.close);
-  expect(server.session().autoRefresh).toBe(false);
-  expect(await (await fetch(server.url + "/api/changes")).json()).toMatchObject(
-    { enabled: false },
-  );
-  const prepared = (await (
-    await post(server.url + "/api/prepare-refresh", {
-      expectedSourceVersion: server.session().session.sourceVersion,
-    })
-  ).json()) as ReturnType<typeof server.session>;
-  await server.close();
-  await expect(fetch(prepared.snapshotUrl)).rejects.toThrow();
-});
+it.each([
+  ["successful", []],
+  ["active failure", [new Error("active media shutdown failed")]],
+  ["undefined failure", [undefined]],
+  [
+    "both failures",
+    [
+      new Error("active media shutdown failed"),
+      new Error("prepared media shutdown failed"),
+    ],
+  ],
+] as const)(
+  "keeps automatic source updates opt-out and closes snapshots after %s cleanup",
+  async (_name, failures) => {
+    const { cwd, config } = await fixture();
+    const original = snapshotModule.createInputSnapshot;
+    const spy = vi
+      .spyOn(snapshotModule, "createInputSnapshot")
+      .mockImplementation(async (options) => {
+        const snapshot = await original(options);
+        cleanup.push(snapshot.close);
+        return snapshot;
+      });
+    let nextService = 0;
+    const closeMedia = vi.fn(async (index: number) => {
+      if (index < failures.length) throw failures[index];
+    });
+    try {
+      const server = await createPreviewServer(
+        config,
+        {
+          autoRefresh: false,
+          pathOptions: { cwd, env: {} },
+        },
+        {
+          runtimeAcquisition: {
+            acquire: async () => ({
+              binary: "native",
+              env: {},
+              source: "local" as const,
+            }),
+          },
+          createMediaService: () => {
+            const index = nextService++;
+            return {
+              handle: async (_request, response) => {
+                response.end("frame");
+              },
+              close: () => closeMedia(index),
+            };
+          },
+        },
+      );
+      cleanup.push(() => server.close().catch(() => {}));
+      const before = server.session();
+      expect(before.autoRefresh).toBe(false);
+      expect(
+        await (await fetch(server.url + "/api/changes")).json(),
+      ).toMatchObject({ enabled: false });
+      const prepared = (await (
+        await post(server.url + "/api/prepare-refresh", {
+          expectedSourceVersion: before.session.sourceVersion,
+        })
+      ).json()) as ReturnType<typeof server.session>;
+      for (const url of [before.snapshotUrl, prepared.snapshotUrl])
+        await (await fetch(new URL("/__velocast-media/frame", url))).text();
+      const closing = server.close();
+      expect(server.close()).toBe(closing);
+      if (failures.length === 0) await closing;
+      else if (failures.length === 1)
+        await expect(closing).rejects.toBe(failures[0]);
+      else
+        await expect(closing).rejects.toMatchObject({
+          errors: [...failures],
+          message:
+            "preview.cleanup_failed: active media shutdown failed; prepared media shutdown failed",
+        });
+      expect(closeMedia).toHaveBeenCalledTimes(2);
+      for (const url of [server.url, before.snapshotUrl, prepared.snapshotUrl])
+        await expect(
+          fetch(url).then((response) => response.text()),
+        ).rejects.toThrow();
+    } finally {
+      spy.mockRestore();
+    }
+  },
+);
 
 it("expires an abandoned prepared snapshot while retaining the active source", async () => {
   const { cwd, config } = await fixture();
