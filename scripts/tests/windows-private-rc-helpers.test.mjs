@@ -28,7 +28,7 @@ test("concurrent setup helper joins two real Node children and seals one result"
     `import{mkdirSync}from"node:fs";mkdirSync(process.env.VELOCAST_CACHE_DIR,{recursive:true});console.log(JSON.stringify({target:"win32-x64",source:"cache",artifactDir:${JSON.stringify(join(cache, "artifact"))},rendererBinary:"renderer",sha256:"${"a".repeat(64)}"}));`,
   );
   run(
-    join(repo, "scripts/windows-private-rc-concurrent-setup.mjs"),
+    join(repo, "scripts/release/windows-private-rc-concurrent-setup.mjs"),
     [
       "--npm-cli",
       cli,
@@ -57,7 +57,7 @@ test("preview wrapper preserves a child harness JSON result", () => {
   mkdirSync(runtime);
   writeFileSync(cli, "// installed CLI fixture");
   writeFileSync(harness, 'console.log(JSON.stringify({browser:"test",frame:12}));');
-  run(join(repo, "scripts/windows-private-rc-preview.mjs"), [
+  run(join(repo, "scripts/release/windows-private-rc-preview.mjs"), [
     "--harness",
     harness,
     "--project",
@@ -88,7 +88,7 @@ test("offline-empty-cache negative helper accepts only the expected CLI failure"
   writeFileSync(manifest, JSON.stringify({ targets: { "win32-x64": { artifact: {} } } }));
   writeFileSync(artifact, "fixture");
   run(
-    join(repo, "scripts/windows-private-rc-negative.mjs"),
+    join(repo, "scripts/release/windows-private-rc-negative.mjs"),
     [
       "offline-empty-cache",
       "--cli",
@@ -133,7 +133,7 @@ test("version-mismatch derives an internally consistent manifest before setup", 
   );
   writeFileSync(artifact, "fixture");
   run(
-    join(repo, "scripts/windows-private-rc-negative.mjs"),
+    join(repo, "scripts/release/windows-private-rc-negative.mjs"),
     [
       "version-mismatch",
       "--cli",

@@ -12,123 +12,95 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   foundation:
+    name: Release foundation
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - name: Configure temporary build directories
-        shell: bash
-        run: |
-          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/velocast-cargo" >> "$GITHUB_ENV"
-          echo "TURBO_CACHE_DIR=$RUNNER_TEMP/velocast-turbo-cache" >> "$GITHUB_ENV"
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-      - name: Install Electron display dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Install the pinned Electron runtime
-        run: node packages/electron-host/node_modules/electron/install.js
-      - name: Configure Electron sandbox helper
-        run: |
-          sandbox="$(node -p "require('node:path').join(require('node:path').dirname(require('./packages/electron-host/node_modules/electron')), 'chrome-sandbox')")"
-          sudo chown root:root "$sandbox"
-          sudo chmod 4755 "$sandbox"
-      - run: pnpm release:verify
-      - run: pnpm release:test
-      - run: pnpm contracts:check
-      - run: pnpm check-types
-      - run: xvfb-run -a pnpm test
+      - name: Check out the repository
+        uses: actions/checkout@v7
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+      - name: Verify release declarations
+        run: pnpm release:verify
+      - name: Check generated contracts
+        run: pnpm contracts:check
+      - name: Check TypeScript types
+        run: pnpm check-types
+      - name: Test build and release scripts
+        run: pnpm test:scripts
+      - name: Run package tests
+        run: xvfb-run -a pnpm test --concurrency=1
 
   native:
+    name: Windows release candidate
     if: inputs.execute_native
     needs: foundation
     runs-on: [self-hosted, velocast, windows, x64]
+    timeout-minutes: 60
     env:
       VELOCAST_RELEASE_TARGET: win32-x64
       VELOCAST_RELEASE_MODE: "1"
-      VELOCAST_AUTHENTICODE_CERTIFICATE: ${{ secrets.VELOCAST_AUTHENTICODE_CERTIFICATE }}
-      VELOCAST_AUTHENTICODE_PASSWORD: ${{ secrets.VELOCAST_AUTHENTICODE_PASSWORD }}
-      VELOCAST_APPLE_SIGNING_IDENTITY: ${{ secrets.VELOCAST_APPLE_SIGNING_IDENTITY }}
-      VELOCAST_APPLE_NOTARY_PROFILE: ${{ secrets.VELOCAST_APPLE_NOTARY_PROFILE }}
     steps:
-      - uses: actions/checkout@v7
-      - name: Configure temporary build directories
-        shell: pwsh
-        run: |
-          "CARGO_TARGET_DIR=$(Join-Path $env:RUNNER_TEMP 'velocast-cargo')" >> $env:GITHUB_ENV
-          "TURBO_CACHE_DIR=$(Join-Path $env:RUNNER_TEMP 'velocast-turbo-cache')" >> $env:GITHUB_ENV
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: node packages/electron-host/node_modules/electron/install.js
-      - name: Build Electron renderer and stage runtime
-        run: node scripts/native-release-target.mjs build win32-x64
+      - name: Check out the repository
+        uses: actions/checkout@v7
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+      - name: Build and sign the renderer and stage the runtime
+        run: node scripts/release/native-release-target.mjs build win32-x64
         env:
           VELOCAST_RELEASE_EVIDENCE: ${{ runner.temp }}/velocast-evidence
-      - name: Package and verify immutable artifact
-        run: node scripts/native-release-target.mjs package win32-x64
+          VELOCAST_AUTHENTICODE_CERTIFICATE: ${{ secrets.VELOCAST_AUTHENTICODE_CERTIFICATE }}
+          VELOCAST_AUTHENTICODE_PASSWORD: ${{ secrets.VELOCAST_AUTHENTICODE_PASSWORD }}
+      - name: Package and verify the immutable artifact
+        run: node scripts/release/native-release-target.mjs package win32-x64
         env:
           VELOCAST_RELEASE_EVIDENCE: ${{ runner.temp }}/velocast-evidence
-      - name: npm and pnpm external-project validation
-        run: node scripts/native-release-target.mjs validate win32-x64
+      - name: Validate npm and pnpm external consumers
+        run: node scripts/release/native-release-target.mjs validate win32-x64
         env:
           VELOCAST_RELEASE_EVIDENCE: ${{ runner.temp }}/velocast-evidence
-      - uses: actions/upload-artifact@v7
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
           name: velocast-win32-x64
           path: ${{ runner.temp }}/velocast-evidence
           if-no-files-found: error
 
   assemble:
+    name: Assemble the dry-run manifest
     if: inputs.execute_native
     needs: native
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - name: Configure temporary build directories
-        shell: bash
-        run: |
-          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/velocast-cargo" >> "$GITHUB_ENV"
-          echo "TURBO_CACHE_DIR=$RUNNER_TEMP/velocast-turbo-cache" >> "$GITHUB_ENV"
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - name: Check out the repository
+        uses: actions/checkout@v7
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
         with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: node packages/electron-host/node_modules/electron/install.js
-      - name: Install Electron display dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
-      - name: Configure Electron sandbox helper
-        run: |
-          sandbox="$(node -p "require('node:path').join(require('node:path').dirname(require('./packages/electron-host/node_modules/electron')), 'chrome-sandbox')")"
-          sudo chown root:root "$sandbox"
-          sudo chmod 4755 "$sandbox"
-      - uses: actions/download-artifact@v8
+          rust: "false"
+      - name: Download release evidence
+        uses: actions/download-artifact@v8
         with:
-          pattern: velocast-*
+          name: velocast-win32-x64
           path: ${{ runner.temp }}/velocast-evidence
-          merge-multiple: true
-      - run: >-
-          xvfb-run -a node scripts/assemble-release-manifest.mjs
+      - name: Assemble the selected target
+        run: >-
+          xvfb-run -a node scripts/release/assemble-release-manifest.mjs
           --target win32-x64
-          --evidence-dir ${{ runner.temp }}/velocast-evidence
-          --output ${{ runner.temp }}/velocast-release-dry-run.json
+          --evidence-dir "${{ runner.temp }}/velocast-evidence"
+          --output "${{ runner.temp }}/velocast-release-dry-run.json"
           --base-url https://artifacts.invalid/velocast/dry-run/
-      - uses: actions/upload-artifact@v7
+      - name: Upload the dry-run manifest
+        uses: actions/upload-artifact@v7
         with:
           name: velocast-release-dry-run
           path: ${{ runner.temp }}/velocast-release-dry-run.json
+          if-no-files-found: error

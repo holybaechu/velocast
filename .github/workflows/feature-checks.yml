@@ -4,16 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: feature-checks-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   feature-checks:
+    name: Feature checks (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -21,80 +23,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - name: Configure temporary build directories (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/velocast-cargo" >> "$GITHUB_ENV"
-          echo "TURBO_CACHE_DIR=$RUNNER_TEMP/velocast-turbo-cache" >> "$GITHUB_ENV"
-      - name: Configure temporary build directories (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          "CARGO_TARGET_DIR=$(Join-Path $env:RUNNER_TEMP 'velocast-cargo')" >> $env:GITHUB_ENV
-          "TURBO_CACHE_DIR=$(Join-Path $env:RUNNER_TEMP 'velocast-turbo-cache')" >> $env:GITHUB_ENV
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Electron display dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Install the pinned Electron runtime
-        run: node packages/electron-host/node_modules/electron/install.js
-      - name: Configure Electron's Linux sandbox helper
-        if: runner.os == 'Linux'
-        run: |
-          sandbox="$(node -p "require('node:path').join(require('node:path').dirname(require('./packages/electron-host/node_modules/electron')), 'chrome-sandbox')")"
-          sudo chown root:root "$sandbox"
-          sudo chmod 4755 "$sandbox"
-      - name: Run feature checks with a display (Linux)
+      - name: Check out the repository
+        uses: actions/checkout@v7
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+      - name: Run feature checks (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a pnpm check:fast
       - name: Run feature checks (Windows)
         if: runner.os == 'Windows'
         run: pnpm check:fast
-      - name: Build renderer and CLI for capture checks (Windows)
-        id: native_capture_build
+      - name: Check the Windows resource profiler
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          pnpm build
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo build -p velocast-renderer
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      # Hosted Windows reports a software compositor. GPU success is exercised
-      # by macOS CI and by the separate self-hosted native-release acceptance.
-      - name: Validate unavailable GPU and PNG output (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
-          $output = Join-Path $env:RUNNER_TEMP 'electron-portable'
-          $env:VELOCAST_WEBCODECS_TEST_BINARY = node -p "require('./packages/electron-host/node_modules/electron')"
-          node --test packages/electron-host/test/shared-capability-runtime.test.cjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/verify-electron-portable.mjs --renderer $renderer --output $output --capture unavailable --frames 8 --repeats 1
-          exit $LASTEXITCODE
-      - name: Validate browser video and native audio utilities (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $env:VELOCAST_WEBCODECS_TEST_BINARY = node -p "require('./packages/electron-host/node_modules/electron')"
-          node --test packages/electron-host/test/native-media.integration.test.cjs
-          exit $LASTEXITCODE
-      - name: Save capture capability evidence (Windows)
-        if: always() && runner.os == 'Windows'
-        uses: actions/upload-artifact@v7
-        with:
-          name: capture-capability-windows
-          if-no-files-found: ignore
-          path: |
-            ${{ runner.temp }}/electron-portable/results.json
-            ${{ runner.temp }}/electron-portable/unavailable-capture.json
+        run: pnpm test:profiling

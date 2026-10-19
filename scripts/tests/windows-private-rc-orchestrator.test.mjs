@@ -9,7 +9,7 @@ import {
   runCommandForTest,
   runWindowsPrivateRc,
   validateManifest,
-} from "../windows-private-rc-orchestrator.mjs";
+} from "../release/windows-private-rc-orchestrator.mjs";
 
 const roots = [];
 process.on("exit", () => {

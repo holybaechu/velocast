@@ -23,7 +23,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "node ../../scripts/prune-retired-emits.mjs core && tsc -p tsconfig.build.json && node ../../scripts/copy-release-manifest.mjs core",
+    "build": "node ../../scripts/build/prune-retired-emits.mjs core && tsc -p tsconfig.build.json && node ../../scripts/build/copy-release-manifest.mjs core",
     "lint": "eslint . --max-warnings 0",
     "check-types": "tsc --noEmit",
     "test": "vitest run"

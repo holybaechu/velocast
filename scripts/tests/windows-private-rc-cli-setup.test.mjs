@@ -19,69 +19,73 @@ import { create } from "tar";
 const repo = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const cli = join(repo, "packages/cli/dist/bin.js");
 
-test("installed CLI performs real fresh/cache/offline/corrupt/version setup I/O", async () => {
-  assert.equal(
-    statSync(cli).isFile(),
-    true,
-    "build packages/cli before this setup boundary test",
-  );
-  const root = mkdtempSync(join(tmpdir(), "velocast-private-rc-cli-"));
-  try {
-    const fixture = await artifactFixture(root);
-    const cache = join(root, "cache");
-    const manifest = writeRelease(root, fixture);
-    const fresh = setup(manifest, cache);
-    assert.equal(fresh.status, 0, fresh.stderr);
-    const first = JSON.parse(fresh.stdout);
-    assert.equal(first.source, "download");
-    assert.equal(first.sha256, fixture.archiveSha256);
-
-    const cached = setup(manifest, cache);
-    assert.equal(cached.status, 0, cached.stderr);
-    assert.equal(JSON.parse(cached.stdout).source, "cache");
-
-    const offline = setup(manifest, cache, { VELOCAST_OFFLINE: "1" });
-    assert.equal(offline.status, 0, offline.stderr);
-    assert.equal(JSON.parse(offline.stdout).source, "cache");
-
-    const renderer = join(first.artifactDir, "velocast-renderer.exe");
-    const changed = readFileSync(renderer);
-    changed[64] ^= 0xff;
-    writeFileSync(renderer, changed);
-    const corruptCache = setup(manifest, cache, { VELOCAST_OFFLINE: "1" });
-    assert.notEqual(corruptCache.status, 0);
-    assert.match(corruptCache.stderr, /artifact\.offline_missing/);
-
-    const corruptArchive = join(root, "corrupt.tar.gz");
-    copyFileSync(fixture.archive, corruptArchive);
-    const corruptBytes = readFileSync(corruptArchive);
-    corruptBytes[Math.floor(corruptBytes.length / 2)] ^= 0xff;
-    writeFileSync(corruptArchive, corruptBytes);
-    const corruptManifest = writeRelease(root, fixture, {
-      name: "corrupt-release.json",
-      url: pathToFileURL(corruptArchive).href,
-    });
-    const corruptArchiveResult = setup(
-      corruptManifest,
-      join(root, "corrupt-archive-cache"),
+test(
+  "installed CLI performs real fresh/cache/offline/corrupt/version setup I/O",
+  { skip: process.platform !== "win32" },
+  async () => {
+    assert.equal(
+      statSync(cli).isFile(),
+      true,
+      "build packages/cli before this setup boundary test",
     );
-    assert.notEqual(corruptArchiveResult.status, 0);
-    assert.match(corruptArchiveResult.stderr, /artifact\.checksum_mismatch/);
+    const root = mkdtempSync(join(tmpdir(), "velocast-private-rc-cli-"));
+    try {
+      const fixture = await artifactFixture(root);
+      const cache = join(root, "cache");
+      const manifest = writeRelease(root, fixture);
+      const fresh = setup(manifest, cache);
+      assert.equal(fresh.status, 0, fresh.stderr);
+      const first = JSON.parse(fresh.stdout);
+      assert.equal(first.source, "download");
+      assert.equal(first.sha256, fixture.archiveSha256);
 
-    const mismatchManifest = writeRelease(root, fixture, {
-      name: "mismatch-release.json",
-      sourceCommit: "0".repeat(40),
-    });
-    const mismatch = setup(mismatchManifest, join(root, "mismatch-cache"));
-    assert.notEqual(mismatch.status, 0);
-    assert.match(
-      mismatch.stderr,
-      /release\.manifest_invalid: win32-x64 artifact sourceCommit differs from manifest sourceCommit/,
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+      const cached = setup(manifest, cache);
+      assert.equal(cached.status, 0, cached.stderr);
+      assert.equal(JSON.parse(cached.stdout).source, "cache");
+
+      const offline = setup(manifest, cache, { VELOCAST_OFFLINE: "1" });
+      assert.equal(offline.status, 0, offline.stderr);
+      assert.equal(JSON.parse(offline.stdout).source, "cache");
+
+      const renderer = join(first.artifactDir, "velocast-renderer.exe");
+      const changed = readFileSync(renderer);
+      changed[64] ^= 0xff;
+      writeFileSync(renderer, changed);
+      const corruptCache = setup(manifest, cache, { VELOCAST_OFFLINE: "1" });
+      assert.notEqual(corruptCache.status, 0);
+      assert.match(corruptCache.stderr, /artifact\.offline_missing/);
+
+      const corruptArchive = join(root, "corrupt.tar.gz");
+      copyFileSync(fixture.archive, corruptArchive);
+      const corruptBytes = readFileSync(corruptArchive);
+      corruptBytes[Math.floor(corruptBytes.length / 2)] ^= 0xff;
+      writeFileSync(corruptArchive, corruptBytes);
+      const corruptManifest = writeRelease(root, fixture, {
+        name: "corrupt-release.json",
+        url: pathToFileURL(corruptArchive).href,
+      });
+      const corruptArchiveResult = setup(
+        corruptManifest,
+        join(root, "corrupt-archive-cache"),
+      );
+      assert.notEqual(corruptArchiveResult.status, 0);
+      assert.match(corruptArchiveResult.stderr, /artifact\.checksum_mismatch/);
+
+      const mismatchManifest = writeRelease(root, fixture, {
+        name: "mismatch-release.json",
+        sourceCommit: "0".repeat(40),
+      });
+      const mismatch = setup(mismatchManifest, join(root, "mismatch-cache"));
+      assert.notEqual(mismatch.status, 0);
+      assert.match(
+        mismatch.stderr,
+        /release\.manifest_invalid: win32-x64 artifact sourceCommit differs from manifest sourceCommit/,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 async function artifactFixture(root) {
   const release = JSON.parse(

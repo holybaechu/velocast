@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { create } from "tar";
 
 const audit = fileURLToPath(
-  new URL("../audit-package-tarballs.mjs", import.meta.url),
+  new URL("../release/audit-package-tarballs.mjs", import.meta.url),
 );
 test("package audit rejects source trees from the published React package", async () => {
   const temporary = await mkdtemp(
@@ -32,7 +32,7 @@ test("package audit rejects source trees from the published React package", asyn
     );
     await put("dist/index.js", "export {};\n");
     await put("LICENSE", "MIT\n");
-    await put("THIRD_PARTY_NOTICES.md", "fixture\n");
+    await put("THIRD_PARTY_NOTICES", "fixture\n");
     const tarball = join(temporary, "react.tgz");
     async function run() {
       await create({ cwd: temporary, file: tarball, gzip: true }, ["package"]);

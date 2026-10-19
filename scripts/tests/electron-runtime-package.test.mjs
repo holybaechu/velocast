@@ -14,7 +14,7 @@ import {
   packageElectronRuntime,
   peArchitecture,
   withDllSearchPath,
-} from "../electron-runtime-package.mjs";
+} from "../release/electron-runtime-package.mjs";
 
 test("capability probe receives explicit DLL directories without mutating caller PATH", () => {
   const environment = { PATH: "machine", Path: "stale", KEEP: "yes" };

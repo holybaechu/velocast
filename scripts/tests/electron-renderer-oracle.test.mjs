@@ -14,7 +14,7 @@ import {
   FRAME_STATES,
   HEIGHT,
   WIDTH,
-} from "../electron-renderer-oracle.mjs";
+} from "../verify/electron-renderer-oracle.mjs";
 
 function frames(
   indices = FRAME_STATES.map((_, index) => index),

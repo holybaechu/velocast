@@ -10,7 +10,7 @@ import {
 } from "./renderer-events.js";
 
 describe("renderer generated contract artifacts", () => {
-  it("keeps generated Rust, TypeScript, and Python artifacts fresh", () => {
+  it("keeps generated Rust and TypeScript artifacts fresh", () => {
     const repoRoot = resolve(
       dirname(fileURLToPath(import.meta.url)),
       "../../..",
@@ -19,7 +19,10 @@ describe("renderer generated contract artifacts", () => {
     expect(() =>
       execFileSync(
         process.execPath,
-        [join(repoRoot, "scripts/generate-renderer-contracts.mjs"), "--check"],
+        [
+          join(repoRoot, "scripts/contracts/generate-renderer-contracts.mjs"),
+          "--check",
+        ],
         { cwd: repoRoot, stdio: "pipe" },
       ),
     ).not.toThrow();

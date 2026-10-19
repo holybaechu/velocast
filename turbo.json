@@ -2,8 +2,8 @@
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
   "globalDependencies": [
-    "scripts/prune-retired-emits.mjs",
-    "scripts/copy-release-manifest.mjs",
+    "scripts/build/prune-retired-emits.mjs",
+    "scripts/build/copy-release-manifest.mjs",
     "release/velocast-release.json"
   ],
   "globalEnv": [

@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pruneRetiredEmits } from "../prune-retired-emits.mjs";
+import { pruneRetiredEmits } from "../build/prune-retired-emits.mjs";
 
 async function fixture(t, packageName = "core") {
   const root = await realpath(

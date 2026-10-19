@@ -21,7 +21,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node ../../scripts/copy-release-manifest.mjs remotion-source",
+    "build": "tsc -p tsconfig.build.json && node ../../scripts/build/copy-release-manifest.mjs remotion-source",
     "check-types": "tsc --noEmit",
     "lint": "eslint src eslint.config.mjs --max-warnings 0",
     "test": "vitest run"

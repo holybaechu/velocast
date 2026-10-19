@@ -7,12 +7,14 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { windowsCandidateState } from "../windows-candidate-state.mjs";
+import { windowsCandidateState } from "../release/windows-candidate-state.mjs";
 
 const blocked = {
   artifact: null,
@@ -83,13 +85,18 @@ test("declaration synchronization cannot promote or erase incomplete acceptance"
   );
 });
 
-test("sync and verifier preserve an accepted private manifest on a disposable fixture", () => {
+test("sync and verifier preserve an accepted private manifest on a disposable fixture", (t) => {
   const source = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   const root = mkdtempSync(join(tmpdir(), "velocast-declaration-state-test-"));
+  const owned = realpathSync(root);
+  t.after(() => {
+    assert.equal(realpathSync(root), owned);
+    rmSync(owned, { recursive: true, force: true });
+  });
   for (const path of [
-    "scripts/sync-windows-runtime-declarations.mjs",
-    "scripts/verify-release-manifest.mjs",
-    "scripts/windows-candidate-state.mjs",
+    "scripts/release/sync-windows-runtime-declarations.mjs",
+    "scripts/release/verify-release-manifest.mjs",
+    "scripts/release/windows-candidate-state.mjs",
     "release/velocast-release.json",
     "release/windows-runtime-candidate.json",
   ]) {
@@ -138,7 +145,7 @@ test("sync and verifier preserve an accepted private manifest on a disposable fi
   function run(script, ...args) {
     return spawnSync(
       process.execPath,
-      [join(root, "scripts", script), ...args],
+      [join(root, "scripts", "release", script), ...args],
       { encoding: "utf8" },
     );
   }

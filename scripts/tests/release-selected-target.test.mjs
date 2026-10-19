@@ -5,10 +5,10 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { validReleasePackageSet } from "../release-package-set.mjs";
+import { validReleasePackageSet } from "../release/release-package-set.mjs";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-const script = join(root, "scripts/assemble-release-manifest.mjs");
+const script = join(root, "scripts/release/assemble-release-manifest.mjs");
 
 test("selected Windows assembly does not require five unrelated target artifacts", () => {
   const temp = mkdtempSync(join(tmpdir(), "velocast-selected-release-"));

@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { stageMediaDependencies } from "../media-runtime-dependencies.mjs";
+import { stageMediaDependencies } from "../release/media-runtime-dependencies.mjs";
 
 test("staged codecs retain their native assets, ESM exports, licenses and shared Mediabunny peer", (t) => {
   const root = mkdtempSync(join(tmpdir(), "velocast-media-dependencies-"));

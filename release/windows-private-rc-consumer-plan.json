@@ -10,7 +10,7 @@
   "prerequisites": [
     "final integration release build and immutable source commit",
     "current native rendering and media acceptance checks passed",
-    "Windows native artifact produced by scripts/package-native-artifact.mjs",
+    "Windows native artifact produced by scripts/release/package-native-artifact.mjs",
     "artifact-manifest.json SHA-256 and archive evidence JSON",
     "validated host requirements evidence",
     "fresh core, preview, React, compatibility, and velocast package tarballs",
@@ -82,7 +82,7 @@
       "environment": "build host",
       "argv": [
         "<NODE_EXE>",
-        "scripts/audit-package-tarballs.mjs",
+        "scripts/release/audit-package-tarballs.mjs",
         "<core.tgz>",
         "<preview.tgz>",
         "<react.tgz>",

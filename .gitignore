@@ -40,6 +40,9 @@ fixtures/
 build
 dist
 
+# Maintained build tooling
+!/scripts/build/
+
 
 # Debug
 npm-debug.log*

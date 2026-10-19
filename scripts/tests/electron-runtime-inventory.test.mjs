@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { verifyElectronRuntimeInventory } from "../verify-electron-runtime-inventory.mjs";
+import { verifyElectronRuntimeInventory } from "../release/verify-electron-runtime-inventory.mjs";
 
 test("native artifact verifies Electron runtime identity and every staged hash", (t) => {
   const root = mkdtempSync(join(tmpdir(), "velocast-electron-inventory-"));

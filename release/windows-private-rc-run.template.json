@@ -20,7 +20,7 @@
       "kind": "preflight",
       "scope": "shared",
       "environment": "install",
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\audit-windows-runtime-candidate.mjs", "<FINAL_RUNTIME_DIR>", "C:\\velocast-private-rc\\evidence\\native-candidate-audit.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\audit-windows-runtime-candidate.mjs", "<FINAL_RUNTIME_DIR>", "C:\\velocast-private-rc\\evidence\\native-candidate-audit.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\native-candidate-audit.json"]
     },
@@ -29,7 +29,7 @@
       "kind": "preflight",
       "scope": "shared",
       "environment": "install",
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\audit-package-tarballs.mjs", "<CORE_TGZ>", "<GSAP_TGZ>", "<REACT_TGZ>", "<REMOTION_TGZ>", "<PREVIEW_TGZ>", "<CLI_TGZ>"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\audit-package-tarballs.mjs", "<CORE_TGZ>", "<GSAP_TGZ>", "<REACT_TGZ>", "<REMOTION_TGZ>", "<PREVIEW_TGZ>", "<CLI_TGZ>"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": []
     },
@@ -84,7 +84,7 @@
       "kind": "setup-harness",
       "scope": "shared",
       "environment": "minimal",
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\windows-private-rc-concurrent-setup.mjs", "--npm-cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--pnpm-cli", "C:\\velocast-private-rc\\pnpm-consumer\\node_modules\\velocast\\dist\\bin.js", "--cache", "C:\\velocast-private-rc\\concurrent-cache", "--output", "C:\\velocast-private-rc\\evidence\\concurrent-setup.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-concurrent-setup.mjs", "--npm-cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--pnpm-cli", "C:\\velocast-private-rc\\pnpm-consumer\\node_modules\\velocast\\dist\\bin.js", "--cache", "C:\\velocast-private-rc\\concurrent-cache", "--output", "C:\\velocast-private-rc\\evidence\\concurrent-setup.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\concurrent-setup.json"]
     },
@@ -122,7 +122,7 @@
       "kind": "preview-harness",
       "scope": "shared",
       "environment": "minimal",
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\windows-private-rc-preview.mjs", "--harness", "<REPO>\\packages\\preview\\scripts\\verify-official-preview.mjs", "--project", "C:\\velocast-private-rc\\projects\\original-lyrics", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--runtime", "<FINAL_RUNTIME_DIR>", "--output", "C:\\velocast-private-rc\\evidence\\preview-browser.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-preview.mjs", "--harness", "<REPO>\\packages\\preview\\scripts\\verify-official-preview.mjs", "--project", "C:\\velocast-private-rc\\projects\\original-lyrics", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--runtime", "<FINAL_RUNTIME_DIR>", "--output", "C:\\velocast-private-rc\\evidence\\preview-browser.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\preview-browser.json"]
     },
@@ -132,7 +132,7 @@
       "scope": "shared",
       "environment": "minimal",
       "negative": { "case": "corrupt-archive", "disposableRoot": "corrupt-archive", "cacheRoot": "cache" },
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\windows-private-rc-negative.mjs", "corrupt-archive", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--output", "C:\\velocast-private-rc\\evidence\\negative-corrupt-archive.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-negative.mjs", "corrupt-archive", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--output", "C:\\velocast-private-rc\\evidence\\negative-corrupt-archive.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\negative-corrupt-archive.json"]
     },
@@ -142,7 +142,7 @@
       "scope": "shared",
       "environment": "minimal",
       "negative": { "case": "corrupt-cache", "disposableRoot": "corrupt-cache", "cacheRoot": "cache" },
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\windows-private-rc-negative.mjs", "corrupt-cache", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--valid-cache", "C:\\velocast-private-rc\\cache", "--output", "C:\\velocast-private-rc\\evidence\\negative-corrupt-cache.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-negative.mjs", "corrupt-cache", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--valid-cache", "C:\\velocast-private-rc\\cache", "--output", "C:\\velocast-private-rc\\evidence\\negative-corrupt-cache.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\negative-corrupt-cache.json"]
     },
@@ -152,7 +152,7 @@
       "scope": "shared",
       "environment": "minimal",
       "negative": { "case": "version-mismatch", "disposableRoot": "version-mismatch", "cacheRoot": "cache" },
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\windows-private-rc-negative.mjs", "version-mismatch", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--output", "C:\\velocast-private-rc\\evidence\\negative-version-mismatch.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-negative.mjs", "version-mismatch", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--output", "C:\\velocast-private-rc\\evidence\\negative-version-mismatch.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\negative-version-mismatch.json"]
     },
@@ -162,7 +162,7 @@
       "scope": "shared",
       "environment": "minimal",
       "negative": { "case": "cancel-render", "disposableRoot": "cancel-render", "cacheRoot": "cache" },
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\windows-private-rc-negative.mjs", "cancel-render", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--project", "C:\\velocast-private-rc\\projects\\original-lyrics", "--config", "<ORIGINAL_CONFIG>", "--composition", "<ORIGINAL_COMPOSITION>", "--output", "C:\\velocast-private-rc\\evidence\\negative-cancel-render.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-negative.mjs", "cancel-render", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--project", "C:\\velocast-private-rc\\projects\\original-lyrics", "--config", "<ORIGINAL_CONFIG>", "--composition", "<ORIGINAL_COMPOSITION>", "--output", "C:\\velocast-private-rc\\evidence\\negative-cancel-render.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\negative-cancel-render.json"]
     },
@@ -172,7 +172,7 @@
       "scope": "shared",
       "environment": "minimal",
       "negative": { "case": "offline-empty-cache", "disposableRoot": "offline-empty-cache", "cacheRoot": "cache" },
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\windows-private-rc-negative.mjs", "offline-empty-cache", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--output", "C:\\velocast-private-rc\\evidence\\negative-offline-empty-cache.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-negative.mjs", "offline-empty-cache", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--output", "C:\\velocast-private-rc\\evidence\\negative-offline-empty-cache.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\negative-offline-empty-cache.json"]
     },
@@ -181,7 +181,7 @@
       "kind": "verify",
       "scope": "shared",
       "environment": "minimal",
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\windows-private-rc-finalize.mjs", "--root", "C:\\velocast-private-rc", "--state", "C:\\velocast-private-rc\\state\\state.json", "--runtime", "<FINAL_RUNTIME_DIR>", "--host-requirements", "<FINAL_HOST_REQUIREMENTS>", "--output", "C:\\velocast-private-rc\\evidence\\consumer-validation.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-finalize.mjs", "--root", "C:\\velocast-private-rc", "--state", "C:\\velocast-private-rc\\state\\state.json", "--runtime", "<FINAL_RUNTIME_DIR>", "--host-requirements", "<FINAL_HOST_REQUIREMENTS>", "--output", "C:\\velocast-private-rc\\evidence\\consumer-validation.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\consumer-validation.json"]
     }

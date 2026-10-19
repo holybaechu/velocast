@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { windowsCandidateState } from "../windows-candidate-state.mjs";
+import { windowsCandidateState } from "../release/windows-candidate-state.mjs";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const declaration = readJson("release/windows-runtime-candidate.json");
