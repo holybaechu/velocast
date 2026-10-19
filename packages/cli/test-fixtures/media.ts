@@ -1,7 +1,7 @@
 import { deflateSync } from "node:zlib";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { runMediaOperation } from "./media-runtime.js";
+import { runMediaOperation } from "../src/media-runtime.js";
 
 /** Generated PCM fixture: no external encoders or fixture downloads. */
 export async function writeTestWav(

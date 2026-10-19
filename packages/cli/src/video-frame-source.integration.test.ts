@@ -8,7 +8,7 @@ import {
   openVideoFrameSource,
   type VideoFrameSource,
 } from "./video-frame-source.js";
-import { writeTestVideo } from "./media-test-fixtures.js";
+import { writeTestVideo } from "../test-fixtures/media.js";
 let directory: string;
 const sources: VideoFrameSource[] = [];
 async function open(name: string, limits = {}): Promise<VideoFrameSource> {

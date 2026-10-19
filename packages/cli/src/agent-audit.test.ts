@@ -1,4 +1,4 @@
-import { writeTestVideo } from "./media-test-fixtures.js";
+import { writeTestVideo } from "../test-fixtures/media.js";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
