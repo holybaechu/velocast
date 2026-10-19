@@ -46,6 +46,7 @@
     },
     "test": {
       "dependsOn": ["^build"],
+      "env": ["CHROME_PATH", "VELOCAST_BROWSER_BINARY"],
       "outputs": []
     },
     "dev": {
