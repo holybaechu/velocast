@@ -20,6 +20,7 @@ function fixture({
   electron = false,
   afterOpen,
   onPipeline,
+  onRequest,
 } = {}) {
   const events = [],
     directories = [],
@@ -86,6 +87,7 @@ function fixture({
       child.stdin.write = (line) => {
         const command = JSON.parse(line);
         const operation = JSON.parse(fs.readFileSync(command.request, "utf8"));
+        if (onRequest) return onRequest(command, operation);
         const result = { decoded: true };
         if (cooperative && operation.outputPath) {
           fs.copyFileSync(operation.path, operation.outputPath);
@@ -461,6 +463,73 @@ test("publication failure preserves source and an existing destination", async (
     await fs.promises.rm(directory, { recursive: true, force: true });
   }
 });
+
+for (const removalError of [undefined, "EACCES"])
+  test(`one-shot operations preserve a null abort reason${removalError ? " when cleanup also fails" : ""}`, async () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "velocast-publication-test-"),
+    );
+    const source = path.join(directory, "source.bin"),
+      destination = path.join(directory, "destination.bin"),
+      controller = new AbortController(),
+      f = fixture({
+        cooperative: true,
+        removalError,
+        afterOpen(file) {
+          if (file === destination) controller.abort(null);
+        },
+      });
+    try {
+      fs.writeFileSync(source, "source bytes");
+      await assert.rejects(
+        f.client.runMediaOperation(
+          { kind: "copy", path: source, outputPath: destination },
+          { electronBinary: "fake-electron", signal: controller.signal },
+        ),
+        (error) => {
+          if (removalError) {
+            assert.equal(error.name, "AggregateError");
+            assert.equal(error.cause, null);
+            assert.equal(error.errors[0], null);
+            assert.match(error.errors[1].message, /persistent cleanup denial/);
+          } else assert.equal(error, null);
+          return true;
+        },
+      );
+      assert.equal(fs.existsSync(destination), false);
+      assert.equal(fs.readFileSync(source, "utf8"), "source bytes");
+      assert.equal(fs.existsSync(f.directories[0]), !!removalError);
+    } finally {
+      await f.cleanup();
+      await fs.promises.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+for (const reason of [null, false, 0, ""])
+  test(`response-wait cancellation preserves abort reason ${JSON.stringify(reason)}`, async () => {
+    const controller = new AbortController(),
+      f = fixture({
+        onRequest() {
+          setTimeout(() => controller.abort(reason), 0);
+        },
+      });
+    try {
+      await assert.rejects(
+        f.client.runMediaOperation(
+          { kind: "probe" },
+          { electronBinary: "fake-electron", signal: controller.signal },
+        ),
+        (error) => {
+          assert.equal(error, reason);
+          return true;
+        },
+      );
+      assert.ok(f.events.indexOf("remove") > f.events.indexOf("taskkill-exit"));
+      assert.equal(fs.existsSync(f.directories[0]), false);
+    } finally {
+      await f.cleanup();
+    }
+  });
 
 test("successful cooperative shutdown also yields between delayed profile-unlock retries", async () => {
   const f = fixture({ cooperative: true, transientLocks: 2 });
