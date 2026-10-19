@@ -508,26 +508,28 @@ export async function runRenderer(
     }
     return evidence;
   };
-  const terminate =
-    options.terminateProcess ??
-    ((
-      rendererProcess: RendererProcess,
-      context: RendererTerminationContext,
-    ) => {
-      terminationPending = (async () => {
-        if (publishCancellation())
-          await waitForCooperativeExit(
-            rendererProcess,
-            options.terminationGraceMs,
-          );
-        await terminateRendererProcess(
+  const customTerminate = options.terminateProcess;
+  const terminate = function (
+    this: unknown,
+    rendererProcess: RendererProcess,
+    context: RendererTerminationContext,
+  ) {
+    terminationPending = (async () => {
+      if (customTerminate)
+        return customTerminate.call(this, rendererProcess, context);
+      if (publishCancellation())
+        await waitForCooperativeExit(
           rendererProcess,
-          context,
           options.terminationGraceMs,
         );
-      })();
-      return terminationPending;
-    });
+      await terminateRendererProcess(
+        rendererProcess,
+        context,
+        options.terminationGraceMs,
+      );
+    })();
+    return terminationPending;
+  };
 
   const owner = new RendererLifecycleOwner({
     child,
