@@ -287,6 +287,7 @@ async function createMediaSession(options = {}) {
       options.signal,
       options.timeoutMs ?? 30000,
     );
+    options.signal?.throwIfAborted();
     if (!result.ok) throw new Error(result.error);
   } catch (error) {
     try {
