@@ -131,6 +131,14 @@ export function sliceAudioPlan(
   endSample: number,
 ): AudioPlan {
   const snapshot = validateAudioPlan(plan);
+  return sliceValidatedAudioPlan(snapshot, startSample, endSample);
+}
+
+function sliceValidatedAudioPlan(
+  snapshot: AudioPlan,
+  startSample: number,
+  endSample: number,
+): AudioPlan {
   integer(startSample, "slice startSample", true);
   integer(endSample, "slice endSample", true);
   if (endSample < startSample || endSample > snapshot.durationSamples)
@@ -169,7 +177,7 @@ export function sliceAudioPlan(
 /** Clip a plan to its own half-open output duration, retaining input clip order. */
 export function normalizeAudioPlan(plan: AudioPlan): AudioPlan {
   const snapshot = validateAudioPlan(plan);
-  return sliceAudioPlan(snapshot, 0, snapshot.durationSamples);
+  return sliceValidatedAudioPlan(snapshot, 0, snapshot.durationSamples);
 }
 
 /** Frame slicing uses independently rounded absolute boundaries, never rounded durations. */
