@@ -141,10 +141,12 @@ and output-range slicing. See [audio](authored-audio.md) and
 The renderer embeds its checked-in browser runtime directly. Browser readiness
 and a committed React tree are necessary but do not prove that Electron captured
 the matching paint. Capture generation and frame acknowledgements preserve
-ordering. Chromium WebCodecs performs video encoding, and Mediabunny handles
-container and authored-media I/O. `auto` requests hardware preference, `off`
-requests software preference, and `required` fails because WebCodecs does not
-expose a hardware guarantee. See [WebCodecs rendering](webcodecs.md).
+ordering. A dedicated media session uses Mediabunny VideoSampleSource with
+Chromium WebCodecs. Video capture requires shared textures. Submissions can
+buffer packets; finalization verifies completed output and releases GPU leases. Explicit
+container, video/audio codec, and profile choices remain binding. See
+[media backends and formats](webcodecs.md) for readback, compatibility, and the
+migration away from CPU video encoding.
 
 ## Validation and distribution boundaries
 
@@ -185,6 +187,6 @@ callers; new examples provide dimensions and FPS. The public
 adapters, never wrapped around transactional native publication. Core's testing
 reset remains for active cross-package tests. Browser protocol 4 retains
 `getDurationFrames` and renderable `getCompositions`; removing metadata APIs does
-not remove these wire methods. Electron is the sole browser host. WebCodecs and
-Mediabunny form the default media route. Signed distribution and broader
+not remove these wire methods. Electron is the sole browser host. Host protocol
+4 requires shared-texture capture and WebCodecs video, with native audio/decoding isolated in utility renderers. Signed distribution and broader
 platform validation remain separate release requirements.

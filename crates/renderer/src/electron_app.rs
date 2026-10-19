@@ -38,9 +38,6 @@ pub struct ElectronRenderer {
     sequence: Cell<u64>,
 }
 impl ElectronRenderer {
-    pub(crate) fn surface_mode(&self) -> BrowserSurfaceMode {
-        self.surface_mode
-    }
     pub fn new(surface_mode: BrowserSurfaceMode) -> anyhow::Result<Self> {
         Ok(Self {
             surface_mode,
@@ -177,10 +174,13 @@ impl BrowserDriver for ElectronRenderer {
     fn render_session(&self) -> Option<RenderSession> {
         self.session.borrow().clone()
     }
-    fn render_frame(&self, script: &str, frame: u32) -> anyhow::Result<()> {
+    fn render_frame(&self, script: &str, _frame: u32) -> anyhow::Result<()> {
         self.report(|token| {
             Ok(browser_protocol::render_frame_completion_script(
-                script, frame, token,
+                script,
+                // Diagnostic capture forces a surface redraw itself.
+                self.surface_mode == BrowserSurfaceMode::WebCodecs,
+                token,
             ))
         })
         .map(|_| ())
@@ -462,7 +462,6 @@ impl HostProcess {
                 "VELOCAST_ELECTRON_SURFACE_MODE",
                 match mode {
                     BrowserSurfaceMode::Software => "software",
-                    BrowserSurfaceMode::Bitmap => "bitmap",
                     BrowserSurfaceMode::WebCodecs => "webcodecs",
                 },
             )
@@ -544,7 +543,7 @@ impl HostProcess {
         let ready = host.receive(Duration::from_secs(16))?;
         ensure!(
             ready["event"] == "ready"
-                && ready["version"] == 2
+                && ready["version"] == 4
                 && ready["pid"].as_u64() == Some(u64::from(host.child.id())),
             "electron.protocol_error: invalid host handshake"
         );
@@ -879,7 +878,7 @@ mod tests {
         let child = Command::new("sh")
             .arg("-c")
             .arg(
-                r#"printf '{"event":"ready","version":2,"pid":%s}\n' "$$"; read request; sleep 30"#,
+                r#"printf '{"event":"ready","version":4,"pid":%s}\n' "$$"; read request; sleep 30"#,
             )
             .process_group(0)
             .stdin(Stdio::piped())
@@ -899,7 +898,7 @@ mod tests {
         let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
             .join("System32/WindowsPowerShell/v1.0/powershell.exe");
         let script = format!(
-            r#"[Console]::WriteLine('{{"event":"ready","version":2,"pid":' + $PID + '}}'); {script}"#
+            r#"[Console]::WriteLine('{{"event":"ready","version":4,"pid":' + $PID + '}}'); {script}"#
         );
         let child = Command::new(shell)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])

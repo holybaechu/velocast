@@ -70,11 +70,6 @@ impl RenderJobResources {
         self.cancellation.check()
     }
 
-    pub async fn reset_attempt(&mut self) -> anyhow::Result<()> {
-        self.workers.cancel().await?;
-        self.workspace.reset().await
-    }
-
     /// Every ordinary exit awaits process termination and output-reader joins
     /// before deleting the workspace or publishing the output.
     async fn finish<T>(mut self, result: anyhow::Result<T>) -> anyhow::Result<T> {
@@ -644,31 +639,6 @@ mod tests {
             .unwrap();
         assert_eq!(value, 42);
         assert!(!tokio::fs::try_exists(&directory).await.unwrap());
-        tokio::fs::remove_dir_all(root).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn retry_joins_previous_workers_and_discards_the_previous_attempt() {
-        let root = test_directory("retry");
-        let directory = root.join("workspace");
-        let output = root.join("movie.mp4");
-        let temporary = directory.join("movie.final.mp4");
-        let ready = root.join("ready");
-        let finished = root.join("finished");
-        RenderJobResources::run(Some(&output), &temporary, &directory, async |resources| {
-            resources.spawn_workers(vec![fixture_command(&ready, &finished, "slow")])?;
-            wait_until_exists(&ready).await;
-            tokio::fs::write(directory.join("old-segment.mp4"), b"first attempt").await?;
-            resources.reset_attempt().await?;
-            assert!(!tokio::fs::try_exists(directory.join("old-segment.mp4")).await?);
-            tokio::fs::write(&temporary, b"successful retry").await?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-        assert_eq!(tokio::fs::read(&output).await.unwrap(), b"successful retry");
-        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-        assert!(!tokio::fs::try_exists(&finished).await.unwrap());
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
 

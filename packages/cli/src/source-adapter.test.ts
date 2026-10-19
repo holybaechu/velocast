@@ -271,7 +271,18 @@ it("rejects unsupported range and reference options without silently changing th
       f.dependencies,
     ),
   ).rejects.toThrow("source.option_unsupported");
-  expect(f.close).toHaveBeenCalledOnce();
+  await expect(
+    renderComposition(
+      f.config,
+      "Intro",
+      "video.mp4",
+      { mediaBackend: "native" },
+      f.dependencies,
+    ),
+  ).rejects.toThrow(
+    "source.option_unsupported: source renderer override cannot honor mediaBackend",
+  );
+  expect(f.close).toHaveBeenCalledTimes(2);
 });
 
 it("cleans up after missing composition or malformed source metadata", async () => {

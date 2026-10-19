@@ -111,9 +111,15 @@ pub(crate) fn target_capture_environment_script(selector: &str) -> String {
     format!("window.__velocastRenderer.selectTarget({selector});")
 }
 
-pub(crate) fn render_frame_completion_script(script: &str, _frame: u32, token: &str) -> String {
+pub(crate) fn render_frame_completion_script(
+    script: &str,
+    wait_for_paint: bool,
+    token: &str,
+) -> String {
     script_result_wrapper(
-        &format!("window.__velocastRenderer.completeFrame(() => {script})"),
+        &format!(
+            "window.__velocastRenderer.completeFrame(() => {script}, undefined, {wait_for_paint})"
+        ),
         token,
     )
 }

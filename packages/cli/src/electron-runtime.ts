@@ -74,6 +74,10 @@ export function electronRuntimeEnvironment(
   inherited: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
+  if (process.versions.electron)
+    throw new Error(
+      "runtime.node_binary_required: launch the CLI with Node.js",
+    );
   assertElectronBrowserSelection(inherited);
   const env = { ...inherited };
   for (const key of Object.keys(env)) {

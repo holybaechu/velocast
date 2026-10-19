@@ -452,10 +452,14 @@ function addCommonRenderOptions(command: Command): Command {
     .option("--start-frame <number>", "Public range start, inclusive")
     .option("--end-frame <number>", "Public range end, exclusive")
     .option("--concurrency <workers>", "Renderer worker count or auto")
+    .option("--codec <codec>", "Video codec: h264, hevc, av1, vp8, or vp9")
+    .option("--container <format>", "Output container: mp4, mov, webm, or mkv")
     .option(
-      "--codec <codec>",
-      "Video codec: h264, hevc, av1, or a supported encoder name",
+      "--audio-codec <codec>",
+      "Audio codec: auto, aac, opus, mp3, flac, vorbis, pcm-s16, pcm-s24, or pcm-f32",
     )
+    .option("--media-backend <backend>", "Media backend: auto or webcodecs")
+    .option("--video-profile <profile>", "Video profile: auto")
     .option("--pixel-format <format>", "Output pixel format")
     .option("--bitrate <value>", "Target video bitrate, e.g. 60M or 12000k")
     .option(

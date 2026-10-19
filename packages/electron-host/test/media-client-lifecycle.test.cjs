@@ -17,6 +17,7 @@ function fixture({
   cooperative = false,
   probeDenied = false,
   inheritedPipes = false,
+  electron = false,
 } = {}) {
   const events = [],
     directories = [];
@@ -130,6 +131,10 @@ function fixture({
   const simulatedProcess = {
     ...process,
     platform: "win32",
+    versions: electron
+      ? { ...process.versions, electron: "44.0.0" }
+      : process.versions,
+    env: { ...process.env },
     kill(_pid, signal) {
       assert.equal(signal, 0);
       if (probeDenied)
@@ -143,6 +148,7 @@ function fixture({
       return true;
     },
   };
+  if (electron) delete simulatedProcess.env.VELOCAST_NODE_BINARY;
   const module = { exports: {} };
   const load = vm.runInNewContext(
     `(function(require,module,exports,__dirname){${fs.readFileSync(file, "utf8")}\n})`,
@@ -183,6 +189,35 @@ function fixture({
     },
   };
 }
+
+test("utilities ignore a stale inherited worker executable", async () => {
+  const f = fixture({ cooperative: true });
+  try {
+    const result = await f.client.runMediaOperation(
+      { kind: "probe" },
+      {
+        electronBinary: "fake-electron",
+        env: { VELOCAST_NODE_BINARY: "C:\\stale\\node.exe" },
+      },
+    );
+    assert.equal(result.decoded, true);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("Electron utility callers no longer require a stock Node video worker", async () => {
+  const f = fixture({ cooperative: true, electron: true });
+  try {
+    const result = await f.client.runMediaOperation(
+      { kind: "probe" },
+      { electronBinary: "fake-electron" },
+    );
+    assert.equal(result.decoded, true);
+  } finally {
+    await f.cleanup();
+  }
+});
 
 test("cleanup awaits the delayed tree killer and asynchronously retries transient profile locks", async () => {
   const f = fixture({ transientLocks: 2 });

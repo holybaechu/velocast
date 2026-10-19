@@ -110,12 +110,16 @@ export {
   parseCliBitrate,
   parseCliConcurrency,
   parseCliCodec,
+  resolveRendererAudioCodec,
   resolveRendererAcceleration,
   resolveRendererAssemblyMode,
   resolveRendererBitrate,
   resolveRendererCodec,
+  resolveRendererContainer,
   resolveRendererConcurrency,
+  resolveRendererMediaBackend,
   resolveRendererPixelFormat,
+  resolveRendererVideoProfile,
 } from "./renderer-options.js";
 
 export {

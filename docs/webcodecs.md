@@ -1,67 +1,93 @@
-# WebCodecs rendering
+# Shared-texture video and media formats
 
-Velocast renders video through Electron and Chromium WebCodecs.
-The native renderer owns composition discovery, exact frame scheduling,
-cancellation, validation, and transactional output publication. The Electron
-host captures frames and encodes them with WebCodecs. Mediabunny packages the
-encoded packets and authored audio into the output container.
+Electron renders compositions into shared GPU textures. A dedicated trusted
+renderer imports each texture as a `VideoFrame`, wraps it in a Mediabunny
+`VideoSample`, and submits it to `VideoSampleSource`. Mediabunny manages WebCodecs
+encoding, backpressure, and muxing. Rust owns frame scheduling, cancellation,
+validation, and transactional publication.
 
-The default acceleration setting, `auto`, requests Chromium's
-`prefer-hardware` option. `off` requests `prefer-software`. Neither setting
-proves the selected encoder or guarantees a particular GPU path. `required`
-fails because WebCodecs does not report a dependable hardware guarantee.
-If shared-texture capture is unavailable before encoding, the renderer resets the
-attempt and retries with bitmap capture. This path reads uncompressed frames
-back to the CPU; telemetry reports `electron_bitmap`, the readback count, and
-the fallback reason. Encoding still uses WebCodecs.
+Video requires working shared-texture capture and a browser encoder for the
+requested configuration. Missing support fails explicitly and preserves previous
+output. There is no bitmap capture or native CPU video encoding fallback.
+Diagnostic `frame` PNG exports remain available through software screenshots.
+Native audio encoding and input decoding remain available in separate utility
+renderers; their codec registrations never enter the GPU video renderer.
 
-H.264 is the default codec and is probed for availability at runtime. HEVC and
-AV1 availability also depends on Chromium, the operating system, and the
-installed codecs. Unsupported codec, pixel format,
-or container combinations fail before replacing an existing output. Full
-compositions can use parallel segment workers; half-open frame ranges use the
-reference worker. Inspection and single-frame PNG output remain available
-independently of video encoding.
+## Output formats
 
-The current video output contract is MP4 with opaque SDR 8-bit 4:2:0 frames,
-even dimensions up to 4096 pixels per side, and integer frame rates from 1 to
-120 fps. Encoder names are `h264`, `hevc` (or `h265`), and `av1`; driver-specific
-names are no longer accepted. Bitrate remains configurable. Native encoder
-private options, explicit GPU selection, HDR output, and 10-bit or 4:4:4 output
-are not exposed by this implementation.
-
-The composition page remains isolated from Node. A trusted Electron window
-receives frames through the host protocol, uses WebCodecs, and passes encoded
-chunks to Mediabunny. A frame is released only after its consumer acknowledges
-it. The renderer waits for completion, checks frame order and counts, and
-publishes output atomically. Authored audio follows its sample plan and shares
-the output transaction.
-
-Authored audio encoding prefers native AAC. If Chromium cannot encode AAC,
-Velocast uses native Opus in MP4 at 48 kHz and preserves the authored duration
-through filtered resampling. Render output consumers must accept both codecs;
-the render CLI does not currently expose an audio codec selector. If neither
-encoder is available, output fails with `media.audio_encoder_unavailable`.
-The report records the codec actually used.
-
-Tagged HDR footage is converted to SDR only when the decoder exposes readable
-high-bit-depth planes. Some Chromium HEVC Main10 decoders expose an opaque GPU
-frame without readable planes and have no software decoder available. Velocast
-rejects those sources with a diagnostic; it does not silently clip HDR values.
-
-Telemetry identifies the capture backend, `chromium_webcodecs` conversion,
-the selected `electron_webcodecs_*` encoder, and frame counts. These values
-describe Velocast's route; they do not prove Chromium used hardware encoding
-or performed no internal readback.
-
-For a source build, install workspace dependencies, build the packages and
-renderer, then run `velocast doctor --json`. The portable validation command is:
+The output extension selects `.mp4`, `.mov`, `.webm`, or `.mkv`. An explicit
+`--container` must match it. Defaults are VP9 for WebM and H.264 otherwise.
 
 ```sh
-node scripts/verify-electron-portable.mjs --renderer ABSOLUTE_RENDERER --output NEW_TEMP_DIRECTORY --frames 12 --repeats 2
+velocast render scene --output render.mp4 --codec h264 --audio-codec aac
+velocast render scene --output render.webm --codec vp9 --audio-codec opus
+velocast render scene --output edit.mov --codec h264 --audio-codec pcm-s16
+velocast render scene --output archive.mkv --codec hevc --audio-codec flac
 ```
 
-It checks inspection, PNG, full video, frame ranges, audio, static frames,
-cancellation cleanup, bitmap retry, and output preservation on failure. Use a unique output
-directory outside the repository. Local Windows validation does not establish
-GPU behavior on macOS or Linux; run the native gate on each target platform.
+| Setting       | Values                                                                          |
+| ------------- | ------------------------------------------------------------------------------- |
+| Video codec   | `h264`, `hevc`/`h265`, `av1`, `vp8`, `vp9`                                      |
+| Audio codec   | `auto`, `aac`, `opus`, `mp3`, `flac`, `vorbis`, `pcm-s16`, `pcm-s24`, `pcm-f32` |
+| Media backend | `auto`, `webcodecs` (both require WebCodecs)                                    |
+| Video profile | `auto`                                                                          |
+| Pixel format  | `yuv420p`, `nv12` (opaque 8-bit SDR 4:2:0)                                      |
+
+Codec availability depends on Chromium, the operating system, and the driver.
+WebM permits VP8/VP9/AV1 with Opus/Vorbis; other combinations must also be
+supported by the encoder and muxer. Audio defaults to AAC for MP4/MOV and Opus
+for WebM/MKV. Options do not add audio to a silent composition.
+
+`--acceleration auto` prefers hardware encoding; `off` prefers a browser software
+encoder. Both retain shared-texture transport. `required` is rejected because
+WebCodecs preferences cannot establish a hardware-only guarantee. The pipeline
+avoids application-level raw pixel readback; Chromium or the selected encoder
+may perform internal copies. Shared textures do not guarantee hardware encoding.
+
+## Submission and lifetime
+
+Frame acknowledgments report submitted frames and the number of packets emitted
+so far. Mediabunny may buffer or reorder packets; Velocast validates unique frame
+timestamps, durations, keyframes, and bounded packet sizes. It drains the encoder
+once at finalization and checks the complete frame count before publication.
+
+The source `VideoFrame`, timing wrapper, `VideoSample`, and imported texture are
+closed after submission/backpressure completes. Electron's
+`allReferencesReleased` callback releases the original compositor texture only
+when downstream references are gone. Up to 32 texture leases and 128 pending
+packet identities are allowed; stalled consumers fail within bounded deadlines.
+Finalization drains the encoder before awaiting its final texture releases.
+
+Frame preparation still awaits authored work, fonts, images, and compositor
+observations. This does not freeze arbitrary page side effects or make encoded
+bytes reproducible across different encoders or machines. Complete output can
+use segments; half-open ranges retain source frame numbers and rebase output PTS
+to zero. WebM/Matroska timestamps use millisecond ticks, with up to half a
+millisecond of rounding.
+
+## Migration and validation
+
+Rebuild the CLI, renderer, and runtime together for Electron host protocol **4**.
+Remove `mediaBackend: "native"`, ProRes output, and ProRes profile/pixel-format
+settings from existing configurations. Choose a supported WebCodecs video codec.
+Bitmap/CpuBitmap modes and their force/fallback environment switches are removed.
+ProRes input decoding and native audio remain supported. Runtime packages still
+include Mediabunny's server dependencies for those utilities; no standalone
+FFmpeg executable is required.
+
+Capture requires even dimensions up to 4096 per side and integer 1–120 fps.
+Alpha/HDR output, surround mixing, and native video output are outside this path.
+Source adapters producing their own complete videos retain their separate
+output contract.
+
+Run these gates with output directories beneath the OS temporary directory:
+
+```sh
+node scripts/verify-electron-portable.mjs --renderer ABSOLUTE_RENDERER --output NEW_TEMP_DIRECTORY
+node scripts/verify-shared-texture-capture.mjs --renderer ABSOLUTE_RENDERER --output NEW_TEMP_DIRECTORY --frames 24 --repeats 3 --mode both --all-frames true
+node scripts/verify-media-formats.mjs --renderer ABSOLUTE_RENDERER --output NEW_TEMP_DIRECTORY
+```
+
+They check decoded frame identity, timestamps, audio, ranges, segments,
+cancellation, and preservation of previous output when capture or encoding is
+unavailable. Platform support requires validation on that operating system.

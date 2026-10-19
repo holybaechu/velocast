@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { create } from "tar";
 import { verifyElectronRuntimeInventory } from "./verify-electron-runtime-inventory.mjs";
 import { windowsCandidateState } from "./windows-candidate-state.mjs";
+import { inventoryFiles } from "./electron-runtime-package.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const [targetId, runtimeArgument, outputArgument] = process.argv.slice(2);
@@ -84,13 +85,17 @@ if (
   throw new Error(
     "artifact.validated_candidate_stale: accepted evidence belongs to another commit",
   );
-const files = target.runtimeFiles.map((path) => {
+// The release declaration lists required entrypoints. The prepared runtime's
+// full dependency closure is inventoried and verified before archiving.
+const requiredFiles = target.runtimeFiles.map((path) => {
   const source = contained(runtimeDir, path);
   if (!existsSync(source) || !statSync(source).isFile()) {
     throw new Error(`artifact.runtime_missing: ${path}`);
   }
   return { path, size: statSync(source).size, sha256: sha256File(source) };
 });
+const files =
+  targetId === "win32-x64" ? inventoryFiles(runtimeDir) : requiredFiles;
 if (targetId === "win32-x64")
   verifyElectronRuntimeInventory(runtimeDir, files, {
     status:
@@ -100,7 +105,13 @@ if (targetId === "win32-x64")
     electronVersion: manifest.electronVersion,
     sourceCommit: commit,
   });
-for (const nativeFile of target.nativeFiles) {
+const nativeFiles =
+  targetId === "win32-x64"
+    ? files
+        .filter(({ path }) => /\.(exe|dll|node)$/i.test(path))
+        .map(({ path }) => path)
+    : target.nativeFiles;
+for (const nativeFile of nativeFiles) {
   verifyExecutableArchitecture(contained(runtimeDir, nativeFile), target.arch);
 }
 verifyReleaseSignature(target.platform, runtimeDir, renderer);

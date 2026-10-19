@@ -34,19 +34,6 @@ impl OutputWorkspace {
         Ok(workspace)
     }
 
-    pub async fn reset(&self) -> anyhow::Result<()> {
-        let recovery = self.temporary_output.with_extension("previous.tmp");
-        if tokio::fs::try_exists(&recovery).await? {
-            return Err(anyhow::anyhow!(
-                "previous output recovery is pending at {}",
-                recovery.display()
-            ));
-        }
-        self.discard().await?;
-        tokio::fs::create_dir_all(&self.directory).await?;
-        Ok(())
-    }
-
     pub async fn finish<T>(self, result: anyhow::Result<T>) -> anyhow::Result<T> {
         let result = match result {
             Ok(value) => match &self.output {

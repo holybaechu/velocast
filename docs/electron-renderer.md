@@ -1,53 +1,52 @@
 # Electron renderer
 
-Electron is Velocast's browser host. Chromium WebCodecs encodes video and
-Mediabunny reads and writes media. Standard Cargo builds include the renderer
-without feature flags. The CLI discovers the installed workspace host or uses
-the host inside a prepared runtime.
+Electron is Velocast's browser host. Video uses shared GPU textures imported into
+a separate trusted encoder renderer. Mediabunny manages WebCodecs encoding and
+muxing through `VideoSampleSource`; Rust owns scheduling, cancellation,
+validation, segment assembly, and transactional output publication. Authored
+pages remain sandboxed without Node or trusted IPC.
 
-The native renderer retains exact frame scheduling, deterministic composition
-inspection, cancellation, and transactional output publication. A single-frame
-PNG request uses Electron's bitmap capture. Video frames use Electron's
-shared-texture path when available. The actual Chromium encoder implementation
-and internal GPU copies are not observable by Velocast.
+Video fails explicitly when shared textures or a requested browser encoder are
+unavailable. Bitmap/CpuBitmap capture and native CPU video output are removed.
+Diagnostic PNG screenshots, native audio, and input decoding remain available.
+See [media formats, lifetime, and migration](webcodecs.md).
 
-`auto` acceleration asks Chromium to prefer hardware; `off` asks it to prefer
-software. `required` is unsupported because WebCodecs cannot guarantee that
-hardware was selected. H.264 is the portable baseline; HEVC and AV1 depend on
-platform codec support. See [WebCodecs rendering](webcodecs.md) for scope.
+The CLI, renderer, and runtime must agree on Electron host protocol **4**,
+`supportedMediaBackends: [webcodecs]`, `videoEncoderBackend: webcodecs`, and
+`mediaRuntime: mediabunny`. Hardware acceleration is a preference; near zero-copy
+transport does not establish hardware encoding or exclude Chromium-internal
+copies. Linux rendering needs a graphical session or Xvfb with working shared
+textures. The checked-in release manifest has no published native artifact.
 
-## Build and run
+Validation includes `scripts/verify-electron-portable.mjs` for changing/repeated
+frames, PNG, audio, ranges, segments, cancellation, and explicit unavailable
+capture/encoder failures; `scripts/verify-shared-texture-capture.mjs` exercises
+the 4K DOM scene and barcode identity oracle. Use new output directories under
+the OS temporary directory. Validate separately on every supported platform.
 
-```sh
-pnpm install
-pnpm build
-cargo test -p velocast-renderer
-cargo build -p velocast-renderer --release
-```
+## CI coverage
 
-On Windows x64, `pwsh -NoProfile -File scripts/build-electron-renderer.ps1
--Test` builds and tests the renderer using the local Rust and MSVC toolchains.
-Set `VELOCAST_RENDERER_BINARY` to the built executable, then run `pnpm
-velocast doctor --json`. Linux needs Electron's system libraries and a working
-display or Xvfb. The checked-in release manifest has no published native
-artifacts; a source build or private candidate is required.
+The default portable gate requires successful shared-texture rendering. macOS CI
+runs it together with authored footage, codec/container/audio checks, and three
+serial plus three four-worker 4K barcode runs. GPU capture failures, timeouts,
+and frame mismatches fail those checks.
 
-The native binary reports one browser host, `electron`, host protocol version
-2, `videoEncoderBackend: webcodecs`, and `mediaRuntime: mediabunny`. The CLI
-rejects older binaries and incompatible host protocols. A prepared runtime's
-adjacent `electron-runtime.json` selects its bundled Electron, host scripts,
-and media package. See [Windows runtime preparation](windows-runtime-candidate-prep.md).
+The hosted Ubuntu and Windows runners report a software compositor. They run
+`verify-electron-portable.mjs --capture unavailable`, which requires the real
+renderer to report that known capability failure, preserve previous output,
+submit zero frames, and avoid CPU readback or a fallback host. PNG diagnostics,
+invalid requests, and injected capture/encoder failures remain checked. This
+mode fails if rendering unexpectedly succeeds or a different error occurs; it
+does not automatically skip a failed GPU test. Browser video encoding from image
+fixtures and native audio utilities are tested independently on these runners.
 
-## Validation
+Successful Linux/Windows shared-texture rendering requires a GPU-capable machine;
+their hosted rejection checks do not establish GPU render support. Run the
+portable and 4K gates without `--capture unavailable` on that hardware before
+publishing a native runtime. Prepared Windows runtime acceptance retains its
+separate self-hosted release gate.
 
-```sh
-pnpm check:fast
-pnpm electron:verify-portable --renderer ABSOLUTE_RENDERER --output NEW-TEMP-DIR
-```
-
-The portable gate checks frame identity and order, PNG and offset capture,
-video and range output, audio, static frames, cancellation, repeated jobs, and
-failure preservation. It forces a shared-texture failure and verifies the
-automatic bitmap retry and its readback telemetry. Run it on each supported operating system. Use a unique
-directory outside the repository for its output and remove it after inspection.
-Signed distribution and broader hardware coverage remain release requirements.
+Capture retries invalidate the surface without restarting the active capturer.
+Restarting every 50ms can cancel a GPU copy that takes longer than the retry
+interval under four-worker 4K load. The first request still starts the capturer;
+its deadline and frame-identity validation remain enforced.

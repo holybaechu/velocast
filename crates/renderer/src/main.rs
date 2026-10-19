@@ -177,53 +177,22 @@ async fn run_coordinator_render(
     resources: &mut render_job::RenderJobResources,
     context: &mut output_result::OutputContext,
 ) -> anyhow::Result<()> {
-    let mode = initial_surface_for_job(job);
-    let result =
-        run_coordinator_render_with_mode(job, report, events, resources, context, mode).await;
-    if let Err(error) = &result {
-        if mode == browser_surface::BrowserSurfaceMode::WebCodecs
-            && report.frames_encoded == 0
-            && shared_texture_unavailable(error)
-        {
-            let reason = format!(
-                "Shared texture capture unavailable; using bitmap capture with WebCodecs: {error}"
-            );
-            resources.reset_attempt().await?;
-            *report = coordinator_telemetry_for(job);
-            report.fallback_used = true;
-            report.fallback_reason = Some(reason);
-            *context = output_result::OutputContext::default();
-            return run_coordinator_render_with_mode(
-                job,
-                report,
-                events,
-                resources,
-                context,
-                browser_surface::BrowserSurfaceMode::Bitmap,
-            )
-            .await;
-        }
-    }
-    result
+    run_coordinator_render_with_mode(
+        job,
+        report,
+        events,
+        resources,
+        context,
+        initial_surface_for_job(job),
+    )
+    .await
 }
 fn initial_surface_for_job(job: &RenderJob) -> browser_surface::BrowserSurfaceMode {
-    if job.operation != RenderOperation::Render {
-        browser_surface::BrowserSurfaceMode::Software
-    } else if std::env::var("VELOCAST_ELECTRON_FORCE_BITMAP").as_deref() == Ok("1") {
-        browser_surface::BrowserSurfaceMode::Bitmap
-    } else {
+    if job.operation == RenderOperation::Render {
         browser_surface::BrowserSurfaceMode::WebCodecs
+    } else {
+        browser_surface::BrowserSurfaceMode::Software
     }
-}
-fn shared_texture_unavailable(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        let message = cause.to_string();
-        let message = message
-            .strip_prefix("electron.host_error: ")
-            .unwrap_or(&message);
-        message.starts_with("capture.shared_texture_unavailable:")
-            || message.starts_with("Electron webcodecs paint timed out")
-    })
 }
 
 async fn run_coordinator_render_with_mode(
@@ -306,22 +275,21 @@ async fn run_coordinator_render_with_mode(
         &composition,
         scheduler::available_parallelism(),
     )?;
+    let requested_backend = job.media_backend.as_deref().unwrap_or("auto");
     event_sink
         .emit(RendererEvent::PipelinePlanResolved {
             route: plan.route.as_str().into(),
             effective_concurrency: plan.concurrency,
             probe_tier: "media_metadata".into(),
             segment_count: plan.ranges.len(),
-            capture_mode: if mode == browser_surface::BrowserSurfaceMode::Bitmap {
-                "electron_bitmap"
-            } else {
-                "electron_shared_texture"
-            }
-            .into(),
+            capture_mode: "electron_shared_texture".into(),
             conversion_mode: "chromium_webcodecs".into(),
-            encoder_mode: "webcodecs".into(),
-            planned_encoder_backend: format!("electron_webcodecs_{}", webcodecs::codec(job)?),
-            encoder_backend: format!("electron_webcodecs_{}", webcodecs::codec(job)?),
+            encoder_mode: requested_backend.into(),
+            planned_encoder_backend: format!(
+                "electron_{requested_backend}_{}",
+                webcodecs::codec(job)?
+            ),
+            encoder_backend: format!("electron_{requested_backend}_{}", webcodecs::codec(job)?),
         })
         .await?;
     if plan.ranges.len() > 1 {
@@ -338,10 +306,17 @@ async fn run_coordinator_render_with_mode(
         )
         .await?;
         if let Some(audio) = audio {
-            let mixed = directory.join("audio-final.mp4");
-            let metadata=renderer.media_operation(serde_json::json!({"kind":"mux-audio-plan","videoPath":temporary,"outputPath":mixed,"audio":audio}))?;
+            let mixed = directory.join(format!("audio-final.{}", webcodecs::container(job)?));
+            let metadata=renderer.media_operation(serde_json::json!({"kind":"mux-audio-plan","videoPath":temporary,"outputPath":mixed,"audio":audio,"audioCodec":webcodecs::audio_codec(job)?,"fps":composition.fps}))?;
             output_media::validate_video(&metadata, &composition, telemetry.frames_expected)?;
-            webcodecs::record_audio(&audio, &metadata, telemetry)?;
+            output_media::validate_codec(&metadata, webcodecs::codec(job)?)?;
+            output_media::validate_container(&metadata, webcodecs::container(job)?)?;
+            webcodecs::record_audio(
+                &audio,
+                &metadata,
+                telemetry,
+                Some(webcodecs::audio_codec(job)?),
+            )?;
             std::fs::rename(&mixed, &temporary)?;
         }
     } else {
@@ -459,13 +434,14 @@ async fn run_worker(mut job: RenderJob) -> anyhow::Result<()> {
         telemetry::RenderTelemetry::new(telemetry::RenderModeLabel::ReferenceWebCodecs);
     let started = Instant::now();
     let directory = output.with_extension("worker-workspace");
-    let temporary = directory.join("segment.mp4");
+    let temporary = directory.join(format!("segment.{}", webcodecs::container(&job)?));
     render_job::RenderJobResources::run(Some(&output), &temporary, &directory, async |resources| {
         resources.set_cancellation(cancellation::RenderCancellation::from_event_log_path(
             job.event_log_path.as_deref(),
         ));
         resources.check_cancellation()?;
-        let renderer = NativeBrowser::new(initial_surface_for_job(&job))?;
+        let mode = initial_surface_for_job(&job);
+        let renderer = NativeBrowser::new(mode)?;
         let load_started = Instant::now();
         renderer.load(&job).await?;
         report.page_load_ms += load_started.elapsed().as_millis();
@@ -538,14 +514,18 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
     #[test]
-    fn bitmap_retry_only_accepts_capture_failures() {
-        assert!(shared_texture_unavailable(&anyhow::anyhow!(
-            "electron.host_error: capture.shared_texture_unavailable: import failed"
-        )));
-        assert!(!shared_texture_unavailable(&anyhow::anyhow!(
-            "electron.host_error: webcodecs.unsupported_config"
-        )));
-        assert!(!shared_texture_unavailable(&anyhow::anyhow!("electron.host_error: composition failed: capture.shared_texture_unavailable: authored text")));
+    fn video_requires_shared_textures_and_diagnostics_use_software() {
+        use browser_surface::BrowserSurfaceMode::{Software, WebCodecs};
+        let mut job: RenderJob = serde_json::from_value(serde_json::json!({
+            "mode": "composition", "serve_url": "http://localhost",
+            "output": "movie.mp4", "codec": "h264"
+        }))
+        .unwrap();
+        assert_eq!(initial_surface_for_job(&job), WebCodecs);
+        for operation in [RenderOperation::Inspect, RenderOperation::Frame] {
+            job.operation = operation;
+            assert_eq!(initial_surface_for_job(&job), Software);
+        }
     }
     #[test]
     fn failures_remain_primary_when_report_writes_also_fail() {

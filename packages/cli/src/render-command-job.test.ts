@@ -44,7 +44,7 @@ describe("buildCompositionRenderCommandJob", () => {
       selector: null,
       output: "renders/hero.mp4",
       codec: "h264",
-      pixel_format: "nv12",
+      pixel_format: "yuv420p",
       acceleration: "auto",
       assembly_mode: "auto",
       concurrency: 4,
@@ -66,7 +66,7 @@ describe("buildCompositionRenderCommandJob", () => {
       selector: null,
       output: "renders/hero.mp4",
       codec: "h264",
-      pixel_format: "nv12",
+      pixel_format: "yuv420p",
       acceleration: "auto",
       assembly_mode: "auto",
     });
@@ -234,6 +234,63 @@ describe("buildCompositionRenderCommandJob", () => {
     );
 
     expect(job.codec).toBe("av1");
+  });
+
+  it("forwards explicit media format choices and leaves container inference to the runtime", () => {
+    const job = buildCompositionRenderCommandJob(
+      {
+        serve: { url: "http://127.0.0.1:4545" },
+        renderer: {
+          container: "mov",
+          audioCodec: "aac",
+          mediaBackend: "webcodecs",
+          videoProfile: "auto",
+        },
+      },
+      "product-hero",
+      "renders/hero.mov",
+      {
+        container: "mkv",
+        audioCodec: "flac",
+        mediaBackend: "webcodecs",
+        videoProfile: "auto",
+      },
+    );
+    expect(job).toMatchObject({
+      container: "mkv",
+      audio_codec: "flac",
+      media_backend: "webcodecs",
+      video_profile: "auto",
+    });
+    const inferred = buildCompositionRenderCommandJob(
+      { serve: { url: "http://127.0.0.1:4545" } },
+      "product-hero",
+      "renders/hero.webm",
+    );
+    expect(Object.hasOwn(inferred, "container")).toBe(false);
+    expect(() =>
+      buildCompositionRenderCommandJob(
+        { serve: { url: "http://127.0.0.1:4545" } },
+        "product-hero",
+        "renders/hero.mov",
+        { codec: "prores" },
+      ),
+    ).toThrow("expected h264");
+    expect(
+      buildCompositionRenderCommandJob(
+        { serve: { url: "http://127.0.0.1:4545" } },
+        "product-hero",
+        "renders/hero.webm",
+      ).codec,
+    ).toBe("vp9");
+    expect(
+      buildCompositionRenderCommandJob(
+        { serve: { url: "http://127.0.0.1:4545" } },
+        "product-hero",
+        "renders/hero.webm",
+        { codec: "h264" },
+      ).codec,
+    ).toBe("h264");
   });
 });
 

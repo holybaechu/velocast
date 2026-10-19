@@ -86,7 +86,7 @@ try { events = JSON.parse(await readFile(join(directory, "command-executions.jso
 catch (error) { if (error.code !== "ENOENT") throw error; }
 const results = [];
 await mkdir(join(directory, "cache"), { recursive: true });
-const env = { ...process.env, TEMP: join(directory, "cache"), TMP: join(directory, "cache") };
+const env = { ...process.env, VELOCAST_NODE_BINARY: process.execPath, TEMP: join(directory, "cache"), TMP: join(directory, "cache") };
 async function render(name, snapshot, extra = {}, expectedFailure = false) {
   const output = join(directory, `${name}.mp4`);
   const job = { mode: "composition", composition_id: "audio-hero", serve_url: snapshot.url,

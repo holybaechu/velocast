@@ -5,6 +5,7 @@ const path = require("node:path");
 const { configureProfileDirectory } = require("./profile-directory.cjs");
 configureProfileDirectory(app, process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY);
 let window,
+  frameEncoder,
   input,
   active,
   closed = false;
@@ -21,7 +22,7 @@ const exit = (code) => {
   closed = true;
   input?.destroy();
   window?.destroy();
-  app.exit(code);
+  void Promise.resolve(frameEncoder?.dispose()).finally(() => app.exit(code));
 };
 app
   .whenReady()
@@ -79,10 +80,50 @@ app
             if (path.dirname(file) !== process.env.VELOCAST_MEDIA_SCRATCH)
               throw new Error("media.invalid_request_path");
           active = command;
-          window.webContents.send("velocast:media:operation", {
-            id: command.id,
-            operation: JSON.parse(fs.readFileSync(command.request, "utf8")),
-          });
+          const operation = JSON.parse(
+            fs.readFileSync(command.request, "utf8"),
+          );
+          if (operation.kind === "encode-frames") {
+            // A persistent utility may already have registered native decoders.
+            // Image-sequence video encoding gets a fresh WebCodecs registry.
+            const { WebCodecsHost } = require("./webcodecs-host.cjs");
+            frameEncoder = new WebCodecsHost(
+              process.env.VELOCAST_MEDIA_SCRATCH,
+            );
+            frameEncoder.utilityOnly = "frame";
+            void (async () => {
+              let result;
+              try {
+                await frameEncoder.initialize();
+                result = {
+                  id: command.id,
+                  ok: true,
+                  result: await frameEncoder.command(
+                    "media-operation",
+                    operation,
+                  ),
+                };
+              } catch (error) {
+                result = {
+                  id: command.id,
+                  ok: false,
+                  error: String(error?.stack || error),
+                };
+              } finally {
+                await frameEncoder.dispose();
+                frameEncoder = null;
+              }
+              if (!closed) {
+                write(command.response, result);
+                active = null;
+              }
+            })().catch(() => exit(1));
+          } else {
+            window.webContents.send("velocast:media:operation", {
+              id: command.id,
+              operation,
+            });
+          }
         } catch {
           exit(1);
         }

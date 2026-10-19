@@ -10,6 +10,7 @@ export interface RendererCapabilitySupport {
   browserHosts?: Array<"electron">;
   defaultBrowserHost?: "electron";
   videoEncoderBackend?: "webcodecs";
+  supportedMediaBackends?: Array<"webcodecs">;
   mediaRuntime?: "mediabunny";
   hardwareAccelerationGuarantee?: false;
 }
@@ -85,16 +86,19 @@ export function probeRendererCapabilities(
       parsed.browserHosts.length !== 1 ||
       parsed.browserHosts[0] !== "electron" ||
       parsed.defaultBrowserHost !== "electron" ||
-      parsed.electronHostProtocolVersion !== 2
+      parsed.electronHostProtocolVersion !== 4
     ) {
       return {
         available: false,
         reason:
-          "renderer.electron_unsupported: rebuild or install a renderer advertising Electron host protocol 2",
+          "renderer.electron_unsupported: rebuild or install a renderer advertising Electron host protocol 4",
       };
     }
     if (
       parsed.videoEncoderBackend !== "webcodecs" ||
+      !Array.isArray(parsed.supportedMediaBackends) ||
+      parsed.supportedMediaBackends.length !== 1 ||
+      !parsed.supportedMediaBackends.includes("webcodecs") ||
       parsed.mediaRuntime !== "mediabunny" ||
       parsed.hardwareAccelerationGuarantee !== false
     )
@@ -112,6 +116,7 @@ export function probeRendererCapabilities(
           ? parsed.outputApiVersion
           : undefined,
       videoEncoderBackend: "webcodecs",
+      supportedMediaBackends: ["webcodecs"],
       mediaRuntime: "mediabunny",
       hardwareAccelerationGuarantee: false,
     };

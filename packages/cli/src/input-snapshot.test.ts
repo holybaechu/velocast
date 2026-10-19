@@ -414,6 +414,8 @@ it("rejects oversized individual and aggregate inputs before allocating their by
   ).rejects.toThrow("snapshot.limit");
 });
 
+// Creating and inspecting 4096 real files can exceed 30s on hosted Windows.
+// Keep the production limit and real filesystem assertion on every platform.
 it("rejects too many files without silently omitting assets", async () => {
   const { root } = await fixture();
   for (let offset = 0; offset < MAX_SNAPSHOT_FILES; offset += 64)
@@ -426,7 +428,7 @@ it("rejects too many files without silently omitting assets", async () => {
   await expect(
     createInputSnapshot({ root, entryPath: "index.html" }),
   ).rejects.toThrow("snapshot.limit");
-}, 30_000);
+}, 120_000);
 
 it("fails rather than publishing an asset observed changing during capture", async () => {
   const { root } = await fixture();

@@ -356,7 +356,8 @@ function validateWindowsCandidate(target, candidate) {
   );
   for (const path of target.runtimeFiles)
     assert(
-      !/(^|\/)(src|include|cmake|debug)(\/|$)|\.(pdb|lib|obj)$/i.test(path),
+      !/\.(pdb|lib|obj)$/i.test(path) &&
+        (path.startsWith("electron-host/node_modules/") || !/(^|\/)(src|include|cmake|debug)(\/|$)/i.test(path)),
       `win32-x64 candidate contains a development file: ${path}`,
     );
 }

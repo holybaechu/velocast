@@ -246,7 +246,11 @@
       return true;
     },
 
-    async completeFrame(seek, signal = activeReport?.controller.signal) {
+    async completeFrame(
+      seek,
+      signal = activeReport?.controller.signal,
+      waitForPaint = true,
+    ) {
       assertBoundSession();
       signal?.throwIfAborted();
       const selector = document.documentElement.dataset.velocastCaptureTarget;
@@ -308,6 +312,12 @@
       );
       signal?.throwIfAborted();
       if (selector) this.prepareTarget(selector);
+      // Surface snapshots force a compositor redraw when capturing. Their
+      // controller still awaits resources here, but owns the paint boundary.
+      if (!waitForPaint) {
+        assertBoundSession();
+        return value;
+      }
       const raf = window.requestAnimationFrame
         ? window.requestAnimationFrame.bind(window)
         : (callback) =>

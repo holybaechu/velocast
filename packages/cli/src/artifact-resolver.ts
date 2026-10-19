@@ -6,6 +6,7 @@ import {
   createWriteStream,
   existsSync,
   closeSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -601,26 +602,66 @@ function verifyRuntimeDirectoryContents(
       `artifact.compatibility_mismatch: ${targetId} artifact versions or source commit do not match the release manifest`,
     );
   }
-  const records = new Map(inventory.files.map((file) => [file.path, file]));
+  const records = new Map<string, ArtifactFileRecord>();
+  const normalizedPaths = new Set<string>();
+  for (const value of inventory.files as unknown[]) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(
+        "artifact.runtime_invalid: checksum inventory contains an invalid file record",
+      );
+    }
+    const record = value as Partial<ArtifactFileRecord>;
+    if (
+      typeof record.path !== "string" ||
+      !Number.isSafeInteger(record.size) ||
+      record.size! < 0 ||
+      typeof record.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(record.sha256)
+    ) {
+      throw new Error(
+        "artifact.runtime_invalid: checksum inventory contains an invalid file record",
+      );
+    }
+    if (!isSafeInventoryPath(record.path)) {
+      throw new Error(
+        `artifact.path_invalid: ${record.path} is not a safe relative inventory path`,
+      );
+    }
+    const pathKey = record.path.toLowerCase();
+    if (normalizedPaths.has(pathKey)) {
+      throw new Error(
+        `artifact.runtime_invalid: duplicate checksum inventory path ${record.path}`,
+      );
+    }
+    normalizedPaths.add(pathKey);
+    const path = resolveContainedPath(artifactDir, record.path);
+    const info = lstatSync(path, { throwIfNoEntry: false });
+    if (!info) {
+      throw new Error(`artifact.runtime_missing: ${record.path} is absent`);
+    }
+    if (!info.isFile() || info.isSymbolicLink()) {
+      throw new Error(
+        `artifact.runtime_invalid: ${record.path} is not a regular file`,
+      );
+    }
+    if (info.size !== record.size || sha256File(path) !== record.sha256) {
+      throw new Error(
+        `artifact.runtime_corrupt: ${record.path} failed verification`,
+      );
+    }
+    if (/\.(node|dll|exe)$/i.test(record.path)) {
+      verifyExecutableArchitecture(path, target.arch);
+    }
+    records.set(record.path, record as ArtifactFileRecord);
+  }
   for (const required of ["artifact-manifest.json", ...target.runtimeFiles]) {
     const path = resolveContainedPath(artifactDir, required);
     if (!existsSync(path)) {
       throw new Error(`artifact.runtime_missing: ${required} is absent`);
     }
-    if (required === "artifact-manifest.json") {
-      continue;
-    }
-    const record = records.get(required);
-    if (!record || !/^[a-f0-9]{64}$/.test(record.sha256)) {
+    if (required !== "artifact-manifest.json" && !records.has(required)) {
       throw new Error(
         `artifact.runtime_invalid: checksum inventory is missing ${required}`,
-      );
-    }
-    const actualSize = statSync(path).size;
-    const actualSha256 = sha256File(path);
-    if (actualSize !== record.size || actualSha256 !== record.sha256) {
-      throw new Error(
-        `artifact.runtime_corrupt: ${required} failed verification`,
       );
     }
   }
@@ -634,6 +675,21 @@ function verifyRuntimeDirectoryContents(
   if (!existsSync(renderer) || !statSync(renderer).isFile()) {
     throw new Error(`artifact.runtime_missing: ${artifact.renderer} is absent`);
   }
+}
+
+function isSafeInventoryPath(path: string): boolean {
+  if (
+    !path ||
+    path.includes("\\") ||
+    path.includes(":") ||
+    path.startsWith("/")
+  ) {
+    return false;
+  }
+  const segments = path.split("/");
+  return segments.every(
+    (segment) => segment !== "" && segment !== "." && segment !== "..",
+  );
 }
 
 export function verifyExecutableArchitecture(

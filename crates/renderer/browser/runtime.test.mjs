@@ -152,9 +152,15 @@ describe("renderer browser execution", () => {
     );
   });
 
-  it.each(["fonts", "image", "paint"])(
-    "cancels %s waits without letting late readiness publish success",
-    async (stage) => {
+  it.each([
+    ["fonts", true],
+    ["fonts", false],
+    ["image", true],
+    ["image", false],
+    ["paint", true],
+  ])(
+    "cancels %s waits (page paint: %s) without letting late readiness publish success",
+    async (stage, waitForPaint) => {
       const runtime = browserRuntime();
       let release;
       const waiting = new Promise((resolve) => {
@@ -187,7 +193,7 @@ describe("renderer browser execution", () => {
       window.__velocast = { cancelPending };
       vi.spyOn(console, "error").mockImplementation(() => {});
       const report = runtime.report("cancel-1", "result:", () =>
-        runtime.completeFrame(() => "late frame"),
+        runtime.completeFrame(() => "late frame", undefined, waitForPaint),
       );
       await vi.waitFor(() => expect(entered).toBe(true));
       expect(runtime.cancel("different-token")).toBe(false);
@@ -386,6 +392,60 @@ describe("renderer browser execution", () => {
     animationFrames.shift()(16);
     await completion;
     expect(document.title).toBe('result:image-1:ok:"frame-90"');
+  });
+
+  it("prepares snapshot frames after fonts and mounted images without scheduling a page paint", async () => {
+    const runtime = browserRuntime();
+    runtime.selectTarget("#hero");
+    const hero = document.getElementById("hero");
+    vi.spyOn(hero, "getBoundingClientRect").mockReturnValue({
+      left: 40,
+      top: 25,
+      width: 640,
+      height: 360,
+    });
+    let releaseFonts;
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: {
+        ready: new Promise((resolve) => {
+          releaseFonts = resolve;
+        }),
+      },
+    });
+    const image = document.createElement("img");
+    image.src = "cover.png";
+    let releaseImage;
+    image.decode = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          releaseImage = resolve;
+        }),
+    );
+    const raf = vi.spyOn(window, "requestAnimationFrame");
+    const completion = runtime.report("snapshot", "result:", () =>
+      runtime.completeFrame(
+        async () => {
+          await Promise.resolve();
+          hero.appendChild(image);
+          return "frame-90";
+        },
+        undefined,
+        false,
+      ),
+    );
+
+    await vi.waitFor(() => expect(hero.contains(image)).toBe(true));
+    expect(document.title).toBe("original");
+    expect(image.decode).not.toHaveBeenCalled();
+    releaseFonts();
+    await vi.waitFor(() => expect(image.decode).toHaveBeenCalledOnce());
+    expect(document.title).toBe("original");
+    releaseImage();
+    await completion;
+    expect(document.title).toBe('result:snapshot:ok:"frame-90"');
+    expect(document.body.style.transform).toBe("translate(-40px, -25px)");
+    expect(raf).not.toHaveBeenCalled();
   });
 
   it.each(["synchronous", "asynchronous"])(

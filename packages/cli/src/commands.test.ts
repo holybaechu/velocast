@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { Config } from "@velocast/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { RendererRuntimeResolver } from "./renderer-binary.js";
 import { RendererRuntimeAcquisition } from "./renderer-runtime.js";
@@ -377,9 +378,11 @@ describe("doctorCommand", () => {
 describe("command entrypoint exports", () => {
   it("re-exports codec helpers", () => {
     expect(parseCliCodec(" av1 ")).toBe("av1");
-    expect(resolveRendererCodec({ renderer: { codec: " hevc " } })).toBe(
-      "hevc",
-    );
+    expect(
+      resolveRendererCodec({
+        renderer: { codec: " hevc " },
+      } as unknown as Config),
+    ).toBe("hevc");
   });
 });
 

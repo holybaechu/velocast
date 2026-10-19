@@ -151,29 +151,16 @@ export function median(values) {
 export function assertWebCodecsTelemetry(report, backend, expectedFrames) {
   if (backend !== "electron")
     throw new Error("Only the Electron browser host is supported");
-  const captures = ["electron_shared_texture", "electron_bitmap"];
-  if (!captures.includes(report.capture_backend))
+  if (report.capture_backend !== "electron_shared_texture")
     throw new Error(
-      `capture_backend ${report.capture_backend}; expected Electron capture`,
+      `capture_backend ${report.capture_backend}; expected Electron shared-texture capture`,
     );
-  if (report.capture_backend === "electron_bitmap") {
-    if (
-      !report.fallback_used ||
-      typeof report.fallback_reason !== "string" ||
-      !report.fallback_reason.trim()
-    )
-      throw new Error("Bitmap capture requires a recorded fallback reason");
-    if (report.cpu_readback_frames !== expectedFrames)
-      throw new Error(
-        `Bitmap readback count ${report.cpu_readback_frames}; expected ${expectedFrames}`,
-      );
-  } else if (
+  if (
     report.fallback_used ||
     report.fallback_reason ||
     report.cpu_readback_frames !== 0
-  ) {
+  )
     throw new Error("Shared-texture capture reported fallback or CPU readback");
-  }
   const hardwarePreference = report.webcodecs?.hardware_acceleration;
   if (
     hardwarePreference !== undefined &&

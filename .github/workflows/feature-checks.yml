@@ -60,3 +60,41 @@ jobs:
       - name: Run feature checks (Windows)
         if: runner.os == 'Windows'
         run: pnpm check:fast
+      - name: Build renderer and CLI for capture checks (Windows)
+        id: native_capture_build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pnpm build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build -p velocast-renderer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Hosted Windows reports a software compositor. GPU success is exercised
+      # by macOS CI and by the separate self-hosted native-release acceptance.
+      - name: Validate unavailable GPU and PNG output (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $renderer = Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe'
+          $output = Join-Path $env:RUNNER_TEMP 'electron-portable'
+          $env:VELOCAST_WEBCODECS_TEST_BINARY = node -p "require('./packages/electron-host/node_modules/electron')"
+          node --test packages/electron-host/test/shared-capability-runtime.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/verify-electron-portable.mjs --renderer $renderer --output $output --capture unavailable --frames 8 --repeats 1
+          exit $LASTEXITCODE
+      - name: Validate browser video and native audio utilities (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:VELOCAST_WEBCODECS_TEST_BINARY = node -p "require('./packages/electron-host/node_modules/electron')"
+          node --test packages/electron-host/test/native-media.integration.test.cjs
+          exit $LASTEXITCODE
+      - name: Save capture capability evidence (Windows)
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: capture-capability-windows
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/electron-portable/results.json
+            ${{ runner.temp }}/electron-portable/unavailable-capture.json

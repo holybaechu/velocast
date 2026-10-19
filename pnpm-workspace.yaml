@@ -7,6 +7,8 @@ packages:
 allowBuilds:
   electron: true
   esbuild: true
+  # Platform binding packages contain the native libraries; no FFmpeg CLI download.
+  node-av: false
 peerDependencyRules:
   allowedVersions:
     eslint: "10"

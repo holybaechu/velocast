@@ -1,1 +1,6 @@
-pub use velocast_renderer_policy::browser_surface::*;
+// Video capture requires shared textures. Software is reserved for diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserSurfaceMode {
+    WebCodecs,
+    Software,
+}

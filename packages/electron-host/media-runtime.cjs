@@ -10,11 +10,15 @@ const {
   inputFile,
   outputFile,
   probe,
+  audioDuration,
 } = require("./media-io.cjs");
-const { CodecSession } = require("./webcodecs-codec.cjs");
+const { MediaSession } = require("./media-session.cjs");
+const { registerNativeMedia } = require("./native-media.cjs");
+const { containerFor, AUDIO_CODECS } = require("./media-settings.cjs");
 const { toneMapFrame } = require("./hdr-color.cjs");
 const { StreamingAudioResampler } = require("./audio-resampler.cjs");
 const { selectAudioEncoder } = require("./audio-codec.cjs");
+const { videoCanvases } = require("./video-canvases.cjs");
 const BLOCK = 4096;
 function scratch(prefix) {
   return fs.mkdtempSync(
@@ -77,7 +81,7 @@ async function decodeAudio(op) {
     const encodedFirst = await track.getFirstTimestamp();
     const first = Math.max(0, encodedFirst);
     const duration = Math.min(
-      Math.max(0, (await track.computeDuration()) - first),
+      Math.max(0, (await audioDuration(track)) - first),
       op.duration ?? Infinity,
     );
     const count = Math.max(0, Math.round(duration * op.sampleRate));
@@ -315,7 +319,7 @@ async function videoInput(file) {
     entry = {
       input,
       track,
-      sink: new mb.CanvasSink(track, { poolSize: 2 }),
+      sink: { canvases: (start) => videoCanvases(track, start) },
       iterator: null,
       current: null,
       next: null,
@@ -462,15 +466,18 @@ function configKey(config) {
   });
 }
 
-async function audioEncoding(track, requested) {
-  return selectAudioEncoder(
+async function audioEncoding(track, requested, op) {
+  const result = await selectAudioEncoder(
     requested ?? "auto",
     {
       sampleRate: await track.getSampleRate(),
       numberOfChannels: await track.getNumberOfChannels(),
+      container: containerFor(op.outputPath, op.container),
     },
     mb.canEncodeAudio,
   );
+  result.backend = op.mediaBackend === "webcodecs" ? "webcodecs" : "native";
+  return result;
 }
 
 async function encodeAudioTrack(track, source, selection) {
@@ -483,7 +490,11 @@ async function encodeAudioTrack(track, source, selection) {
   // preroll; do not delete compressed packets or widen duration tolerances.
   // https://chromium.googlesource.com/chromium/src/+/refs/tags/130.0.6723.62/media/audio/audio_encoders_unittest.cc
   const primingSamples =
-    selection.codec === "aac" && process.platform === "darwin" ? 2112 : 0;
+    selection.backend === "webcodecs" &&
+    selection.codec === "aac" &&
+    process.platform === "darwin"
+      ? 2112
+      : 0;
   selection.appliedEncoderPrimingSamples = primingSamples;
   const primingSeconds = primingSamples / selection.sampleRate;
   if (selection.sourceSampleRate === selection.sampleRate) {
@@ -514,8 +525,7 @@ async function encodeAudioTrack(track, source, selection) {
     sourceChannels: selection.numberOfChannels,
     targetChannels: selection.numberOfChannels,
     totalFrames: Math.round(
-      Math.max(0, (await track.computeDuration()) - first) *
-        selection.sampleRate,
+      Math.max(0, (await audioDuration(track)) - first) * selection.sampleRate,
     ),
     sourceOrigin: first,
     onData(startFrame, data) {
@@ -587,7 +597,7 @@ function audioSelectionMetadata(metadata, selection, copied = false) {
 }
 async function mux(op) {
   const inputs = [],
-    sink = outputFile(op.outputPath);
+    sink = outputFile(op.outputPath, op.container);
   let audioInput;
   try {
     const paths = op.paths ?? [op.videoPath];
@@ -613,6 +623,7 @@ async function mux(op) {
     );
     sink.output.addVideoTrack(videoSource, {
       rotation: await tracks[0].track.getRotation(),
+      ...(op.fps === undefined ? {} : { frameRate: op.fps }),
     });
     let audioTrack,
       selection,
@@ -622,12 +633,14 @@ async function mux(op) {
       audioTrack = await audioInput.getPrimaryAudioTrack();
       if (!audioTrack) throw new Error("media.no_audio_track");
       const requested = op.audioCodec ?? "auto";
-      if (!["auto", "aac", "opus"].includes(requested))
-        throw new Error("media.invalid_audio_codec: use auto, aac or opus");
+      if (!["auto", ...AUDIO_CODECS].includes(requested))
+        throw new Error("media.invalid_audio_codec");
       const inputCodec = await audioTrack.getCodec();
       copyAudio =
-        ["aac", "opus"].includes(inputCodec) &&
-        (requested === "auto" || requested === inputCodec);
+        AUDIO_CODECS.includes(inputCodec) &&
+        sink.output.format.getSupportedAudioCodecs().includes(inputCodec) &&
+        (requested === inputCodec ||
+          (requested === "auto" && ["aac", "opus"].includes(inputCodec)));
       selection = copyAudio
         ? {
             codec: inputCodec,
@@ -635,7 +648,7 @@ async function mux(op) {
             fallbackUsed: false,
             sourceSampleRate: await audioTrack.getSampleRate(),
           }
-        : await audioEncoding(audioTrack, requested);
+        : await audioEncoding(audioTrack, requested, op);
       audioSource = copyAudio
         ? new mb.EncodedAudioPacketSource(inputCodec)
         : new mb.AudioSampleSource({
@@ -699,26 +712,18 @@ async function mux(op) {
     audioInput?.dispose();
   }
 }
+// Explicit image-sequence utility, isolated from native decoder registrations.
+// Rendered video never enters this path or converts a shared texture to pixels.
 async function encodeFrames(op) {
   if (!Array.isArray(op.framePaths) || !op.framePaths.length)
     throw new Error("media.no_frames");
-  const sink = outputFile(op.outputPath),
-    codec = new CodecSession(VideoEncoder, VideoFrame);
+  const session = new MediaSession();
+  await session.open(op);
   try {
-    const config = await codec.open(op);
-    const source = new mb.EncodedVideoPacketSource(
-      config.logicalCodec === "h264" ? "avc" : config.logicalCodec,
-    );
-    sink.output.addVideoTrack(source, {
-      ...(op.timestamps ? {} : { frameRate: op.fps }),
-      rotation: op.rotation ?? 0,
-    });
-    await sink.output.start();
     for (let index = 0; index < op.framePaths.length; index++) {
       const bitmap = await createImageBitmap(
         new Blob([fs.readFileSync(absolute(op.framePaths[index]))]),
       );
-      let result;
       const timing = op.timestamps
         ? {
             timestamp: Math.round(op.timestamps[index] * 1e6),
@@ -730,7 +735,7 @@ async function encodeFrames(op) {
           }
         : undefined;
       try {
-        result = await codec.encode(
+        await session.encode(
           {
             getVideoFrame: () => new VideoFrame(bitmap, { timestamp: 0 }),
             release() {},
@@ -741,31 +746,19 @@ async function encodeFrames(op) {
       } finally {
         bitmap.close();
       }
-      await source.add(
-        new mb.EncodedPacket(
-          result.data,
-          result.type,
-          result.timestamp / 1e6,
-          result.duration / 1e6,
-        ),
-        result.metadata,
-      );
     }
-    await codec.finish();
-    source.close();
-    await sink.output.finalize();
-    sink.close();
-    return await probe({ path: op.outputPath });
+    return await session.finish();
   } catch (error) {
-    if (codec.encoder && codec.encoder.state !== "closed")
-      codec.encoder.close();
-    await sink.cancel();
+    await session.cancel();
     throw error;
   }
 }
+
 async function runMediaOperation(op) {
   if (!op || typeof op.kind !== "string")
     throw new Error("media.invalid_operation");
+  if (op.kind !== "encode-frames" && op.mediaBackend !== "webcodecs")
+    registerNativeMedia();
   if (op.kind === "probe") return probe(op);
   if (op.kind === "frame") return frame(op);
   if (op.kind === "frame-hashes") {
@@ -774,9 +767,7 @@ async function runMediaOperation(op) {
       const track = await input.getPrimaryVideoTrack();
       if (!track) throw new Error("media.no_video_track");
       const hashes = [];
-      for await (const { canvas } of new mb.CanvasSink(track, {
-        poolSize: 1,
-      }).canvases()) {
+      for await (const { canvas } of videoCanvases(track)) {
         if (hashes.length >= (op.maxFrames ?? 250000))
           throw new Error("media.frame_index_limit");
         const pixels = canvas
@@ -814,11 +805,15 @@ async function runMediaOperation(op) {
   if (op.kind === "decode-audio") return decodeAudio(op);
   if (op.kind === "encode-audio") {
     const input = inputFile(op.path),
-      sink = outputFile(op.outputPath);
+      sink = outputFile(op.outputPath, op.container);
     try {
       const track = await input.getPrimaryAudioTrack();
       if (!track) throw new Error("media.no_audio_track");
-      const selection = await audioEncoding(track, op.audioCodec ?? op.codec);
+      const selection = await audioEncoding(
+        track,
+        op.audioCodec ?? op.codec,
+        op,
+      );
       const source = new mb.AudioSampleSource({
         codec: selection.codec,
         bitrate: selection.bitrate,
@@ -864,12 +859,16 @@ async function runMediaOperation(op) {
         result.audio.pcmSha256 = mixed.pcmSha256;
         return result;
       }
-      const videoPath = path.join(directory, "video.mp4");
+      const videoPath = path.join(
+        directory,
+        `video.${containerFor(op.outputPath, op.container)}`,
+      );
       await encodeFrames({
         ...op,
         outputPath: videoPath,
         audioPath: undefined,
       });
+      registerNativeMedia();
       return await mux({ ...op, videoPath });
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
