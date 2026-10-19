@@ -381,59 +381,75 @@ for (const abort of [false, true])
     },
   );
 
-test(
-  "mid-copy call cancellation retains its abort cause and rolls back only owned output",
-  { timeout: 3000 },
-  async () => {
-    const directory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "velocast-publication-test-"),
-    );
-    const source = path.join(directory, "source.bin"),
-      destination = path.join(directory, "destination.bin"),
-      bytes = Buffer.alloc(1024 * 1024, 0x7f),
-      ownerController = new AbortController(),
-      controller = new AbortController(),
-      interruption = new Error("mid-copy interruption");
-    let copiedBytes = 0;
-    let session;
-    const f = fixture({
-      cooperative: true,
-      onPipeline(writer) {
-        writer.once("drain", () => {
-          copiedBytes = fs.statSync(destination).size;
-          controller.abort(interruption);
-        });
-      },
-    });
-    try {
-      fs.writeFileSync(source, bytes);
-      session = await f.client.createMediaSession({
-        electronBinary: "fake-electron",
-        signal: ownerController.signal,
-      });
-      await assert.rejects(
-        session.run(
-          { kind: "copy", path: source, outputPath: destination },
-          { signal: controller.signal },
+for (const replaced of [false, true])
+  test(
+    `mid-copy call cancellation retains its abort cause and rolls back only owned output${replaced ? " while preserving a replacement symlink" : ""}`,
+    { timeout: 3000, skip: replaced && process.platform === "win32" },
+    async () => {
+      const temporary = fs.realpathSync(os.tmpdir()),
+        directory = fs.mkdtempSync(
+          path.join(temporary, "velocast-publication-test-"),
         ),
-        (error) => {
-          assert.equal(error.code, "ABORT_ERR");
-          assert.equal(error.cause, interruption);
-          return true;
+        ownedDirectory = fs.realpathSync(directory);
+      const source = path.join(directory, "source.bin"),
+        destination = path.join(directory, "destination.bin"),
+        moved = path.join(directory, "moved.bin"),
+        bytes = Buffer.alloc(1024 * 1024, 0x7f),
+        ownerController = new AbortController(),
+        controller = new AbortController(),
+        interruption = new Error("mid-copy interruption");
+      let copiedBytes = 0;
+      let session;
+      const f = fixture({
+        cooperative: true,
+        onPipeline(writer) {
+          writer.once("drain", () => {
+            copiedBytes = fs.statSync(destination).size;
+            if (replaced) {
+              fs.renameSync(destination, moved);
+              fs.symlinkSync(moved, destination);
+            }
+            controller.abort(interruption);
+          });
         },
-      );
-      assert.equal(ownerController.signal.aborted, false);
-      assert.ok(copiedBytes > 0 && copiedBytes < bytes.length);
-      assert.equal(fs.existsSync(destination), false);
-      assert.deepEqual(fs.readFileSync(source), bytes);
-      assert.equal(fs.existsSync(f.directories[0]), false);
-    } finally {
-      await session?.close();
-      await f.cleanup();
-      await fs.promises.rm(directory, { recursive: true, force: true });
-    }
-  },
-);
+      });
+      try {
+        fs.writeFileSync(source, bytes);
+        session = await f.client.createMediaSession({
+          electronBinary: "fake-electron",
+          signal: ownerController.signal,
+        });
+        await assert.rejects(
+          session.run(
+            { kind: "copy", path: source, outputPath: destination },
+            { signal: controller.signal },
+          ),
+          (error) => {
+            assert.equal(error.code, "ABORT_ERR");
+            assert.equal(error.cause, interruption);
+            return true;
+          },
+        );
+        assert.equal(ownerController.signal.aborted, false);
+        assert.ok(copiedBytes > 0 && copiedBytes < bytes.length);
+        if (replaced) {
+          assert.equal(fs.lstatSync(destination).isSymbolicLink(), true);
+          assert.equal(fs.readlinkSync(destination), moved);
+          const partial = fs.readFileSync(moved);
+          assert.ok(partial.length > 0 && partial.length < bytes.length);
+          assert.deepEqual(partial, bytes.subarray(0, partial.length));
+        } else assert.equal(fs.existsSync(destination), false);
+        assert.deepEqual(fs.readFileSync(source), bytes);
+        assert.equal(fs.existsSync(f.directories[0]), false);
+      } finally {
+        await session?.close();
+        await f.cleanup();
+        assert.equal(fs.realpathSync(directory), ownedDirectory);
+        assert.equal(path.dirname(ownedDirectory), temporary);
+        await fs.promises.rm(ownedDirectory, { recursive: true, force: true });
+      }
+    },
+  );
 
 test("publication failure preserves source and an existing destination", async () => {
   const directory = fs.mkdtempSync(
