@@ -284,6 +284,7 @@ class RendererOutputBuffer {
   ) {}
 
   append(chunk: Buffer | string): void {
+    if (!this.scanMessages && !this.includeOutputTailOnError) return;
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     this.chunks.push(buffer);
     this.byteLength += buffer.byteLength;
