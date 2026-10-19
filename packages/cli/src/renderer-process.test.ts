@@ -1,4 +1,4 @@
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners } from "node:events";
 import {
   existsSync,
   mkdtempSync,
@@ -511,6 +511,64 @@ describe("runRenderer", () => {
           "adapter primary\nSecondary renderer lifecycle diagnostics:\n- cleanup secondary",
         cause: adapterError,
       });
+    });
+
+    it("releases the default cancellation listener when timed-out termination fails", async () => {
+      const child = createRendererProcess();
+      const adapter = deferred<void>();
+      const controller = new AbortController();
+      const terminationError = new Error("termination secondary");
+      Object.assign(child, {
+        kill: () => {
+          throw terminationError;
+        },
+      });
+      let fireTimeout!: () => void;
+      let eventLogPath = "";
+      const result = runRenderer(
+        "/opt/velocast/velocast-renderer",
+        { mode: "composition" },
+        {
+          resolveProcessEnv: () => ({}),
+          spawnRenderer: (_binary, args) => {
+            eventLogPath = JSON.parse(args[1]!).event_log_path;
+            writeFileSync(eventLogPath, "owned termination evidence");
+            return child;
+          },
+          waitForProcess: () => adapter.promise,
+          signal: controller.signal,
+          timeoutMs: 50,
+          scheduleTimeout: (callback) => {
+            fireTimeout = callback;
+          },
+        },
+      );
+
+      fireTimeout();
+
+      try {
+        await expect(result).rejects.toMatchObject({
+          message: expect.stringMatching(
+            /renderer execution timed out[\s\S]*termination secondary/,
+          ),
+          cause: expect.objectContaining({ name: "RendererTimeoutError" }),
+        });
+        expect(readFileSync(eventLogPath, "utf8")).toBe(
+          "owned termination evidence",
+        );
+        expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+        expect(child.listenerCount("exit")).toBe(0);
+      } finally {
+        adapter.resolve();
+        await flushMicrotasks();
+        const root = dirname(eventLogPath);
+        if (existsSync(root)) {
+          const absolute = realpathSync(root);
+          expect(dirname(absolute)).toBe(realpathSync(tmpdir()));
+          expect(basename(absolute)).toMatch(/^velocast-renderer-events-/);
+          rmSync(absolute, { recursive: true, force: true });
+        }
+      }
     });
 
     it.each(["throw", "reject"])(
