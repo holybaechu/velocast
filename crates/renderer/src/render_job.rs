@@ -285,15 +285,12 @@ impl WorkerGroup {
                 .map_err(worker_monitor_failed_error)?;
             let stderr = collect_worker_output(&mut worker).await;
             if fail_on_error && !status.success() {
-                return Err(crate::errors::RendererError::WorkerFailed {
-                    start: worker.start,
-                    end: worker.end,
-                    message: format!(
-                        "exit status: {status}\nstderr:\n{}",
-                        String::from_utf8_lossy(&stderr).trim()
-                    ),
-                }
-                .into());
+                anyhow::bail!(
+                    "worker {}..{} failed: exit status: {status}\nstderr:\n{}",
+                    worker.start,
+                    worker.end,
+                    String::from_utf8_lossy(&stderr).trim()
+                );
             }
         }
         Ok(())

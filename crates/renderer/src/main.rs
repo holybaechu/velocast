@@ -5,7 +5,6 @@ mod browser_surface;
 mod cancellation;
 mod capabilities;
 mod electron_app;
-mod errors;
 mod events;
 mod frame_loop;
 mod generated;
