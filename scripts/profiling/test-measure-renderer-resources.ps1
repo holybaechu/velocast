@@ -65,9 +65,16 @@ setTimeout(()=>process.exit(0),600);
     Assert ($tree.ObservedProcessCount -ge 2) 'Child process was not discovered.'
     Assert (@($tree.Processes | Where-Object ParentPid -eq $tree.RootPid).Count -ge 1) 'No descendant linked to root.'
     Assert ($tree.DurationSeconds -ge 2) 'Profiler stopped before the child outlived its parent.'
-    Assert ($tree.SampledPeakPrivateResidentBytes -gt 150MB) 'Touched allocation is missing from private resident RAM.'
-    Assert ($tree.SampledPeakPrivateCommittedBytes -gt $tree.SampledPeakPrivateResidentBytes + 64MB) 'Untouched commit was not distinguished from resident RAM.'
-    Assert ($tree.SampledPeakPrivateResidentBytes -eq ($tree.Samples | Measure-Object PrivateResidentBytes -Maximum).Maximum) 'Tree peak is not a maximum of simultaneous samples.'
+    Assert ($tree.SampledPeakPrivateCommittedBytes -gt 192MB) 'Private committed allocation is missing.'
+    if ($null -ne $tree.SampledPeakPrivateResidentBytes) {
+        Assert ($tree.SampledPeakPrivateResidentBytes -gt 150MB) 'Touched allocation is missing from private resident RAM.'
+        Assert ($tree.SampledPeakPrivateCommittedBytes -gt $tree.SampledPeakPrivateResidentBytes + 64MB) 'Untouched commit was not distinguished from resident RAM.'
+        Assert ($tree.SampledPeakPrivateResidentBytes -eq ($tree.Samples | Measure-Object PrivateResidentBytes -Maximum).Maximum) 'Tree peak is not a maximum of simultaneous samples.'
+    } else {
+        Assert (@($tree.Samples | Where-Object { $_.LiveProcesses -gt 0 -and $null -eq $_.PrivateResidentBytes }).Count -gt 0) 'Unavailable private resident RAM was not preserved in samples.'
+        Assert (@($tree.Processes | Where-Object { $null -ne $_.SampledPeakPrivateResidentBytes }).Count -eq 0) 'Unavailable private resident RAM was reported as measured.'
+        Write-Output 'Private resident RAM is unavailable on this Windows version; committed memory and process-tree checks remain required.'
+    }
     Assert ($tree.SnapshotFailures -eq 0) 'Toolhelp snapshots failed.'
     Assert ($tree.UnreadableCandidateProcesses -eq 0) 'Known child processes were unreadable.'
     Assert ((Get-Content $memory.Report.StdoutPath -Raw).Contains('child-ready')) 'Child stdout missing.'

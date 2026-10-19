@@ -347,8 +347,12 @@ namespace Velocast.Profiling
                 sample.LiveProcesses++;
                 p.LastObservedSeconds = sample.ElapsedSeconds;
                 var memory = new MemoryCounters { Size = (uint)Marshal.SizeOf<MemoryCounters>() };
-                bool privateResidentAvailable = GetProcessMemoryInfo(p.Handle, ref memory, memory.Size);
-                if (!privateResidentAvailable)
+                uint extendedSize = memory.Size;
+                bool memoryAvailable = GetProcessMemoryInfo(p.Handle, ref memory, extendedSize);
+                // Older Windows can succeed while returning only the EX structure.
+                // Its zero-initialized EX2 tail does not represent measured RAM.
+                bool privateResidentAvailable = memoryAvailable && memory.Size >= extendedSize;
+                if (!memoryAvailable)
                 {
                     // EX compatibility retains commit and working set, never substitutes either
                     // for unavailable private resident RAM.

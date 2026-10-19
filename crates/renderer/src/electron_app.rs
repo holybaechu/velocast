@@ -950,8 +950,10 @@ mod tests {
         use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
         #[cfg(windows)]
         use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
+        // The first request is close (id 1). Avoid cold-loading PowerShell's
+        // JSON cmdlet inside the host's bounded close-ACK deadline.
         let host = test_host(
-            r#"$request = [Console]::ReadLine() | ConvertFrom-Json; [Console]::WriteLine('{"id":' + $request.id + ',"ok":true}'); while ($null -ne [Console]::ReadLine()) {}; exit 0"#,
+            r#"$null = [Console]::ReadLine(); [Console]::WriteLine('{"id":1,"ok":true}'); while ($null -ne [Console]::ReadLine()) {}; exit 0"#,
             RenderCancellation::default(),
         );
         // Keep a real process handle so we can distinguish graceful exit0 from
