@@ -59,6 +59,10 @@ impl RenderJobResources {
 
     pub async fn check_workers(&mut self) -> anyhow::Result<()> {
         self.check_cancellation()?;
+        // Synchronous browser requests must still let stderr readers progress.
+        if !self.workers.running.is_empty() {
+            tokio::task::yield_now().await;
+        }
         self.workers.reap_completed(true).await
     }
 
@@ -763,12 +767,15 @@ mod tests {
                 resources.spawn_workers(vec![fixture_command(
                     &ready,
                     &root.join("finished"),
-                    "fail",
+                    "flood-fail",
                 )])?;
                 wait_until_exists(&ready).await;
+                std::fs::write(ready.with_extension("flood"), b"")?;
                 for _ in 0..100 {
                     resources.check_workers().await?;
-                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    // Electron frame requests are synchronous. Disabled events
+                    // must not prevent the worker's stderr reader from running.
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
                 Err::<(), _>(anyhow::anyhow!("worker failure was not observed"))
             },
@@ -776,6 +783,7 @@ mod tests {
         .await
         .unwrap_err();
         assert!(error.to_string().contains("worker 0..1 failed"));
+        assert!(error.to_string().contains("noisy worker failure"));
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
 
@@ -876,7 +884,17 @@ mod tests {
             .unwrap();
             return;
         }
-        if mode == "fail" {
+        if mode == "flood-fail" {
+            while !ready.with_extension("flood").exists() {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            use std::io::Write;
+            std::io::stderr()
+                .write_all(&vec![b'x'; 1024 * 1024])
+                .unwrap();
+            eprintln!("\nnoisy worker failure");
+        }
+        if mode == "fail" || mode == "flood-fail" {
             std::process::exit(7);
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
