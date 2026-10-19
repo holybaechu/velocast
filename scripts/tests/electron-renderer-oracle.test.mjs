@@ -20,24 +20,19 @@ function frames(
   indices = FRAME_STATES.map((_, index) => index),
   states = FRAME_STATES,
 ) {
-  const bytes = Buffer.alloc(indices.length * WIDTH * HEIGHT * 4);
+  const stride = WIDTH * HEIGHT * 4;
+  const bytes = Buffer.alloc(indices.length * stride);
   for (const [position, frame] of indices.entries()) {
-    const color = COLORS[states[frame]];
-    for (let y = 0; y < HEIGHT; y++)
-      for (let x = 0; x < WIDTH; x++) {
-        const at = ((position * HEIGHT + y) * WIDTH + x) * 4;
-        const bit =
-          y >= 90 && y < 106 && x >= 8 && x < 162
-            ? Math.floor((x - 8) / 20)
-            : -1;
-        const strip = bit >= 0 && (x - 8) % 20 < 14;
-        const rgb = strip
-          ? (frame >> bit) & 1
-            ? [255, 255, 255]
-            : [0, 0, 0]
-          : color;
-        bytes.set([...rgb, 255], at);
+    const start = position * stride;
+    bytes.fill(Buffer.from([...COLORS[states[frame]], 255]), start, start + stride);
+    for (let bit = 0; bit < 8; bit++) {
+      const value = (frame >> bit) & 1 ? 255 : 0;
+      const pixel = Buffer.from([value, value, value, 255]);
+      for (let y = 90; y < 106; y++) {
+        const at = start + (y * WIDTH + 8 + bit * 20) * 4;
+        bytes.fill(pixel, at, at + 14 * 4);
       }
+    }
   }
   return bytes;
 }
