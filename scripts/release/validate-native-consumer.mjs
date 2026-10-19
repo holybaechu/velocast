@@ -57,6 +57,7 @@ try {
   );
   const tarballs = readdirSync(packs).filter((name) => name.endsWith(".tgz"));
   const core = only(tarballs, "velocast-core-");
+  const preview = only(tarballs, "velocast-preview-");
   const gsapPackage = only(tarballs, "velocast-gsap-");
   const cli = only(tarballs, "velocast-0");
   await run(
@@ -77,7 +78,10 @@ try {
 
   for (const manager of ["npm", "pnpm"]) {
     const consumer = join(campaign, manager);
-    cpSync(join(repoRoot, "apps", "playground"), consumer, { recursive: true });
+    cpSync(join(repoRoot, "apps", "playground"), consumer, {
+      recursive: true,
+      filter: (path) => !["node_modules", ".turbo"].includes(basename(path)),
+    });
     const indexPath = join(consumer, "index.html");
     writeFileSync(
       indexPath,
@@ -95,12 +99,13 @@ try {
       packageJson.dependencies = {
         velocast: fileSpec(join(packs, cli)),
         "@velocast/core": fileSpec(join(packs, core)),
+        "@velocast/preview": fileSpec(join(packs, preview)),
         "@velocast/gsap": fileSpec(join(packs, gsapPackage)),
         gsap: "3.15.0",
       };
       writeFileSync(
         join(consumer, "pnpm-workspace.yaml"),
-        `packages:\n  - '.'\noverrides:\n  '@velocast/core': '${fileSpec(join(packs, core))}'\n`,
+        `packages:\n  - '.'\noverrides:\n  '@velocast/core': '${fileSpec(join(packs, core))}'\n  '@velocast/preview': '${fileSpec(join(packs, preview))}'\n`,
       );
     }
     writeFileSync(
@@ -114,6 +119,7 @@ try {
             "--ignore-scripts",
             join(packs, cli),
             join(packs, core),
+            join(packs, preview),
             join(packs, gsapPackage),
             "gsap@3.15.0",
           ]
@@ -123,7 +129,7 @@ try {
       process.execPath,
       [
         "-e",
-        "await Promise.all([import('velocast'), import('@velocast/core'), import('@velocast/core/testing'), import('@velocast/gsap')])",
+        "await Promise.all([import('velocast'), import('@velocast/core'), import('@velocast/core/testing'), import('@velocast/preview'), import('@velocast/gsap')])",
       ],
       consumer,
     );
