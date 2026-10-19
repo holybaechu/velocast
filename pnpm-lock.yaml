@@ -181,9 +181,6 @@ importers:
       eslint-config-prettier:
         specifier: ^10.1.8
         version: 10.1.8(eslint@10.11.0(supports-color@8.1.1))
-      eslint-plugin-only-warn:
-        specifier: ^1.2.1
-        version: 1.2.1
       eslint-plugin-turbo:
         specifier: ^2.11.2
         version: 2.11.2(eslint@10.11.0(supports-color@8.1.1))(turbo@2.11.2)
@@ -1861,9 +1858,6 @@ packages:
     hasBin: true
     peerDependencies:
       eslint: '>=7.0.0'
-
-  eslint-plugin-only-warn@1.2.1:
-    resolution: {integrity: sha512-j37hwfaQDEOfkZ1Dpvu/HnWLavlzQxQxfbrU/9Jb4R9qzrE1eTYuRJyrxq7LzLRI8miG5FOV6veoUVhx7AI84w==}
 
   eslint-plugin-turbo@2.11.2:
     resolution: {integrity: sha512-u5gsG7EUn7t+QxXfS0fOCdbwrn3vMeF3BscfjKWk5WIWTWvMLmFDV3Zka9PrkXyNgQqzW1PJE5CPcGNbEFsBFQ==}
@@ -4249,8 +4243,6 @@ snapshots:
   eslint-config-prettier@10.1.8(eslint@10.11.0(supports-color@8.1.1)):
     dependencies:
       eslint: 10.11.0(supports-color@8.1.1)
-
-  eslint-plugin-only-warn@1.2.1: {}
 
   eslint-plugin-turbo@2.11.2(eslint@10.11.0(supports-color@8.1.1))(turbo@2.11.2):
     dependencies:
