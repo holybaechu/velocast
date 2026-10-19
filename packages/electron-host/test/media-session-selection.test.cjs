@@ -4,135 +4,169 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-
-const source = fs.readFileSync(
-  path.join(__dirname, "../media-session.cjs"),
-  "utf8",
-);
 const settings = {
-  outputPath: "movie.mp4",
+  outputPath: "/video.mp4",
   codec: "h264",
   width: 160,
   height: 100,
   fps: 30,
-  bitrate: 1_000_000,
+  bitrate: 1000000,
 };
-
-function fixture({ supported = true, configureError } = {}) {
-  const events = [];
-  class Encoder {
-    static async isConfigSupported(config) {
-      events.push(["probe", config.codec]);
-      return { supported };
-    }
-    constructor() {
-      events.push(["webcodecs-create"]);
-    }
-    configure() {
-      if (configureError) throw configureError;
+function fixture(behavior = "ok") {
+  const state = {
+    released: 0,
+    closed: 0,
+    cancelled: 0,
+    emitted: 0,
+    pending: [],
+  };
+  let source;
+  const packet = (sample) => {
+    const packet = {
+      timestamp: sample.timestamp,
+      duration: sample.duration,
+      data: new Uint8Array(5),
+      type: "key",
+    };
+    if (behavior === "wrong-timestamp") packet.timestamp += 1;
+    if (behavior === "invalid-duration") packet.duration = NaN;
+    if (behavior === "oversized") packet.data = { byteLength: 67108865 };
+    source.config.onEncodedPacket(packet);
+    state.emitted++;
+    if (behavior === "duplicate") source.config.onEncodedPacket(packet);
+  };
+  class Frame {
+    constructor(original, timing) {
+      Object.assign(this, original, timing);
     }
     close() {
-      events.push(["webcodecs-close"]);
+      state.closed++;
     }
   }
-  class NativeVideoClient {
-    constructor() {
-      events.push(["native-create"]);
-    }
-    async open(value) {
-      events.push(["native-open", value.mediaBackend]);
-      return { backend: "native", logicalCodec: value.codec };
-    }
-  }
-  const module = { exports: {} };
-  const actualCodec = require("../webcodecs-codec.cjs");
+  const mb = {
+    VideoSample: class {
+      constructor(frame) {
+        this.timestamp = frame.timestamp / 1e6;
+        this.duration = frame.duration / 1e6;
+      }
+      close() {
+        state.closed++;
+      }
+    },
+    VideoSampleSource: class {
+      constructor(config) {
+        source = this;
+        this.config = config;
+      }
+      async add(sample) {
+        if (behavior === "device-lost") throw new Error("device lost");
+        state.pending.push(sample);
+        // Buffer output until later submissions: no per-frame flush is available.
+        if (state.pending.length > 1) packet(state.pending.shift());
+      }
+      close() {}
+    },
+  };
   const dependencies = {
     "./media-io.cjs": {
-      mb: {},
-      outputFile() {},
-      probe() {},
-      absolute: (value) => value,
+      mb,
+      outputFile: () => ({
+        output: {
+          addVideoTrack() {},
+          async start() {},
+          async finalize() {
+            if (behavior !== "missing")
+              for (const sample of state.pending) packet(sample);
+          },
+        },
+        close() {},
+        async cancel() {
+          state.cancelled++;
+        },
+      }),
+      probe: async () => ({ video: { frameCount: state.emitted } }),
     },
     "./media-settings.cjs": require("../media-settings.cjs"),
-    "./native-media.cjs": { registerNativeMedia() {} },
-    "./native-video-client.cjs": { NativeVideoClient },
-    "./webcodecs-codec.cjs": actualCodec,
+    "./webcodecs-codec.cjs": require("../webcodecs-codec.cjs"),
   };
-  const load = vm.runInNewContext(
-    `(function(require,module,exports){${source}\n})`,
-    { process: { versions: { electron: "44" } }, VideoEncoder: Encoder },
-  );
-  load((name) => dependencies[name] ?? require(name), module, module.exports);
-  return { MediaSession: module.exports.MediaSession, events };
+  const module = { exports: {} };
+  vm.runInNewContext(
+    `(function(require,module){${fs.readFileSync(path.join(__dirname, "../media-session.cjs"), "utf8")}\n})`,
+    {
+      VideoFrame: Frame,
+      VideoEncoder: {
+        isConfigSupported: async () => ({
+          supported: behavior !== "unsupported",
+        }),
+      },
+      Uint8Array,
+    },
+  )((name) => {
+    if (!(name in dependencies))
+      throw new Error(`unexpected dependency: ${name}`);
+    return dependencies[name];
+  }, module);
+  return {
+    session: new module.exports.MediaSession(),
+    state,
+    imported: () => ({
+      getVideoFrame: () => ({
+        displayWidth: 160,
+        displayHeight: 100,
+        close() {
+          state.closed++;
+        },
+      }),
+      release() {
+        state.released++;
+      },
+    }),
+  };
 }
-
-test("auto starts WebCodecs without a native client when supported", async () => {
-  const f = fixture();
-  const config = await new f.MediaSession().open(settings);
-  assert.equal(config.backend, "webcodecs");
-  assert.equal(config.backendFallbackReason, undefined);
-  assert.equal(config.cpuReadback, false);
-  assert.ok(f.events.some(([event]) => event === "webcodecs-create"));
-  assert.ok(!f.events.some(([event]) => event === "native-create"));
+test("Mediabunny buffers packets, drains once and releases all frame wrappers", async () => {
+  const { session, state, imported } = fixture();
+  assert.equal((await session.open(settings)).cpuReadback, false);
+  for (let i = 0; i < 6; i++) {
+    const result = await session.encode(imported(), i);
+    assert.equal(result.frames, i + 1);
+    assert.equal(result.encodedFrames, i);
+    assert.equal(result.timestamp, Math.round((i * 1e6) / 30));
+  }
+  assert.equal((await session.finish()).frames, 6);
+  assert.equal(state.released, 6);
+  assert.equal(state.closed, 18);
+  assert.equal(state.cancelled, 0);
 });
-
-test("auto starts native after an unsupported WebCodecs probe", async () => {
-  const f = fixture({ supported: false });
-  const config = await new f.MediaSession().open(settings);
-  assert.equal(config.backend, "native");
-  assert.match(config.backendFallbackReason, /webcodecs.unsupported_config/);
-  assert.equal(config.cpuReadback, true);
-  assert.ok(f.events.some(([event]) => event === "native-create"));
-  assert.ok(!f.events.some(([event]) => event === "webcodecs-create"));
-});
-
-test("auto retries native only for a support failure during encoder open", async () => {
-  const unsupported = new Error("hardware encoder unavailable");
-  unsupported.name = "NotSupportedError";
-  const f = fixture({ configureError: unsupported });
-  const config = await new f.MediaSession().open(settings);
-  assert.equal(config.backend, "native");
-  assert.match(config.backendFallbackReason, /hardware encoder unavailable/);
-  assert.ok(f.events.some(([event]) => event === "webcodecs-close"));
-  assert.ok(f.events.some(([event]) => event === "native-create"));
-});
-
-test("auto preserves unrelated encoder-open failures", async () => {
-  const f = fixture({ configureError: new Error("output path denied") });
+for (const behavior of [
+  "duplicate",
+  "wrong-timestamp",
+  "invalid-duration",
+  "oversized",
+  "device-lost",
+  "missing",
+])
+  test(`invalid ${behavior} output cancels and releases GPU imports`, async () => {
+    const { session, state, imported } = fixture(behavior);
+    await session.open(settings);
+    await assert.rejects(async () => {
+      await session.encode(imported(), 0);
+      await session.encode(imported(), 1);
+      await session.finish();
+    });
+    assert.ok(state.cancelled > 0);
+    assert.ok(state.released > 0);
+  });
+test("sequence errors release the import and unavailable video never opens native", async () => {
+  const { session, state, imported } = fixture();
+  await session.open(settings);
+  await assert.rejects(session.encode(imported(), 1), /invalid_sequence/);
+  assert.equal(state.released, 1);
   await assert.rejects(
-    new f.MediaSession().open(settings),
-    /output path denied/,
+    fixture("unsupported").session.open(settings),
+    /unsupported_config/,
   );
-  assert.ok(!f.events.some(([event]) => event === "native-create"));
-});
-
-test("explicit WebCodecs failure never opens native", async () => {
-  const unsupported = new Error("unsupported");
-  unsupported.name = "NotSupportedError";
-  const f = fixture({ configureError: unsupported });
   await assert.rejects(
-    new f.MediaSession().open({ ...settings, mediaBackend: "webcodecs" }),
-    /unsupported/,
+    fixture().session.open({ ...settings, mediaBackend: "native" }),
+    /invalid_backend/,
   );
-  assert.ok(!f.events.some(([event]) => event === "native-create"));
-});
-
-test("explicit native and ProRes auto skip browser support probes", async () => {
-  const f = fixture();
-  assert.equal(
-    (await new f.MediaSession().open({ ...settings, mediaBackend: "native" }))
-      .backend,
-    "native",
-  );
-  assert.equal(
-    (
-      await new f.MediaSession().open({
-        ...settings,
-        codec: "prores",
-        outputPath: "movie.mov",
-      })
-    ).backend,
-    "native",
-  );
-  assert.ok(!f.events.some(([event]) => event === "probe"));
 });

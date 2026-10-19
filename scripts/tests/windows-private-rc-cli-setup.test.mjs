@@ -128,10 +128,10 @@ async function artifactFixture(root) {
     rendererCapabilities: {
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 3,
+      electronHostProtocolVersion: 4,
       videoEncoderBackend: "webcodecs",
       mediaRuntime: "mediabunny",
-      supportedMediaBackends: ["webcodecs", "native"],
+      supportedMediaBackends: ["webcodecs"],
     },
     files: [...payloads].map(([path, bytes]) => ({
       path,

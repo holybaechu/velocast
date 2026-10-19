@@ -105,7 +105,6 @@ export function electronRuntimeEnvironment(
   env.VELOCAST_EXPERIMENTAL_BROWSER = "electron";
   env.VELOCAST_ELECTRON_BINARY = runtime.electron;
   env.VELOCAST_ELECTRON_HOST_SCRIPT = runtime.hostScript;
-  env.VELOCAST_NODE_BINARY = process.execPath;
   return env;
 }
 

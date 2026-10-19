@@ -1,5 +1,7 @@
 # Mediabunny native backend: before/after benchmark
 
+Historical bitmap/native-video measurements. Those render routes are now removed; see the [shared-texture migration measurements](2026-10-19-shared-texture-mediabunny.md).
+
 Measured on 2026-09-28 for [PR #4](https://github.com/holybaechu/velocast/pull/4). This is a Windows x64 end-to-end H.264/MP4 comparison, not a pure encoder benchmark or a benchmark of every new format.
 
 The measured native version improves these 1080p canvas and single-worker footage cases, but takes longer for 4K DOM and four-worker footage. It failed frame identity in four of six timed 4K renders. The subsequent [capture correction](#capture-correction) addresses that failure; the timing and memory tables below remain measurements of the pre-fix revision.

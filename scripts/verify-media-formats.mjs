@@ -1,4 +1,4 @@
-// Full CLI acceptance for native Mediabunny codecs, containers, ranges and assembly.
+// Full CLI acceptance for shared-texture WebCodecs video and native audio, containers, ranges and assembly.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -64,13 +64,10 @@ registerFrameAdapter('formats',{id:'formats',getDurationFrames:()=>6,seekFrame(f
 const config = join(output, "velocast.config.mjs");
 await writeFile(
   config,
-  `export default ${JSON.stringify({ entry: "source/index.html", renderer: { snapshotRoot: "source", binary: renderer, mediaBackend: "native", acceleration: "off", concurrency: 1, assembly: "reference", bitrate: "2M" } })};\n`,
+  `export default ${JSON.stringify({ entry: "source/index.html", renderer: { snapshotRoot: "source", binary: renderer, mediaBackend: "webcodecs", acceleration: "off", concurrency: 1, assembly: "reference", bitrate: "2M" } })};\n`,
 );
 const execute = promisify(execFile);
-const backendFor = (codec) =>
-  codec === "vp9" && process.platform === "win32" && process.arch === "x64"
-    ? "webcodecs"
-    : "native";
+const backendFor = () => "webcodecs";
 const cli = async (file, codec, audioCodec, extra = []) => {
   const { stdout } = await execute(
     process.execPath,
@@ -164,24 +161,9 @@ try {
     assert.ok(rms > 0.04 && rms < 0.1, `unexpected audio RMS ${rms}`);
     const telemetry = JSON.parse(await readFile(`${file}.json`, "utf8"));
     assert.equal(telemetry.frames_encoded, frames);
-    if (backendFor(codec) === "native")
-      assert.equal(telemetry.capture_backend, "electron_bitmap");
-    else
-      assert.ok(
-        ["electron_shared_texture", "electron_bitmap"].includes(
-          telemetry.capture_backend,
-        ),
-      );
-    assert.equal(
-      telemetry.cpu_readback_frames,
-      telemetry.capture_backend === "electron_bitmap" ? frames : 0,
-    );
-    assert.match(
-      telemetry.encoder_backend,
-      codec === "vp9" && process.platform === "win32" && process.arch === "x64"
-        ? /webcodecs/
-        : /native/,
-    );
+    assert.equal(telemetry.capture_backend, "electron_shared_texture");
+    assert.equal(telemetry.cpu_readback_frames, 0);
+    assert.match(telemetry.encoder_backend, /webcodecs/);
     results.push({ file, codec, audioCodec, frames, audioRms: rms });
     console.log(JSON.stringify(results.at(-1)));
   };
@@ -191,10 +173,31 @@ try {
     ["vp8", "vorbis", "webm"],
     ["av1", "mp3", "mkv"],
     ["hevc", "flac", "mkv"],
-    ["prores", "pcm-s16", "mov"],
+    ["h264", "pcm-s16", "mov"],
   ]) {
     const file = join(output, `${codec}.${container}`);
-    await cli(file, codec, audioCodec, ["--media-backend", backendFor(codec)]);
+    try {
+      await cli(file, codec, audioCodec, [
+        "--media-backend",
+        backendFor(codec),
+      ]);
+    } catch (error) {
+      if (
+        codec === "h264" ||
+        !/webcodecs\.unsupported_config:|This specific encoder configuration/.test(
+          String(error.stderr || error),
+        )
+      )
+        throw error;
+      results.push({
+        codec,
+        container,
+        status: "encoder-unavailable",
+        reason: String(error.stderr || error),
+      });
+      console.log(JSON.stringify(results.at(-1)));
+      continue;
+    }
     await verify(file, codec, audioCodec, 6);
   }
   const range = join(output, "range.webm");
@@ -208,13 +211,13 @@ try {
   ]);
   await verify(range, "vp9", "opus", 3, 1);
   const segments = join(output, "segments.mov");
-  await cli(segments, "prores", "pcm-s16", [
+  await cli(segments, "h264", "pcm-s16", [
     "--concurrency",
     "2",
     "--assembly",
     "segments",
   ]);
-  await verify(segments, "prores", "pcm-s16", 6);
+  await verify(segments, "h264", "pcm-s16", 6);
   const preserved = join(output, "invalid.webm");
   await writeFile(preserved, "previous output");
   await assert.rejects(cli(preserved, "h264", "aac"));

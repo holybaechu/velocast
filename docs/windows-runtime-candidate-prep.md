@@ -2,7 +2,7 @@
 
 The checked-in [release manifest](../release/velocast-release.json) has no
 published native artifacts. Use a source build or a prepared private runtime.
-The renderer uses Electron, Mediabunny native software codecs, and an explicit
+The renderer uses Electron, Mediabunny WebCodecs video, native audio/decoding utilities, and an explicit
 Chromium WebCodecs video backend.
 
 Build the renderer and workspace packages:
@@ -41,7 +41,7 @@ pnpm velocast render product-hero --config apps/playground/velocast.config.ts --
 ```
 
 The CLI reads the adjacent runtime marker. Browser protocol 4 and Electron
-host protocol 3 must match the CLI. The candidate remains unsigned and does
+host protocol 4 must match the CLI. The candidate remains unsigned and does
 not establish public release support. Validate installation, offline cache
 behavior, corruption rejection, cancellation, and native output in a clean
 consumer environment before publication. Keep generated media outside the

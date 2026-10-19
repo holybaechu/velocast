@@ -141,12 +141,12 @@ and output-range slicing. See [audio](authored-audio.md) and
 The renderer embeds its checked-in browser runtime directly. Browser readiness
 and a committed React tree are necessary but do not prove that Electron captured
 the matching paint. Capture generation and frame acknowledgements preserve
-ordering. A media session selects native Mediabunny/NodeAV software codecs or
-Chromium WebCodecs. Capture selection remains independent of encoding. Native
-submissions can buffer packets; finalization verifies completed output. Explicit
+ordering. A dedicated media session uses Mediabunny VideoSampleSource with
+Chromium WebCodecs. Video capture requires shared textures. Submissions can
+buffer packets; finalization verifies completed output and releases GPU leases. Explicit
 container, video/audio codec, and profile choices remain binding. See
 [media backends and formats](webcodecs.md) for readback, compatibility, and the
-Windows x64 VP9 fallback.
+migration away from CPU video encoding.
 
 ## Validation and distribution boundaries
 
@@ -188,5 +188,5 @@ adapters, never wrapped around transactional native publication. Core's testing
 reset remains for active cross-package tests. Browser protocol 4 retains
 `getDurationFrames` and renderable `getCompositions`; removing metadata APIs does
 not remove these wire methods. Electron is the sole browser host. Host protocol
-3 adds native Mediabunny codec dependencies and format selection. Signed distribution and broader
+4 requires shared-texture capture and WebCodecs video, with native audio/decoding isolated in utility renderers. Signed distribution and broader
 platform validation remain separate release requirements.

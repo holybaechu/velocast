@@ -1,5 +1,7 @@
 # Snapshot capture synchronization
 
+Historical bitmap/native-video measurements. Those render routes are now removed; see the [shared-texture migration measurements](2026-10-19-shared-texture-mediabunny.md).
+
 ## Change
 
 Bitmap video, PNG output, and raw software capture already use Chromium's

@@ -1,4 +1,4 @@
-// End-to-end regression for stale 4K Electron bitmap captures at segment starts.
+// End-to-end regression for 4K Electron shared-texture captures at segment starts.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -26,7 +26,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
 }
 if (!options.has("--renderer") || !options.has("--output"))
   throw new Error(
-    "Required: --renderer EXE --output NEW-TEMP-DIR [--frames 24] [--repeats 3] [--mode both|reference|segments] [--all-frames true] [--cpu-compositor true]",
+    "Required: --renderer EXE --output NEW-TEMP-DIR [--frames 24] [--repeats 3] [--mode both|reference|segments] [--all-frames true]",
   );
 const renderer = resolve(options.get("--renderer"));
 const output = resolve(options.get("--output"));
@@ -59,7 +59,6 @@ const frames = Number(options.get("--frames") ?? 24);
 const repeats = Number(options.get("--repeats") ?? 3);
 const mode = options.get("--mode") ?? "both";
 const allFrames = options.get("--all-frames") ?? "false";
-const cpuCompositor = options.get("--cpu-compositor") ?? "false";
 if (
   !Number.isInteger(frames) ||
   frames < 1 ||
@@ -69,7 +68,6 @@ if (
   repeats > 20 ||
   !["both", "reference", "segments"].includes(mode) ||
   !["true", "false"].includes(allFrames) ||
-  !["true", "false"].includes(cpuCompositor) ||
   (mode !== "reference" && frames < 4)
 )
   throw new Error(
@@ -81,37 +79,9 @@ if (
 // and its initial frame-72 preview retain the original 240-frame timeline.
 const source = join(output, "source");
 await mkdir(output, { recursive: false });
-const hostAttempts = join(output, "cpu-host-attempts.jsonl");
-const cpuHostWrapper = join(output, "cpu-host.cjs");
 const realHost =
   process.env.VELOCAST_ELECTRON_HOST_SCRIPT ??
   join(root, "packages/electron-host/main.cjs");
-if (!isAbsolute(realHost))
-  throw new Error("VELOCAST_ELECTRON_HOST_SCRIPT must be an absolute path");
-if (cpuCompositor === "true") {
-  // A normal bitmap host reports a confirmed software GPU compositor. The
-  // renderer must restart it as an explicitly CPU-composited bitmap host.
-  await writeFile(hostAttempts, "");
-  await writeFile(
-    cpuHostWrapper,
-    `"use strict";
-const fs=require("node:fs"),{app}=require("electron/main");
-const bitmap=process.env.VELOCAST_ELECTRON_SURFACE_MODE==="bitmap";
-const cpu=process.env.VELOCAST_ELECTRON_CPU_BITMAP==="1";
-if(bitmap)fs.appendFileSync(${JSON.stringify(hostAttempts)},JSON.stringify({cpu,pid:process.pid})+"\\n");
-if(bitmap&&!cpu){
-  const original=app.getGPUFeatureStatus.bind(app);
-  app.getGPUFeatureStatus=()=>({...original(),gpu_compositing:"disabled_software"});
-}
-require(${JSON.stringify(realHost)});
-if(bitmap&&!cpu)app.emit("gpu-info-update");
-`,
-  );
-  await writeFile(
-    join(output, "media-client.cjs"),
-    `module.exports=require(${JSON.stringify(join(root, "packages/electron-host/media-client.cjs"))});\n`,
-  );
-}
 await mkdir(join(source, "src"), { recursive: true });
 await cp(
   join(root, "apps/playground/src/product-hero.js"),
@@ -186,7 +156,7 @@ await writeFile(
     renderer: {
       snapshotRoot: "source",
       binary: renderer,
-      mediaBackend: "native",
+      mediaBackend: "webcodecs",
       acceleration: "off",
       concurrency: 1,
       assembly: "reference",
@@ -202,11 +172,10 @@ const requireHost = createRequire(
 const { createMediaSession } = requireHost("./media-client.cjs");
 const electronBinary =
   process.env.VELOCAST_ELECTRON_BINARY ?? requireHost("electron");
-const hostScript = cpuCompositor === "true" ? cpuHostWrapper : realHost;
+const hostScript = realHost;
 const env = {
   ...process.env,
   VELOCAST_RENDERER_BINARY: renderer,
-  VELOCAST_NODE_BINARY: process.execPath,
   VELOCAST_ELECTRON_BINARY: electronBinary,
   VELOCAST_ELECTRON_HOST_SCRIPT: hostScript,
 };
@@ -218,7 +187,6 @@ const report = {
   repeats,
   renderer,
   allFrames: allFrames === "true",
-  cpuCompositor: cpuCompositor === "true",
   cases: [],
 };
 const save = () =>
@@ -229,13 +197,6 @@ const save = () =>
 await save();
 
 async function render(name, assembly, concurrency) {
-  const attemptCount =
-    cpuCompositor === "true"
-      ? (await readFile(hostAttempts, "utf8"))
-          .trim()
-          .split("\n")
-          .filter(Boolean).length
-      : 0;
   const video = join(output, `${name}.mp4`);
   const telemetry = join(output, `${name}.json`);
   const { stdout } = await run(
@@ -255,7 +216,7 @@ async function render(name, assembly, concurrency) {
       "--pixel-format",
       "yuv420p",
       "--media-backend",
-      "native",
+      "webcodecs",
       "--acceleration",
       "off",
       "--concurrency",
@@ -274,40 +235,13 @@ async function render(name, assembly, concurrency) {
   );
   assert.equal(JSON.parse(stdout).status, "success", `${name} CLI result`);
   const stats = JSON.parse(await readFile(telemetry, "utf8"));
-  assert.equal(stats.capture_backend, "electron_bitmap");
+  assert.equal(stats.capture_backend, "electron_shared_texture");
   assert.equal(stats.frames_encoded, frames);
-  assert.equal(stats.cpu_readback_frames, frames);
-  if (cpuCompositor === "true") {
-    assert.equal(stats.fallback_used, true, `${name}: CPU retry missing`);
-    assert.match(
-      stats.fallback_reason ?? "",
-      /capture\.gpu_compositor_unavailable: disabled_software/,
-      `${name}: wrong fallback reason`,
-    );
-    const attempts = (await readFile(hostAttempts, "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .slice(attemptCount)
-      .map((line) => JSON.parse(line));
-    assert.equal(
-      attempts.length,
-      assembly === "segments" ? 5 : 2,
-      `${name}: wrong host process count`,
-    );
-    assert.equal(
-      attempts[0].cpu,
-      false,
-      `${name}: missing original bitmap host`,
-    );
-    assert.ok(
-      attempts.slice(1).every((attempt) => attempt.cpu === true),
-      `${name}: retry or segment worker did not enable CPU compositing`,
-    );
-  }
+  assert.equal(stats.cpu_readback_frames, 0);
+  assert.equal(stats.fallback_used, false);
   assert.equal(
     stats.mode,
-    assembly === "segments" ? "parallel_segments" : "reference_native",
+    assembly === "segments" ? "parallel_segments" : "reference_web_codecs",
   );
   const plan = (await readFile(eventLog, "utf8"))
     .split(/\r?\n/)
@@ -437,6 +371,9 @@ try {
           frames,
           sampledFrames: sampleFrames,
           captureBackend: stats.capture_backend,
+          encoderBackend: stats.encoder_backend,
+          cpuReadbackFrames: stats.cpu_readback_frames,
+          renderMs: stats.total_wall_ms,
           elapsedMs: Math.round(performance.now() - started),
         });
       } catch (error) {

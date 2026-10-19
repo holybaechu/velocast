@@ -177,97 +177,21 @@ async fn run_coordinator_render(
     resources: &mut render_job::RenderJobResources,
     context: &mut output_result::OutputContext,
 ) -> anyhow::Result<()> {
-    let mut mode = initial_surface_for_job(job);
-    let mut fallback_reasons = Vec::new();
-    loop {
-        match run_coordinator_render_with_mode(job, report, events, resources, context, mode).await
-        {
-            Ok(()) => return Ok(()),
-            Err(error) => {
-                let Some(next_mode) =
-                    next_surface_after_failure(mode, report.frames_encoded, &error)
-                else {
-                    return Err(error);
-                };
-                fallback_reasons.push(match next_mode {
-                    browser_surface::BrowserSurfaceMode::Bitmap => format!(
-                        "Shared texture capture unavailable; using bitmap capture: {error}"
-                    ),
-                    browser_surface::BrowserSurfaceMode::CpuBitmap => format!(
-                        "GPU compositor unavailable; retrying bitmap capture with CPU compositing: {error}"
-                    ),
-                    _ => unreachable!("fallback target must be a bitmap mode"),
-                });
-                resources.reset_attempt().await?;
-                *report = coordinator_telemetry_for(job);
-                report.fallback_used = true;
-                report.fallback_reason = Some(fallback_reasons.join("; "));
-                *context = output_result::OutputContext::default();
-                mode = next_mode;
-            }
-        }
-    }
+    run_coordinator_render_with_mode(
+        job,
+        report,
+        events,
+        resources,
+        context,
+        initial_surface_for_job(job),
+    )
+    .await
 }
 fn initial_surface_for_job(job: &RenderJob) -> browser_surface::BrowserSurfaceMode {
-    initial_surface(
-        job,
-        std::env::var("VELOCAST_ELECTRON_FORCE_BITMAP").as_deref() == Ok("1"),
-    )
-}
-
-fn initial_surface(job: &RenderJob, force_bitmap: bool) -> browser_surface::BrowserSurfaceMode {
-    if job.operation != RenderOperation::Render {
-        browser_surface::BrowserSurfaceMode::Software
-    } else if job.media_backend.as_deref() == Some("native")
-        || job.codec.eq_ignore_ascii_case("prores")
-        || force_bitmap
-    {
-        // Native software encoding already needs CPU pixels. Use compositor
-        // bitmap capture as its portable reference, avoiding a GPU texture
-        // transfer solely to read those pixels back in another renderer.
-        browser_surface::BrowserSurfaceMode::Bitmap
-    } else {
+    if job.operation == RenderOperation::Render {
         browser_surface::BrowserSurfaceMode::WebCodecs
-    }
-}
-fn shared_texture_unavailable(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        let message = cause.to_string();
-        let message = message
-            .strip_prefix("electron.host_error: ")
-            .unwrap_or(&message);
-        message.starts_with("capture.shared_texture_unavailable:")
-            || message.starts_with("Electron webcodecs paint timed out")
-    })
-}
-
-fn gpu_compositor_unavailable(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        let message = cause.to_string();
-        let message = message
-            .strip_prefix("electron.host_error: ")
-            .unwrap_or(&message);
-        message.starts_with("capture.gpu_compositor_unavailable:")
-    })
-}
-
-fn next_surface_after_failure(
-    mode: browser_surface::BrowserSurfaceMode,
-    frames_encoded: u32,
-    error: &anyhow::Error,
-) -> Option<browser_surface::BrowserSurfaceMode> {
-    use browser_surface::BrowserSurfaceMode;
-    if frames_encoded != 0 {
-        return None;
-    }
-    match mode {
-        BrowserSurfaceMode::WebCodecs if shared_texture_unavailable(error) => {
-            Some(BrowserSurfaceMode::Bitmap)
-        }
-        BrowserSurfaceMode::Bitmap if gpu_compositor_unavailable(error) => {
-            Some(BrowserSurfaceMode::CpuBitmap)
-        }
-        _ => None,
+    } else {
+        browser_surface::BrowserSurfaceMode::Software
     }
 }
 
@@ -358,18 +282,8 @@ async fn run_coordinator_render_with_mode(
             effective_concurrency: plan.concurrency,
             probe_tier: "media_metadata".into(),
             segment_count: plan.ranges.len(),
-            capture_mode: if mode.is_bitmap() {
-                "electron_bitmap"
-            } else {
-                "electron_shared_texture"
-            }
-            .into(),
-            conversion_mode: match requested_backend {
-                "webcodecs" => "chromium_webcodecs",
-                "native" => "mediabunny_native",
-                _ => "media_auto",
-            }
-            .into(),
+            capture_mode: "electron_shared_texture".into(),
+            conversion_mode: "chromium_webcodecs".into(),
             encoder_mode: requested_backend.into(),
             planned_encoder_backend: format!(
                 "electron_{requested_backend}_{}",
@@ -526,11 +440,7 @@ async fn run_worker(mut job: RenderJob) -> anyhow::Result<()> {
             job.event_log_path.as_deref(),
         ));
         resources.check_cancellation()?;
-        let mode = if std::env::var("VELOCAST_ELECTRON_CPU_BITMAP").as_deref() == Ok("1") {
-            browser_surface::BrowserSurfaceMode::CpuBitmap
-        } else {
-            initial_surface_for_job(&job)
-        };
+        let mode = initial_surface_for_job(&job);
         let renderer = NativeBrowser::new(mode)?;
         let load_started = Instant::now();
         renderer.load(&job).await?;
@@ -604,63 +514,17 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
     #[test]
-    fn bitmap_retry_only_accepts_capture_failures() {
-        assert!(shared_texture_unavailable(&anyhow::anyhow!(
-            "electron.host_error: capture.shared_texture_unavailable: import failed"
-        )));
-        assert!(!shared_texture_unavailable(&anyhow::anyhow!(
-            "electron.host_error: webcodecs.unsupported_config"
-        )));
-        assert!(!shared_texture_unavailable(&anyhow::anyhow!("electron.host_error: composition failed: capture.shared_texture_unavailable: authored text")));
-    }
-    #[test]
-    fn compositor_retry_is_capability_based_and_bounded() {
-        use browser_surface::BrowserSurfaceMode::{Bitmap, CpuBitmap, WebCodecs};
-        let unavailable = anyhow::anyhow!(
-            "electron.host_error: capture.gpu_compositor_unavailable: disabled_software"
-        );
-        let shared_texture = anyhow::anyhow!(
-            "electron.host_error: capture.shared_texture_unavailable: import failed"
-        );
-        let paint_timeout = anyhow::anyhow!("Electron bitmap paint timed out");
-        assert_eq!(
-            next_surface_after_failure(WebCodecs, 0, &shared_texture),
-            Some(Bitmap)
-        );
-        assert_eq!(
-            next_surface_after_failure(Bitmap, 0, &unavailable),
-            Some(CpuBitmap)
-        );
-        assert_eq!(next_surface_after_failure(WebCodecs, 0, &unavailable), None);
-        assert_eq!(next_surface_after_failure(Bitmap, 0, &paint_timeout), None);
-        assert_eq!(next_surface_after_failure(Bitmap, 1, &unavailable), None);
-        assert_eq!(next_surface_after_failure(CpuBitmap, 0, &unavailable), None);
-    }
-    #[test]
-    fn automatic_common_codecs_start_with_shared_texture_capture() {
-        use browser_surface::BrowserSurfaceMode::{Bitmap, Software, WebCodecs};
+    fn video_requires_shared_textures_and_diagnostics_use_software() {
+        use browser_surface::BrowserSurfaceMode::{Software, WebCodecs};
         let mut job: RenderJob = serde_json::from_value(serde_json::json!({
             "mode": "composition", "serve_url": "http://localhost",
             "output": "movie.mp4", "codec": "h264"
         }))
         .unwrap();
-        for backend in [None, Some("auto"), Some("webcodecs")] {
-            job.media_backend = backend.map(str::to_owned);
-            for codec in ["h264", "hevc", "h265", "av1", "vp8", "vp9"] {
-                job.codec = codec.into();
-                assert_eq!(initial_surface(&job, false), WebCodecs);
-                assert_eq!(initial_surface(&job, true), Bitmap);
-            }
-        }
-        job.media_backend = Some("native".into());
-        assert_eq!(initial_surface(&job, false), Bitmap);
-        job.media_backend = Some("auto".into());
-        job.codec = "ProRes".into();
-        assert_eq!(initial_surface(&job, false), Bitmap);
+        assert_eq!(initial_surface_for_job(&job), WebCodecs);
         for operation in [RenderOperation::Inspect, RenderOperation::Frame] {
             job.operation = operation;
-            assert_eq!(initial_surface(&job, false), Software);
-            assert_eq!(initial_surface(&job, true), Software);
+            assert_eq!(initial_surface_for_job(&job), Software);
         }
     }
     #[test]

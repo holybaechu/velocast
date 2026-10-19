@@ -1,100 +1,93 @@
-# Media backends and output formats
+# Shared-texture video and media formats
 
-Electron renders compositions. Rust owns exact frame scheduling, cancellation,
-validation, and transactional publication. Mediabunny owns containers and
-sample-based encoding. `mediaBackend: "auto"` prefers Chromium WebCodecs and
-shared-texture capture. Unsupported browser encoder configurations and ProRes
-use the stock Node native codec worker. Explicit `"native"` and `"webcodecs"`
-choices remain binding. Hardware acceleration is a preference, not a guarantee.
-On Windows x64, native VP9 is unavailable in the pinned binding; automatic VP9
-selection therefore requires WebCodecs support.
+Electron renders compositions into shared GPU textures. A dedicated trusted
+renderer imports each texture as a `VideoFrame`, wraps it in a Mediabunny
+`VideoSample`, and submits it to `VideoSampleSource`. Mediabunny manages WebCodecs
+encoding, backpressure, and muxing. Rust owns frame scheduling, cancellation,
+validation, and transactional publication.
 
-## Format selection
+Video requires working shared-texture capture and a browser encoder for the
+requested configuration. Missing support fails explicitly and preserves previous
+output. There is no bitmap capture or native CPU video encoding fallback.
+Diagnostic `frame` PNG exports remain available through software screenshots.
+Native audio encoding and input decoding remain available in separate utility
+renderers; their codec registrations never enter the GPU video renderer.
 
-The output extension determines the container. An explicit `--container` must
-match it. Video output supports `.mp4`, `.mov`, `.webm`, and `.mkv`.
+## Output formats
+
+The output extension selects `.mp4`, `.mov`, `.webm`, or `.mkv`. An explicit
+`--container` must match it. Defaults are VP9 for WebM and H.264 otherwise.
 
 ```sh
 velocast render scene --output render.mp4 --codec h264 --audio-codec aac
 velocast render scene --output render.webm --codec vp9 --audio-codec opus
-velocast render scene --output edit.mov --codec prores --video-profile hq --audio-codec pcm-s16
+velocast render scene --output edit.mov --codec h264 --audio-codec pcm-s16
 velocast render scene --output archive.mkv --codec hevc --audio-codec flac
-velocast render scene --output chromium.mp4 --media-backend webcodecs --codec h264
 ```
 
-Corresponding `renderer` configuration fields are `container`, `codec`,
-`audioCodec`, `videoProfile`, and `mediaBackend`. Explicit choices are binding.
-Unsupported combinations fail and preserve existing output.
+| Setting       | Values                                                                          |
+| ------------- | ------------------------------------------------------------------------------- |
+| Video codec   | `h264`, `hevc`/`h265`, `av1`, `vp8`, `vp9`                                      |
+| Audio codec   | `auto`, `aac`, `opus`, `mp3`, `flac`, `vorbis`, `pcm-s16`, `pcm-s24`, `pcm-f32` |
+| Media backend | `auto`, `webcodecs` (both require WebCodecs)                                    |
+| Video profile | `auto`                                                                          |
+| Pixel format  | `yuv420p`, `nv12` (opaque 8-bit SDR 4:2:0)                                      |
 
-| Setting        | Values                                                                          |
-| -------------- | ------------------------------------------------------------------------------- |
-| Video codec    | `h264`, `hevc`/`h265`, `av1`, `vp8`, `vp9`, `prores`                            |
-| Audio codec    | `auto`, `aac`, `opus`, `mp3`, `flac`, `vorbis`, `pcm-s16`, `pcm-s24`, `pcm-f32` |
-| ProRes profile | `standard`, `hq`                                                                |
-| Media backend  | `auto`, `native`, `webcodecs`                                                   |
+Codec availability depends on Chromium, the operating system, and the driver.
+WebM permits VP8/VP9/AV1 with Opus/Vorbis; other combinations must also be
+supported by the encoder and muxer. Audio defaults to AAC for MP4/MOV and Opus
+for WebM/MKV. Options do not add audio to a silent composition.
 
-WebM supports VP8, VP9, or AV1 video with Opus or Vorbis audio. Other combinations
-must also be supported by the selected muxer and encoder. Without an explicit
-video codec, WebM defaults to VP9 and other containers default to H.264.
-Automatic audio selects AAC for MP4/MOV and Opus for WebM/MKV. Audio options
-control authored or supplied audio; they do not add a track to silent compositions.
+`--acceleration auto` prefers hardware encoding; `off` prefers a browser software
+encoder. Both retain shared-texture transport. `required` is rejected because
+WebCodecs preferences cannot establish a hardware-only guarantee. The pipeline
+avoids application-level raw pixel readback; Chromium or the selected encoder
+may perform internal copies. Shared textures do not guarantee hardware encoding.
 
-Complete renders can use segments in the selected container. Public half-open
-ranges retain the reference worker and rebase timestamps to zero. Source
-adapters that produce their own complete video retain their MP4 contract and
-reject unsupported options explicitly.
+## Submission and lifetime
 
-## Backend behavior
+Frame acknowledgments report submitted frames and the number of packets emitted
+so far. Mediabunny may buffer or reorder packets; Velocast validates unique frame
+timestamps, durations, keyframes, and bounded packet sizes. It drains the encoder
+once at finalization and checks the complete frame count before publication.
 
-The native backend uses software codecs and compositor bitmap capture, keeping
-GPU composition available while passing CPU pixels to a separate stock Node
-encoder process. The CLI reuses its Node runtime; direct renderer integrations
-must set `VELOCAST_NODE_BINARY` to an absolute Node executable. Telemetry records
-the actual backend and readback. Native hardware interop is outside this route.
+The source `VideoFrame`, timing wrapper, `VideoSample`, and imported texture are
+closed after submission/backpressure completes. Electron's
+`allReferencesReleased` callback releases the original compositor texture only
+when downstream references are gone. Up to 32 texture leases and 128 pending
+packet identities are allowed; stalled consumers fail within bounded deadlines.
+Finalization drains the encoder before awaiting its final texture releases.
 
-With WebCodecs, `auto` acceleration requests hardware preference and `off`
-requests software preference. Chromium selects the actual implementation.
-`required` is rejected because Velocast does not establish a hardware-only
-guarantee. Shared-texture failure before encoding triggers bitmap capture retry.
+Frame preparation still awaits authored work, fonts, images, and compositor
+observations. This does not freeze arbitrary page side effects or make encoded
+bytes reproducible across different encoders or machines. Complete output can
+use segments; half-open ranges retain source frame numbers and rebase output PTS
+to zero. WebM/Matroska timestamps use millisecond ticks, with up to half a
+millisecond of rounding.
 
-Frame acknowledgments represent bounded submission. Native encoders may buffer
-packets; finalization drains them and verifies counts, dimensions, timestamps,
-codec and container before publication. Authored pages remain sandboxed without
-Node or access to trusted media IPC.
+## Migration and validation
 
-Input container recognition and codec decoding are separate capabilities.
-Native media operations extend decoding through Mediabunny's codec registry.
-Unsupported sources fail explicitly. The sample-based audio mixer continues
-to support mono/stereo; codec availability does not enable surround mixing.
+Rebuild the CLI, renderer, and runtime together for Electron host protocol **4**.
+Remove `mediaBackend: "native"`, ProRes output, and ProRes profile/pixel-format
+settings from existing configurations. Choose a supported WebCodecs video codec.
+Bitmap/CpuBitmap modes and their force/fallback environment switches are removed.
+ProRes input decoding and native audio remain supported. Runtime packages still
+include Mediabunny's server dependencies for those utilities; no standalone
+FFmpeg executable is required.
 
-## Scope and migration
+Capture requires even dimensions up to 4096 per side and integer 1–120 fps.
+Alpha/HDR output, surround mixing, and native video output are outside this path.
+Source adapters producing their own complete videos retain their separate
+output contract.
 
-Capture is opaque SDR, with even dimensions up to 4096 per side and integer
-frame rates from 1 to 120 fps. Delivery codecs use 8-bit 4:2:0. ProRes encodes
-10-bit 4:2:2 from an 8-bit SDR capture; it does not restore HDR or lost precision.
-Alpha/HDR output, surround audio, DNxHR, FFV1, and standalone audio export are
-outside this change.
-
-Rebuild the renderer and runtime together: Electron host protocol **3** is
-required. Runtime preparation includes the production dependency closure of
-`@mediabunny/server`, including native bindings. NodeAV package hooks that
-download the separate FFmpeg CLI remain disabled. Use
-`--media-backend webcodecs` to retain the previous video encoder route.
-
-WebM and Matroska timestamps use millisecond ticks in the current muxer. Frame
-order is preserved; timestamps may differ from the source clock by up to half
-a millisecond. Frame extraction uses the encoded presentation timestamps.
-
-The media acceptance gate checks six codec/container/audio combinations,
-decoded frame identity, audio signal, ranges, segment assembly, and output
-preservation after an invalid request:
+Run these gates with output directories beneath the OS temporary directory:
 
 ```sh
+node scripts/verify-electron-portable.mjs --renderer ABSOLUTE_RENDERER --output NEW_TEMP_DIRECTORY
+node scripts/verify-shared-texture-capture.mjs --renderer ABSOLUTE_RENDERER --output NEW_TEMP_DIRECTORY --frames 24 --repeats 3 --mode both --all-frames true
 node scripts/verify-media-formats.mjs --renderer ABSOLUTE_RENDERER --output NEW_TEMP_DIRECTORY
 ```
 
-The existing `verify-electron-portable.mjs` gate explicitly tests WebCodecs,
-including bitmap retry and cancellation. Run both on each supported operating
-system. Windows results do not establish macOS/Linux behavior. Native binary
-publication still requires signing, dependency/license audit, and external
-consumer acceptance.
+They check decoded frame identity, timestamps, audio, ranges, segments,
+cancellation, and preservation of previous output when capture or encoding is
+unavailable. Platform support requires validation on that operating system.

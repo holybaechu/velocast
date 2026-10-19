@@ -7,5 +7,6 @@ export function defaultRendererPixelFormat(
   codec?: string,
 ): string {
   void acceleration;
-  return codec === "prores" ? "yuv422p10le" : "yuv420p";
+  void codec;
+  return "yuv420p";
 }

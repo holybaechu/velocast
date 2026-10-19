@@ -3,13 +3,9 @@
 const { BrowserWindow, ipcMain, sharedTexture } = require("electron/main");
 const fs = require("node:fs");
 const path = require("node:path");
-const { mb, absolute, outputFile, probe } = require("./media-io.cjs");
+const { absolute } = require("./media-io.cjs");
 const { mediaSettings } = require("./media-settings.cjs");
-const {
-  encoderConfig,
-  frameTiming,
-  MAX_PACKET_BYTES,
-} = require("./webcodecs-codec.cjs");
+const { frameTiming } = require("./webcodecs-codec.cjs");
 const TIMEOUT_MS = 300_000;
 
 class WebCodecsHost {
@@ -27,6 +23,8 @@ class WebCodecsHost {
     this.frames = 0;
     this.bytes = 0;
     this.finished = false;
+    this.leases = new Set();
+    this.peakTextureLeases = 0;
     this.onResult = (event, message) => {
       if (
         event.sender !== this.window?.webContents ||
@@ -63,6 +61,9 @@ class WebCodecsHost {
       show: false,
       webPreferences: {
         preload: path.join(__dirname, "webcodecs-preload.cjs"),
+        additionalArguments: this.utilityOnly
+          ? [`--velocast-${this.utilityOnly}-utility`]
+          : [],
         // sharedTexture is unavailable in a sandboxed preload. Only this fixed,
         // empty local page has a full preload; it never loads authored content.
         sandbox: false,
@@ -111,7 +112,7 @@ class WebCodecsHost {
     }
   }
 
-  async open(settings, audio, { bitmap = false } = {}) {
+  async open(settings, audio) {
     if (this.settings) throw new Error("webcodecs.already_open");
     const selected = mediaSettings(settings);
     this.settings = settings;
@@ -120,28 +121,12 @@ class WebCodecsHost {
     this.videoFile = audio
       ? path.join(this.directory, `encoded-video.${selected.container}`)
       : this.file;
-    if (selected.backend === "native" && bitmap) {
-      const { NativeVideoClient } = require("./native-video-client.cjs");
-      this.nativeSession = new NativeVideoClient();
-      this.config = await this.nativeSession.open({
-        ...settings,
-        outputPath: this.videoFile,
-      });
-      return this.config;
-    }
     await this.initialize();
     const config = await this.command("open", {
       ...settings,
       outputPath: this.videoFile,
     });
     this.config = config;
-    if (config.backend === "native") return config;
-    this.sink = outputFile(this.videoFile, selected.container);
-    this.source = new mb.EncodedVideoPacketSource(
-      config.logicalCodec === "h264" ? "avc" : config.logicalCodec,
-    );
-    this.sink.output.addVideoTrack(this.source, { frameRate: settings.fps });
-    await this.sink.output.start();
     return config;
   }
 
@@ -165,20 +150,31 @@ class WebCodecsHost {
     try {
       if (!this.config || this.finished || index !== this.frames)
         throw new Error("webcodecs.invalid_sequence");
+      // Do not await every release: encoders may retain frames until later
+      // submissions or finalization. Backpressure bounds live GPU leases.
+      if (this.leases.size >= 32)
+        await this.deadline(Promise.race(this.leases));
       const id = ++this.sequence;
       let releaseDone;
       const released = new Promise((resolve) => {
         releaseDone = resolve;
       });
+      this.leases.add(released);
+      this.peakTextureLeases = Math.max(
+        this.peakTextureLeases,
+        this.leases.size,
+      );
       try {
         imported = sharedTexture.importSharedTexture({
           textureInfo: texture.textureInfo,
           allReferencesReleased: () => {
             texture.release();
+            this.leases.delete(released);
             releaseDone();
           },
         });
       } catch (error) {
+        this.leases.delete(released);
         throw new Error(`capture.shared_texture_unavailable: ${error.message}`);
       }
       const packet = this.wait(id);
@@ -202,55 +198,15 @@ class WebCodecsHost {
         .finally(() => imported.release());
       const [result] = await Promise.all([packet, transferred]);
       const timing = frameTiming(index, this.settings.fps);
-      if (this.config.backend === "native") {
-        this.validateAcknowledgement(result, index, timing);
-        const releaseWait = this.wait(++this.sequence);
-        const releasePending = this.pending;
-        released.then(() => releasePending.resolve());
-        await releaseWait;
-        this.frames++;
-        this.colorSpace = result.colorSpace;
-        return result;
-      }
-      if (
-        result.index !== index ||
-        result.timestamp !== timing.timestamp ||
-        result.duration !== timing.duration ||
-        !(result.data instanceof Uint8Array) ||
-        result.data.byteLength < 1 ||
-        result.data.byteLength > MAX_PACKET_BYTES
-      ) {
-        throw new Error("webcodecs.invalid_packet");
-      }
-      // Only compressed bytes cross into Node. AVCC/HEVC/AV1 decoder metadata,
-      // including the encoder's actual color space, travels into the MP4 track.
-      await this.source.add(
-        new mb.EncodedPacket(
-          result.data,
-          result.type,
-          result.timestamp / 1e6,
-          result.duration / 1e6,
-        ),
-        result.metadata,
-      );
-      this.bytes += result.data.byteLength;
-      const releaseWait = this.wait(++this.sequence);
-      const releasePending = this.pending;
-      released.then(() => releasePending.resolve());
-      await releaseWait;
+      this.validateAcknowledgement(result, index, timing);
       this.frames++;
       this.colorSpace = result.colorSpace;
-      return {
-        index,
-        ...timing,
-        bytes: result.data.byteLength,
-        frames: this.frames,
-        colorSpace: this.colorSpace,
-      };
+      return result;
     } catch (error) {
+      this.pending?.reject(error);
       if (!imported) texture.release();
       // Once imported, only allReferencesReleased may release the OSR source.
-      // Native request failure terminates the contained host and its GPU process.
+      // Request failure terminates the contained host and its GPU process.
       throw error;
     }
   }
@@ -258,20 +214,14 @@ class WebCodecsHost {
   async finish() {
     if (!this.config || this.finished)
       throw new Error("webcodecs.invalid_finish");
-    const result = this.nativeSession
-      ? await this.nativeSession.finish()
-      : await this.command("finish");
+    const result = await this.command("finish");
+    // Finalization must happen before waiting for the encoder's last leases.
+    await this.deadline(Promise.all(this.leases));
     if (result.frames !== this.frames || !this.frames)
       throw new Error("webcodecs.frame_count_mismatch");
     this.colorSpace = result.colorSpace ?? this.colorSpace;
-    if (this.sink) {
-      this.source.close();
-      await this.sink.output.finalize();
-      this.sink.close();
-    }
-    if (this.audio && !this.window) await this.initialize();
     const metadata = this.audio
-      ? await this.command("media-operation", {
+      ? await this.mediaOperation({
           kind: "mux-audio-plan",
           videoPath: this.videoFile,
           outputPath: this.file,
@@ -279,14 +229,9 @@ class WebCodecsHost {
           audioCodec: this.settings.audioCodec,
           container: this.config.container,
           fps: this.settings.fps,
-          // Video backend selection does not restrict audio codec availability.
-          // Use the same native audio route as multi-worker assembly, including
-          // hosts whose Chromium build cannot encode AAC.
           mediaBackend: "native",
         })
-      : this.config.backend === "native"
-        ? result
-        : await probe({ path: this.file });
+      : result;
     if (
       metadata.video?.frameCount !== this.frames ||
       metadata.video.width !== this.settings.width ||
@@ -301,61 +246,43 @@ class WebCodecsHost {
       colorSpace: this.colorSpace,
       backend: this.config.backend,
       pixelFormat: this.config.pixelFormat,
+      peakTextureLeases: this.peakTextureLeases,
+      outstandingTextureLeases: this.leases.size,
     };
   }
 
-  async encodeBitmap(data, index) {
-    if (
-      !this.config ||
-      this.finished ||
-      index !== this.frames ||
-      data.byteLength !== this.settings.width * this.settings.height * 4
-    )
-      throw new Error("webcodecs.invalid_bitmap");
-    const settings = {
-      data,
-      index,
-      width: this.settings.width,
-      height: this.settings.height,
-    };
-    const result = this.nativeSession
-      ? await this.nativeSession.encodeBitmap(settings)
-      : await this.command("bitmap", settings);
-    const timing = frameTiming(index, this.settings.fps);
-    if (this.config.backend === "native") {
-      this.validateAcknowledgement(result, index, timing);
-      this.frames++;
-      this.colorSpace = result.colorSpace;
-      return result;
+  deadline(work) {
+    let timer;
+    return Promise.race([
+      work,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("webcodecs.texture_release_timeout")),
+          10000,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+  }
+
+  async mediaOperation(operation) {
+    // Native decoders/audio encoders register global Mediabunny extensions.
+    // Isolate them from the GPU video renderer's codec registry.
+    if (operation.kind === "encode-frames") {
+      const encoder = new WebCodecsHost(this.directory);
+      encoder.utilityOnly = "frame";
+      try {
+        await encoder.initialize();
+        return await encoder.command("media-operation", operation);
+      } finally {
+        await encoder.dispose();
+      }
     }
-    if (
-      result.index !== index ||
-      result.timestamp !== timing.timestamp ||
-      result.duration !== timing.duration ||
-      !(result.data instanceof Uint8Array) ||
-      result.data.byteLength < 1 ||
-      result.data.byteLength > MAX_PACKET_BYTES
-    )
-      throw new Error("webcodecs.invalid_packet");
-    await this.source.add(
-      new mb.EncodedPacket(
-        result.data,
-        result.type,
-        result.timestamp / 1e6,
-        result.duration / 1e6,
-      ),
-      result.metadata,
-    );
-    this.frames++;
-    this.bytes += result.data.byteLength;
-    this.colorSpace = result.colorSpace;
-    return {
-      index,
-      ...timing,
-      frames: this.frames,
-      bytes: result.data.byteLength,
-      colorSpace: this.colorSpace,
-    };
+    if (!this.utility) {
+      this.utility = new WebCodecsHost(this.directory);
+      this.utility.utilityOnly = "media";
+      await this.utility.initialize();
+    }
+    return this.utility.command("media-operation", operation);
   }
 
   validateAcknowledgement(result, index, timing) {
@@ -363,18 +290,21 @@ class WebCodecsHost {
       result.index !== index ||
       result.timestamp !== timing.timestamp ||
       result.duration !== timing.duration ||
-      result.frames !== index + 1
+      result.frames !== index + 1 ||
+      !Number.isSafeInteger(result.encodedFrames) ||
+      result.encodedFrames < (this.encodedFrames ?? 0) ||
+      result.encodedFrames > index + 1
     )
       throw new Error("media.invalid_acknowledgement");
+    this.encodedFrames = result.encodedFrames;
   }
 
   async dispose() {
     this.pending?.reject(new Error("webcodecs.closed"));
     ipcMain.off("velocast:webcodecs:result", this.onResult);
     try {
-      await this.nativeSession?.cancel();
+      await this.utility?.dispose();
     } finally {
-      this.sink?.close();
       if (this.window && !this.window.isDestroyed()) this.window.destroy();
       this.window = null;
       if (!this.finished && this.config) {

@@ -53,7 +53,6 @@ function fixture({
         child.emit("close", killerCode);
       }, 20);
     } else {
-      assert.equal(options.env.VELOCAST_NODE_BINARY, process.execPath);
       main = child;
       child.stdin = new EventEmitter();
       child.stderr = new EventEmitter();
@@ -191,7 +190,7 @@ function fixture({
   };
 }
 
-test("stock Node ignores a stale inherited worker executable", async () => {
+test("utilities ignore a stale inherited worker executable", async () => {
   const f = fixture({ cooperative: true });
   try {
     const result = await f.client.runMediaOperation(
@@ -207,35 +206,18 @@ test("stock Node ignores a stale inherited worker executable", async () => {
   }
 });
 
-test("Electron callers must supply a stock Node executable", async () => {
-  const f = fixture({ electron: true });
+test("Electron utility callers no longer require a stock Node video worker", async () => {
+  const f = fixture({ cooperative: true, electron: true });
   try {
-    await assert.rejects(
-      f.client.createMediaSession({ electronBinary: "fake-electron" }),
-      /media.node_binary_required/,
+    const result = await f.client.runMediaOperation(
+      { kind: "probe" },
+      { electronBinary: "fake-electron" },
     );
+    assert.equal(result.decoded, true);
   } finally {
     await f.cleanup();
   }
 });
-
-for (const [source, option] of [
-  ["option", { nodeBinary: process.execPath }],
-  ["environment", { env: { VELOCAST_NODE_BINARY: process.execPath } }],
-]) {
-  test(`Electron caller forwards a stock Node executable from ${source}`, async () => {
-    const f = fixture({ cooperative: true, electron: true });
-    try {
-      const result = await f.client.runMediaOperation(
-        { kind: "probe" },
-        { electronBinary: "fake-electron", ...option },
-      );
-      assert.equal(result.decoded, true);
-    } finally {
-      await f.cleanup();
-    }
-  });
-}
 
 test("cleanup awaits the delayed tree killer and asynchronously retries transient profile locks", async () => {
   const f = fixture({ transientLocks: 2 });

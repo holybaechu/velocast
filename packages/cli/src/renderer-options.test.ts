@@ -254,10 +254,10 @@ describe("resolveRendererCodec", () => {
   });
 
   it("accepts only the advertised logical video codecs", () => {
-    for (const codec of ["h264", "hevc", "av1", "vp8", "vp9", "prores"])
+    for (const codec of ["h264", "hevc", "av1", "vp8", "vp9"])
       expect(parseCliCodec(codec)).toBe(codec);
     expect(() => parseCliCodec("mjpeg")).toThrow(
-      "expected h264, hevc, av1, vp8, vp9, or prores",
+      "expected h264, hevc, av1, vp8, or vp9",
     );
   });
 });
@@ -269,15 +269,13 @@ describe("media format options", () => {
         container: "mov",
         audioCodec: "aac",
         mediaBackend: "webcodecs",
-        videoProfile: "prores_ks",
+        videoProfile: "auto",
       },
     };
     expect(resolveRendererContainer(config, "webm")).toBe("webm");
     expect(resolveRendererAudioCodec(config, "flac")).toBe("flac");
-    expect(resolveRendererMediaBackend(config, "native")).toBe("native");
-    expect(resolveRendererVideoProfile(config, "prores_4444")).toBe(
-      "prores_4444",
-    );
+    expect(resolveRendererMediaBackend(config, "webcodecs")).toBe("webcodecs");
+    expect(resolveRendererVideoProfile(config, "auto")).toBe("auto");
   });
 
   it("uses configured values and leaves runtime-inferred defaults omitted", () => {
@@ -288,14 +286,18 @@ describe("media format options", () => {
       resolveRendererAudioCodec({ renderer: { audioCodec: "pcm-f32" } }),
     ).toBe("pcm-f32");
     expect(
-      resolveRendererMediaBackend({ renderer: { mediaBackend: "native" } }),
-    ).toBe("native");
+      resolveRendererMediaBackend({ renderer: { mediaBackend: "webcodecs" } }),
+    ).toBe("webcodecs");
     expect(resolveRendererContainer({})).toBeUndefined();
     expect(resolveRendererAudioCodec({})).toBeUndefined();
     expect(resolveRendererMediaBackend({})).toBeUndefined();
   });
 
   it("rejects invalid enumerated options and blank video profiles", () => {
+    expect(() => resolveRendererMediaBackend({}, "native")).toThrow(
+      "--media-backend",
+    );
+    expect(() => parseCliCodec("prores")).toThrow("expected h264");
     expect(() => resolveRendererContainer({}, "avi")).toThrow(
       "--container must be",
     );
@@ -389,9 +391,9 @@ describe("resolveRendererPixelFormat", () => {
     );
   });
 
-  it("uses a 10-bit 4:2:2 default for ProRes", () => {
-    expect(resolveRendererPixelFormat({}, undefined, "off", "prores")).toBe(
-      "yuv422p10le",
+  it("uses 8-bit 4:2:0 for browser video", () => {
+    expect(resolveRendererPixelFormat({}, undefined, "off", "hevc")).toBe(
+      "yuv420p",
     );
   });
 

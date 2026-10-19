@@ -38,7 +38,6 @@ app.emit("gpu-info-update");
     const env = {
       ...process.env,
       VELOCAST_ELECTRON_SURFACE_MODE: "webcodecs",
-      VELOCAST_ELECTRON_CPU_BITMAP: "0",
       VELOCAST_ELECTRON_FRAME_DIRECTORY: directory,
       VELOCAST_ELECTRON_PROFILE_DIRECTORY: profile,
     };

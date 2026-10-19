@@ -12,18 +12,9 @@ const {
   probe,
   audioDuration,
 } = require("./media-io.cjs");
-const {
-  CodecSession,
-  isUnsupportedWebCodecsError,
-} = require("./webcodecs-codec.cjs");
 const { MediaSession } = require("./media-session.cjs");
 const { registerNativeMedia } = require("./native-media.cjs");
-const {
-  containerFor,
-  mediaSettings,
-  resolveMediaSettings,
-  AUDIO_CODECS,
-} = require("./media-settings.cjs");
+const { containerFor, AUDIO_CODECS } = require("./media-settings.cjs");
 const { toneMapFrame } = require("./hdr-color.cjs");
 const { StreamingAudioResampler } = require("./audio-resampler.cjs");
 const { selectAudioEncoder } = require("./audio-codec.cjs");
@@ -721,89 +712,18 @@ async function mux(op) {
     audioInput?.dispose();
   }
 }
+// Explicit image-sequence utility, isolated from native decoder registrations.
+// Rendered video never enters this path or converts a shared texture to pixels.
 async function encodeFrames(op) {
   if (!Array.isArray(op.framePaths) || !op.framePaths.length)
     throw new Error("media.no_frames");
-  const requestedAuto = !op.mediaBackend || op.mediaBackend === "auto";
-  const selected = await resolveMediaSettings(op, globalThis.VideoEncoder);
-  op = {
-    ...op,
-    codec: selected.logicalCodec,
-    container: selected.container,
-    mediaBackend: selected.backend,
-  };
-  if (selected.backend === "native") {
-    const session = new MediaSession();
-    await session.open(op);
-    try {
-      for (let index = 0; index < op.framePaths.length; index++) {
-        const bitmap = await createImageBitmap(
-          new Blob([fs.readFileSync(absolute(op.framePaths[index]))]),
-        );
-        try {
-          const timing = op.timestamps
-            ? {
-                timestamp: Math.round(op.timestamps[index] * 1e6),
-                duration: Math.round(
-                  ((op.timestamps[index + 1] ??
-                    op.timestamps[index] + 1 / op.fps) -
-                    op.timestamps[index]) *
-                    1e6,
-                ),
-              }
-            : undefined;
-          await session.encode(
-            {
-              getVideoFrame: () => new VideoFrame(bitmap, { timestamp: 0 }),
-              release() {},
-            },
-            index,
-            timing,
-          );
-        } finally {
-          bitmap.close();
-        }
-      }
-      const result = await session.finish();
-      return selected.backendFallbackReason
-        ? { ...result, backendFallbackReason: selected.backendFallbackReason }
-        : result;
-    } catch (error) {
-      await session.session.cancel();
-      throw error;
-    }
-  }
-  const codec = new CodecSession(
-    globalThis.VideoEncoder,
-    globalThis.VideoFrame,
-  );
-  let config;
+  const session = new MediaSession();
+  await session.open(op);
   try {
-    config = await codec.open(op);
-  } catch (error) {
-    if (!requestedAuto || !isUnsupportedWebCodecsError(error)) throw error;
-    const result = await encodeFrames({ ...op, mediaBackend: "native" });
-    return {
-      ...result,
-      backendFallbackReason: `${error.message}; using native video encoding`,
-    };
-  }
-  let sink;
-  try {
-    sink = outputFile(op.outputPath, op.container);
-    const source = new mb.EncodedVideoPacketSource(
-      config.logicalCodec === "h264" ? "avc" : config.logicalCodec,
-    );
-    sink.output.addVideoTrack(source, {
-      ...(op.timestamps ? {} : { frameRate: op.fps }),
-      rotation: op.rotation ?? 0,
-    });
-    await sink.output.start();
     for (let index = 0; index < op.framePaths.length; index++) {
       const bitmap = await createImageBitmap(
         new Blob([fs.readFileSync(absolute(op.framePaths[index]))]),
       );
-      let result;
       const timing = op.timestamps
         ? {
             timestamp: Math.round(op.timestamps[index] * 1e6),
@@ -815,7 +735,7 @@ async function encodeFrames(op) {
           }
         : undefined;
       try {
-        result = await codec.encode(
+        await session.encode(
           {
             getVideoFrame: () => new VideoFrame(bitmap, { timestamp: 0 }),
             release() {},
@@ -826,35 +746,18 @@ async function encodeFrames(op) {
       } finally {
         bitmap.close();
       }
-      await source.add(
-        new mb.EncodedPacket(
-          result.data,
-          result.type,
-          result.timestamp / 1e6,
-          result.duration / 1e6,
-        ),
-        result.metadata,
-      );
     }
-    await codec.finish();
-    source.close();
-    await sink.output.finalize();
-    sink.close();
-    return await probe({ path: op.outputPath });
+    return await session.finish();
   } catch (error) {
-    if (codec.encoder && codec.encoder.state !== "closed")
-      codec.encoder.close();
-    await sink?.cancel();
+    await session.cancel();
     throw error;
   }
 }
+
 async function runMediaOperation(op) {
   if (!op || typeof op.kind !== "string")
     throw new Error("media.invalid_operation");
-  if (
-    (op.kind === "encode-frames" && Boolean(op.audioPath)) ||
-    (op.kind !== "encode-frames" && op.mediaBackend !== "webcodecs")
-  )
+  if (op.kind !== "encode-frames" && op.mediaBackend !== "webcodecs")
     registerNativeMedia();
   if (op.kind === "probe") return probe(op);
   if (op.kind === "frame") return frame(op);
@@ -965,6 +868,7 @@ async function runMediaOperation(op) {
         outputPath: videoPath,
         audioPath: undefined,
       });
+      registerNativeMedia();
       return await mux({ ...op, videoPath });
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });

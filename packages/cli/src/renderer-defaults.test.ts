@@ -13,6 +13,6 @@ describe("renderer defaults", () => {
     expect(defaultRendererPixelFormat("required")).toBe("yuv420p");
     expect(defaultRendererPixelFormat("auto")).toBe("yuv420p");
     expect(defaultRendererPixelFormat("off")).toBe("yuv420p");
-    expect(defaultRendererPixelFormat("off", "prores")).toBe("yuv422p10le");
+    expect(defaultRendererPixelFormat("off", "prores")).toBe("yuv420p");
   });
 });

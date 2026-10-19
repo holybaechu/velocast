@@ -19,9 +19,9 @@ describe("Electron-only capability negotiation", () => {
       outputApiVersion: 1,
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 3,
+      electronHostProtocolVersion: 4,
       videoEncoderBackend: "webcodecs",
-      supportedMediaBackends: ["webcodecs", "native"],
+      supportedMediaBackends: ["webcodecs"],
       mediaRuntime: "mediabunny",
       hardwareAccelerationGuarantee: false,
     };
@@ -41,9 +41,9 @@ describe("Electron-only capability negotiation", () => {
       probe({
         browserHosts: ["cef", "electron"],
         defaultBrowserHost: "cef",
-        electronHostProtocolVersion: 3,
+        electronHostProtocolVersion: 4,
         videoEncoderBackend: "webcodecs",
-        supportedMediaBackends: ["webcodecs", "native"],
+        supportedMediaBackends: ["webcodecs"],
         mediaRuntime: "mediabunny",
         hardwareAccelerationGuarantee: false,
       }).available,
@@ -63,9 +63,9 @@ describe("Electron-only capability negotiation", () => {
           outputApiVersion: 1,
           browserHosts: ["electron"],
           defaultBrowserHost: "electron",
-          electronHostProtocolVersion: 3,
+          electronHostProtocolVersion: 4,
           videoEncoderBackend: "webcodecs",
-          supportedMediaBackends: ["webcodecs", "native"],
+          supportedMediaBackends: ["webcodecs"],
           mediaRuntime: "mediabunny",
           hardwareAccelerationGuarantee: false,
         },
@@ -74,7 +74,7 @@ describe("Electron-only capability negotiation", () => {
     ).toBe(true);
   });
 
-  it.each([0, 1, 2, "3", true, null])(
+  it.each([0, 1, 2, 3, "3", true, null])(
     "rejects unsupported host protocol %s",
     (version) => {
       expect(
@@ -86,21 +86,20 @@ describe("Electron-only capability negotiation", () => {
     },
   );
 
-  it("requires both negotiated media backends while retaining the legacy encoder field", () => {
+  it("requires the strict shared-texture video backend", () => {
     const caps = {
       outputApiVersion: 1,
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 3,
+      electronHostProtocolVersion: 4,
       videoEncoderBackend: "webcodecs",
-      supportedMediaBackends: ["webcodecs"],
+      supportedMediaBackends: ["webcodecs", "native"],
       mediaRuntime: "mediabunny",
       hardwareAccelerationGuarantee: false,
     };
     expect(probe(caps).available).toBe(false);
     expect(
-      probe({ ...caps, supportedMediaBackends: ["webcodecs", "native"] })
-        .available,
+      probe({ ...caps, supportedMediaBackends: ["webcodecs"] }).available,
     ).toBe(true);
   });
 });

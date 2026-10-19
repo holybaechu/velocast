@@ -126,10 +126,10 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
     probeCapabilities: () => ({
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 3,
+      electronHostProtocolVersion: 4,
       videoEncoderBackend: "webcodecs",
       mediaRuntime: "mediabunny",
-      supportedMediaBackends: ["webcodecs", "native"],
+      supportedMediaBackends: ["webcodecs"],
     }),
   };
   const server = join(host, "node_modules", "@mediabunny", "server");

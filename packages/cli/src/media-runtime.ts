@@ -116,7 +116,6 @@ function mediaClient(options: MediaOptions) {
         ...env,
         VELOCAST_ELECTRON_BINARY: runtime.electron,
         VELOCAST_ELECTRON_HOST_SCRIPT: runtime.hostScript,
-        VELOCAST_NODE_BINARY: process.execPath,
       },
     },
   };

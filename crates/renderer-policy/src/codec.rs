@@ -5,7 +5,6 @@ pub enum RequestedVideoCodec {
     Av1,
     Vp8,
     Vp9,
-    ProRes,
 }
 impl RequestedVideoCodec {
     pub fn parse(value: &str) -> anyhow::Result<Self> {
@@ -15,9 +14,8 @@ impl RequestedVideoCodec {
             "av1" => Ok(Self::Av1),
             "vp8" => Ok(Self::Vp8),
             "vp9" => Ok(Self::Vp9),
-            "prores" => Ok(Self::ProRes),
             _ => {
-                anyhow::bail!("encoder.codec_unsupported: use h264, hevc, av1, vp8, vp9, or prores")
+                anyhow::bail!("encoder.codec_unsupported: use h264, hevc, av1, vp8, or vp9")
             }
         }
     }
@@ -28,7 +26,6 @@ impl RequestedVideoCodec {
             Self::Av1 => "av1",
             Self::Vp8 => "vp8",
             Self::Vp9 => "vp9",
-            Self::ProRes => "prores",
         }
     }
 }

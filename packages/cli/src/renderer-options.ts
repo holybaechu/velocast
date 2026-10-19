@@ -172,10 +172,8 @@ function validateRendererCodec(
     );
   }
 
-  if (!["h264", "hevc", "av1", "vp8", "vp9", "prores"].includes(normalized)) {
-    throw new Error(
-      `${errorMessage}; expected h264, hevc, av1, vp8, vp9, or prores`,
-    );
+  if (!["h264", "hevc", "av1", "vp8", "vp9"].includes(normalized)) {
+    throw new Error(`${errorMessage}; expected h264, hevc, av1, vp8, or vp9`);
   }
 
   return normalized as RendererVideoCodec;
@@ -275,9 +273,9 @@ export function resolveRendererMediaBackend(
   return resolveChoice(
     config.renderer?.mediaBackend,
     cliValue,
-    ["auto", "webcodecs", "native"] as const,
-    "--media-backend must be auto, webcodecs, or native",
-    "renderer.mediaBackend must be auto, webcodecs, or native",
+    ["auto", "webcodecs"] as const,
+    "--media-backend must be auto or webcodecs",
+    "renderer.mediaBackend must be auto or webcodecs",
   );
 }
 

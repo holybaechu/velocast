@@ -244,7 +244,7 @@ describe("buildCompositionRenderCommandJob", () => {
           container: "mov",
           audioCodec: "aac",
           mediaBackend: "webcodecs",
-          videoProfile: "prores_ks",
+          videoProfile: "auto",
         },
       },
       "product-hero",
@@ -252,15 +252,15 @@ describe("buildCompositionRenderCommandJob", () => {
       {
         container: "mkv",
         audioCodec: "flac",
-        mediaBackend: "native",
-        videoProfile: "prores_4444",
+        mediaBackend: "webcodecs",
+        videoProfile: "auto",
       },
     );
     expect(job).toMatchObject({
       container: "mkv",
       audio_codec: "flac",
-      media_backend: "native",
-      video_profile: "prores_4444",
+      media_backend: "webcodecs",
+      video_profile: "auto",
     });
     const inferred = buildCompositionRenderCommandJob(
       { serve: { url: "http://127.0.0.1:4545" } },
@@ -268,14 +268,14 @@ describe("buildCompositionRenderCommandJob", () => {
       "renders/hero.webm",
     );
     expect(Object.hasOwn(inferred, "container")).toBe(false);
-    expect(
+    expect(() =>
       buildCompositionRenderCommandJob(
         { serve: { url: "http://127.0.0.1:4545" } },
         "product-hero",
         "renders/hero.mov",
         { codec: "prores" },
-      ).pixel_format,
-    ).toBe("yuv422p10le");
+      ),
+    ).toThrow("expected h264");
     expect(
       buildCompositionRenderCommandJob(
         { serve: { url: "http://127.0.0.1:4545" } },

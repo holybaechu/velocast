@@ -23,13 +23,11 @@ const PAINT_TIMEOUT_MS = 1_800;
 const LEASE_TIMEOUT_MS = 10_000;
 
 const surfaceMode = process.env.VELOCAST_ELECTRON_SURFACE_MODE || "webcodecs";
-if (!["software", "webcodecs", "bitmap"].includes(surfaceMode)) {
+if (!["software", "webcodecs"].includes(surfaceMode)) {
   throw new Error("Invalid Electron surface mode");
 }
 const software = surfaceMode === "software";
-const bitmap = surfaceMode === "bitmap";
-const cpuBitmap = bitmap && process.env.VELOCAST_ELECTRON_CPU_BITMAP === "1";
-const webcodecs = surfaceMode === "webcodecs" || bitmap;
+const webcodecs = surfaceMode === "webcodecs";
 // Electron's capability status is usable only after its first GPU info update.
 let gpuInfoAvailable = false;
 let paintWaiter = null;
@@ -50,7 +48,7 @@ if (process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY !== undefined)
     process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY,
   );
 // This must happen before app.whenReady and before any renderer process exists.
-if (software || cpuBitmap) app.disableHardwareAcceleration();
+if (software) app.disableHardwareAcceleration();
 const softwareFrames = software
   ? new SoftwareFrameLease(process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY)
   : null;
@@ -136,37 +134,9 @@ function browser() {
   return window.webContents;
 }
 
-function onPaint(event, dirtyRect, image) {
+function onPaint(event, dirtyRect) {
   if (software) {
     releaseTexture(event.texture);
-    return;
-  }
-  if (bitmap) {
-    releaseTexture(event.texture);
-    const waiter = paintWaiter;
-    if (!waiter || !image || image.isEmpty()) return;
-    // invalidate() can synchronously replay the cached bitmap. Keep waiting
-    // for an asynchronous capturer callback instead of accepting that replay.
-    if (waiter.asyncPaint && waiter.refreshPending) {
-      waiter.cachedPaints++;
-      return;
-    }
-    const size = image.getSize(1);
-    if (
-      size.width !== waiter.request.expectedWidth ||
-      size.height !== waiter.request.expectedHeight
-    ) {
-      waiter.staleSizePaints++;
-      waiter.lastPaintSize = size;
-      schedulePaintRetry(waiter);
-      return;
-    }
-    paintWaiter = null;
-    clearTimeout(waiter.timer);
-    clearTimeout(waiter.retryTimer);
-    // Direct paint requests only observe the OSR surface. Encoded bitmap
-    // frames use the CDP screenshot path below.
-    waiter.resolve({});
     return;
   }
   debug(
@@ -191,6 +161,7 @@ function onPaint(event, dirtyRect, image) {
     // texture from the old viewport while a resize is settling.
     if (staleSize) {
       waiter.staleSizePaints++;
+      waiter.lastPaintSize = texture.textureInfo?.visibleRect;
       releaseTexture(texture);
     } else {
       waiter.missingGpuPaints++;
@@ -209,7 +180,7 @@ function onPaint(event, dirtyRect, image) {
     );
     metadata.dirtyRect = dirtyRect;
     if (webcodecs && waiter.request.webcodecs) {
-      // This object stays in main; only compressed packets leave the encoder.
+      // Texture handles stay in Electron; only metadata leaves the encoder.
       waiter.resolve({ texture, metadata });
       return;
     }
@@ -227,7 +198,7 @@ function schedulePaintRetry(waiter) {
     waiter.retryTimer = null;
     if (paintWaiter === waiter && window && !window.isDestroyed()) {
       try {
-        refreshPaint(waiter, bitmap && !cpuBitmap);
+        refreshPaint();
       } catch (error) {
         abortPending(error);
       }
@@ -235,32 +206,17 @@ function schedulePaintRetry(waiter) {
   }, 50);
 }
 
-function refreshPaint(waiter, restartCapturer) {
-  waiter.refreshPending = true;
-  try {
-    if (restartCapturer) {
-      browser().stopPainting();
-      browser().startPainting();
-    }
-    browser().invalidate();
-  } finally {
-    waiter.refreshPending = false;
-  }
-}
-
-function needsAsyncBitmapPaint() {
-  // Direct bitmap paint requests need an asynchronous GPU capturer callback.
-  // Explicit CPU compositing has no such callback for unchanged content.
-  return bitmap && !cpuBitmap;
+function refreshPaint() {
+  browser().stopPainting();
+  browser().startPainting();
+  browser().invalidate();
 }
 
 function gpuCompositorFailure() {
-  if (software || cpuBitmap || !gpuInfoAvailable) return null;
+  if (software || !gpuInfoAvailable) return null;
   const status = app.getGPUFeatureStatus().gpu_compositing;
   return status === "disabled_software" || status === "unavailable_software"
-    ? new Error(
-        `${bitmap ? "capture.gpu_compositor_unavailable" : "capture.shared_texture_unavailable"}: ${status}`,
-      )
+    ? new Error(`capture.shared_texture_unavailable: ${status}`)
     : null;
 }
 
@@ -387,17 +343,6 @@ async function waitForPaint(request) {
   const compositorFailure = gpuCompositorFailure();
   if (compositorFailure) throw compositorFailure;
   if (software) return captureSoftware(request);
-  if (bitmap) {
-    // Direct bitmap paint requests observe the compositor after the page's RAF
-    // callbacks. Encoded bitmap frames use CDP instead.
-    await deadline(
-      browser().executeJavaScript(
-        "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))",
-      ),
-      PAINT_TIMEOUT_MS,
-      `Electron ${surfaceMode} compositor fence`,
-    );
-  }
   if (paintWaiter)
     throw new Error("Electron host already has a paint in flight");
   if (softwareFrames?.occupied)
@@ -410,16 +355,15 @@ async function waitForPaint(request) {
       if (paintWaiter?.request !== request) return;
       const missingGpuPaints = paintWaiter.missingGpuPaints;
       const staleSizePaints = paintWaiter.staleSizePaints;
-      const cachedPaints = paintWaiter.cachedPaints;
       const lastPaintSize = paintWaiter.lastPaintSize;
       clearTimeout(paintWaiter.retryTimer);
       paintWaiter = null;
       // A GPU process can become unavailable after this wait starts. Report
-      // confirmed software fallback so the controller can restart the host.
+      // the confirmed capability failure without switching capture providers.
       reject(
         gpuCompositorFailure() ??
           new Error(
-            `Electron ${surfaceMode} paint timed out (${missingGpuPaints} null textures, ${staleSizePaints} old-size textures, ${cachedPaints} cached replays; expected ${request.expectedWidth}x${request.expectedHeight}, last ${lastPaintSize ? `${lastPaintSize.width}x${lastPaintSize.height}` : "none"}, viewport ${width}x${height})`,
+            `Electron ${surfaceMode} paint timed out (${missingGpuPaints} null textures, ${staleSizePaints} old-size textures; expected ${request.expectedWidth}x${request.expectedHeight}, last ${lastPaintSize ? `${lastPaintSize.width}x${lastPaintSize.height}` : "none"}, viewport ${width}x${height})`,
           ),
       );
     }, PAINT_TIMEOUT_MS);
@@ -430,17 +374,14 @@ async function waitForPaint(request) {
       reject,
       missingGpuPaints: 0,
       staleSizePaints: 0,
-      cachedPaints: 0,
       retryTimer: null,
-      refreshPending: true,
-      asyncPaint: needsAsyncBitmapPaint(),
     };
     const waiter = paintWaiter;
     try {
       // Invalidate alone can produce a software paint with no shared texture
       // when the composition is unchanged. Restarting the offscreen capturer
       // requests a fresh GPU texture without changing page pixels or layout.
-      refreshPaint(waiter, !software && !cpuBitmap);
+      refreshPaint();
     } catch (error) {
       paintWaiter = null;
       clearTimeout(timer);
@@ -474,7 +415,7 @@ async function commandLoad(command) {
       frame: false,
       backgroundColor: "#000000",
       webPreferences: {
-        offscreen: { useSharedTexture: !software && !bitmap },
+        offscreen: { useSharedTexture: !software },
         backgroundThrottling: false,
         nodeIntegration: false,
         contextIsolation: true,
@@ -506,7 +447,7 @@ async function commandLoad(command) {
   await deadline(window.loadURL(url), LOAD_TIMEOUT_MS, "Electron page load");
   const loadedCompositorFailure = gpuCompositorFailure();
   if (loadedCompositorFailure) throw loadedCompositorFailure;
-  if (software || bitmap) {
+  if (software) {
     // Observe the requested logical viewport before the first correlated frame.
     // A forced snapshot also accepts legitimate black/transparent content.
     await setSnapshotViewport(width, height);
@@ -567,9 +508,7 @@ async function dispatch(command) {
         process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY,
       );
       return {
-        config: await webcodecsEncoder.open(command.settings, command.audio, {
-          bitmap,
-        }),
+        config: await webcodecsEncoder.open(command.settings, command.audio),
       };
     }
     case "media-operation": {
@@ -579,8 +518,7 @@ async function dispatch(command) {
           process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY,
         );
       }
-      await webcodecsEncoder.initialize();
-      return webcodecsEncoder.command("media-operation", command.operation);
+      return webcodecsEncoder.mediaOperation(command.operation);
     }
     case "png": {
       const { absolute } = require("./media-io.cjs");
@@ -632,24 +570,6 @@ async function dispatch(command) {
         command.index < 0
       )
         throw new Error("webcodecs.invalid_sequence");
-      if (bitmap) {
-        if (!snapshotViewport)
-          throw new Error("capture.snapshot_viewport_unavailable");
-        const { width, height } = snapshotViewport;
-        byteLength(width, height);
-        const image = await captureSnapshot(width, height);
-        return {
-          ...(await webcodecsEncoder.encodeBitmap(
-            image.getBitmap(),
-            command.index,
-          )),
-          width,
-          height,
-          pixelFormat: "bgra",
-          captureBackend: "electron_bitmap",
-          cpuReadback: true,
-        };
-      }
       const generation = command.index + 1;
       // Drain queued startup/resize paints, then settle each new generation
       // on the shared-texture path before accepting the frame.
@@ -668,7 +588,7 @@ async function dispatch(command) {
         height: metadata.height,
         pixelFormat: metadata.pixelFormat,
         captureBackend: "electron_shared_texture",
-        cpuReadback: webcodecsEncoder.config.backend === "native",
+        cpuReadback: false,
       };
     }
     case "webcodecs-finish": {
@@ -705,7 +625,7 @@ async function dispatch(command) {
       window.setContentSize(width, height);
       // Observe the requested viewport before adapter init. Without this
       // fence, an unchanged canvas can retain the pre-init black surface.
-      if (software || bitmap) {
+      if (software) {
         await setSnapshotViewport(width, height);
         await captureSnapshot(width, height);
       } else {
@@ -860,7 +780,7 @@ app
     }
     await writeLine({
       event: "ready",
-      version: 3,
+      version: 4,
       pid: process.pid,
       surfaceMode,
       asyncPaintInvalidation: !software,

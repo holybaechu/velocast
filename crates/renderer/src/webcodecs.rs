@@ -71,20 +71,20 @@ pub(crate) fn validate_job(job: &RenderJob) -> anyhow::Result<()> {
     ensure!(
         job.media_backend
             .as_deref()
-            .is_none_or(|backend| matches!(backend, "auto" | "webcodecs" | "native")),
-        "encoder.backend_unsupported: use auto, webcodecs, or native"
+            .is_none_or(|backend| matches!(backend, "auto" | "webcodecs")),
+        "encoder.backend_unsupported: native CPU video encoding was removed; use auto or webcodecs"
     );
     ensure!(
-        job.video_profile.as_deref().is_none_or(|profile| {
-            profile == "auto" || (codec == "prores" && matches!(profile, "standard" | "hq"))
-        }),
-        "encoder.profile_unsupported: prores supports standard or hq; other codecs use auto"
+        job.video_profile
+            .as_deref()
+            .is_none_or(|profile| profile == "auto"),
+        "encoder.profile_unsupported: use auto"
     );
     ensure!(
         job.pixel_format
             .as_deref()
-            .is_none_or(|format| if codec == "prores" { format == "yuv422p10le" } else { matches!(format, "nv12" | "yuv420p") }),
-        "encoder.pixel_format_unsupported: prores requires yuv422p10le; other codecs require 8-bit 4:2:0"
+            .is_none_or(|format| matches!(format, "auto" | "nv12" | "yuv420p")),
+        "encoder.pixel_format_unsupported: use 8-bit 4:2:0"
     );
     Ok(())
 }
@@ -149,15 +149,8 @@ pub(crate) async fn render(
     let backend = opened["config"]["backend"]
         .as_str()
         .context("encoder.invalid_open_backend")?;
-    ensure!(
-        matches!(backend, "webcodecs" | "native"),
-        "encoder.invalid_open_backend"
-    );
-    report.mode = if backend == "native" {
-        crate::telemetry::RenderModeLabel::ReferenceNative
-    } else {
-        crate::telemetry::RenderModeLabel::ReferenceWebCodecs
-    };
+    ensure!(backend == "webcodecs", "encoder.invalid_open_backend");
+    report.mode = crate::telemetry::RenderModeLabel::ReferenceWebCodecs;
     ensure!(
         job.media_backend
             .as_deref()
@@ -165,9 +158,6 @@ pub(crate) async fn render(
         "encoder.backend_mismatch: requested {}, received {backend}",
         job.media_backend.as_deref().unwrap_or("auto")
     );
-    if let Some(reason) = opened["config"]["backendFallbackReason"].as_str() {
-        report.record_fallback(reason);
-    }
     ensure!(
         opened["config"]["logicalCodec"].as_str() == Some(codec),
         "encoder.codec_mismatch: requested {codec}, received {}",
@@ -177,30 +167,11 @@ pub(crate) async fn render(
         .as_str()
         .context("encoder.invalid_open_pixel_format")?;
     ensure!(
-        pixel_format
-            == if codec == "prores" {
-                "yuv422p10le"
-            } else {
-                "yuv420p"
-            },
+        pixel_format == "yuv420p",
         "encoder.pixel_format_mismatch: received {pixel_format}"
     );
-    report.capture_backend = Some(
-        if browser.surface_mode().is_bitmap() {
-            "electron_bitmap"
-        } else {
-            "electron_shared_texture"
-        }
-        .into(),
-    );
-    report.conversion_backend = Some(
-        if backend == "webcodecs" {
-            "chromium_webcodecs"
-        } else {
-            "mediabunny_native"
-        }
-        .into(),
-    );
+    report.capture_backend = Some("electron_shared_texture".into());
+    report.conversion_backend = Some("chromium_webcodecs".into());
     report.encoder_backend = Some(format!("electron_{backend}_{codec}"));
     report.surface_format_encoder = Some(pixel_format.into());
     report.requested_codec = Some(codec.into());
@@ -248,24 +219,21 @@ pub(crate) async fn render(
                 .unwrap_or("electron_shared_texture")
                 .into(),
         );
-        if captured["cpuReadback"].as_bool() == Some(true) {
-            report.cpu_readback_frames += 1;
-        }
+        ensure!(
+            captured["cpuReadback"].as_bool() == Some(false)
+                && captured["captureBackend"].as_str() == Some("electron_shared_texture"),
+            "capture.shared_texture_required"
+        );
         report.frames_rendered += 1;
         let previous_encoded = report.frames_encoded;
-        report.frames_encoded = if backend == "native" {
-            let encoded = captured["encodedFrames"]
-                .as_u64()
-                .context("media.missing_encoded_count")?;
-            ensure!(
-                encoded >= u64::from(previous_encoded)
-                    && encoded <= u64::from(report.frames_rendered),
-                "media.invalid_encoded_count"
-            );
-            encoded as u32
-        } else {
-            previous_encoded + 1
-        };
+        let encoded = captured["encodedFrames"]
+            .as_u64()
+            .context("media.missing_encoded_count")?;
+        ensure!(
+            encoded >= u64::from(previous_encoded) && encoded <= u64::from(report.frames_rendered),
+            "media.invalid_encoded_count"
+        );
+        report.frames_encoded = encoded as u32;
         events
             .emit(RendererEvent::FrameRendered {
                 frame,
@@ -288,7 +256,7 @@ pub(crate) async fn render(
     crate::output_media::validate_video(&finished, composition, end - start)?;
     crate::output_media::validate_codec(&finished, codec)?;
     crate::output_media::validate_container(&finished, container)?;
-    // Packet production can lag native frame submission until finalization.
+    // Packet production can lag WebCodecs frame submission until finalization.
     if report.frames_encoded < end - start {
         report.frames_encoded = end - start;
         events
@@ -391,7 +359,7 @@ mod tests {
     #[test]
     fn codec_names_are_runtime_independent() {
         let mut j = job();
-        for codec in ["h264", "hevc", "av1", "vp8", "vp9", "prores"] {
+        for codec in ["h264", "hevc", "av1", "vp8", "vp9"] {
             j.codec = codec.into();
             validate_job(&j).unwrap();
         }
@@ -421,7 +389,7 @@ mod tests {
         let mut j = job();
         for (container, codec) in [
             ("mp4", "h264"),
-            ("mov", "prores"),
+            ("mov", "hevc"),
             ("webm", "vp9"),
             ("mkv", "vp8"),
         ] {
@@ -444,6 +412,8 @@ mod tests {
         j.audio_codec = Some("aac".into());
         assert!(validate_job(&j).is_err());
         j.audio_codec = Some("vorbis".into());
+        j.media_backend = Some("native".into());
+        assert!(validate_job(&j).is_err());
         j.media_backend = Some("bogus".into());
         assert!(validate_job(&j).is_err());
     }

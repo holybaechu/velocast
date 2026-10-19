@@ -12,7 +12,7 @@ import type { SourceAdapter } from "./source-adapter.js";
 export type { RendererAcceleration, RendererAssemblyMode, RendererConcurrency };
 
 export type RendererVideoCodec =
-  "h264" | "hevc" | "h265" | "av1" | "vp8" | "vp9" | "prores";
+  "h264" | "hevc" | "h265" | "av1" | "vp8" | "vp9";
 export type RendererContainer = "mp4" | "mov" | "webm" | "mkv";
 export type RendererAudioCodec =
   | "auto"
@@ -24,7 +24,7 @@ export type RendererAudioCodec =
   | "pcm-s16"
   | "pcm-s24"
   | "pcm-f32";
-export type RendererMediaBackend = "auto" | "webcodecs" | "native";
+export type RendererMediaBackend = "auto" | "webcodecs";
 
 // Authoring accepts omitted optional values. The wire also accepts explicit null.
 type AuthoringFields<T> = { [K in keyof T]: Exclude<T[K], null> };
@@ -107,7 +107,7 @@ export interface Config {
     container?: RendererContainer;
     audioCodec?: RendererAudioCodec;
     mediaBackend?: RendererMediaBackend;
-    /** Host-specific ProRes profile name. */
+    /** Browser video profile; currently only "auto" is supported. */
     videoProfile?: string;
     pixelFormat?: string;
     bitrate?: string | number;

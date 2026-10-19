@@ -31,10 +31,11 @@ export function verifyElectronRuntimeInventory(root, files, expected) {
     fail("runtime entrypoints differ");
   if (
     runtime.rendererCapabilities?.defaultBrowserHost !== "electron" ||
-    runtime.rendererCapabilities?.electronHostProtocolVersion !== 3 ||
+    runtime.rendererCapabilities?.electronHostProtocolVersion !== 4 ||
     runtime.rendererCapabilities?.videoEncoderBackend !== "webcodecs" ||
     runtime.rendererCapabilities?.mediaRuntime !== "mediabunny" ||
-    !runtime.rendererCapabilities?.supportedMediaBackends?.includes("native") ||
+    JSON.stringify(runtime.rendererCapabilities?.supportedMediaBackends) !==
+      '["webcodecs"]' ||
     JSON.stringify(runtime.rendererCapabilities?.browserHosts) !==
       '["electron"]'
   )

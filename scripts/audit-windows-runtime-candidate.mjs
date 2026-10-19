@@ -77,10 +77,11 @@ if (
   throw new Error("candidate.audit_cef_files: CEF files are forbidden");
 if (
   manifest.rendererCapabilities?.defaultBrowserHost !== "electron" ||
-  manifest.rendererCapabilities?.electronHostProtocolVersion !== 3 ||
+  manifest.rendererCapabilities?.electronHostProtocolVersion !== 4 ||
   manifest.rendererCapabilities?.videoEncoderBackend !== "webcodecs" ||
   manifest.rendererCapabilities?.mediaRuntime !== "mediabunny" ||
-  !manifest.rendererCapabilities?.supportedMediaBackends?.includes("native") ||
+  JSON.stringify(manifest.rendererCapabilities?.supportedMediaBackends) !==
+    '["webcodecs"]' ||
   JSON.stringify(manifest.rendererCapabilities?.browserHosts) !== '["electron"]'
 )
   throw new Error(

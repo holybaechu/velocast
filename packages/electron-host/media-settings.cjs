@@ -1,7 +1,7 @@
 "use strict";
 const path = require("node:path");
 const { supportedEncoderConfig } = require("./webcodecs-codec.cjs");
-const VIDEO_CODECS = ["h264", "hevc", "av1", "vp8", "vp9", "prores"];
+const VIDEO_CODECS = ["h264", "hevc", "av1", "vp8", "vp9"];
 const AUDIO_CODECS = [
   "aac",
   "opus",
@@ -27,8 +27,10 @@ function containerFor(file, requested) {
 function mediaSettings(settings) {
   const container = containerFor(settings.outputPath, settings.container);
   const backend = settings.mediaBackend ?? "auto";
-  if (!["auto", "native", "webcodecs"].includes(backend))
-    throw new Error("media.invalid_backend");
+  if (!["auto", "webcodecs"].includes(backend))
+    throw new Error(
+      "media.invalid_backend: native CPU video encoding was removed; use auto or webcodecs",
+    );
   const logicalCodec =
     !settings.codec || settings.codec === "auto"
       ? container === "webm"
@@ -39,15 +41,10 @@ function mediaSettings(settings) {
     throw new Error("media.invalid_video_codec");
   if (container === "webm" && !["vp8", "vp9", "av1"].includes(logicalCodec))
     throw new Error("media.incompatible_video_container");
-  const videoProfile =
-    settings.videoProfile ?? (logicalCodec === "prores" ? "standard" : "auto");
-  if (
-    logicalCodec === "prores"
-      ? !["standard", "hq", "auto"].includes(videoProfile)
-      : videoProfile !== "auto"
-  )
+  const videoProfile = settings.videoProfile ?? "auto";
+  if (videoProfile !== "auto")
     throw new Error("media.unsupported_video_profile");
-  const pixelFormat = logicalCodec === "prores" ? "yuv422p10le" : "yuv420p";
+  const pixelFormat = "yuv420p";
   if (
     settings.pixelFormat &&
     settings.pixelFormat !== "auto" &&
@@ -62,31 +59,12 @@ function mediaSettings(settings) {
     !["auto", "opus", "vorbis"].includes(settings.audioCodec ?? "auto")
   )
     throw new Error("media.incompatible_audio_container");
-  // The pinned Windows x64 NodeAV libvpx build terminates on VP9 submission
-  // (STATUS_ILLEGAL_INSTRUCTION), including in standalone Node. Avoid invoking
-  // it until a replacement binding passes the native acceptance gate.
-  const blockedNativeVp9 =
-    process.platform === "win32" &&
-    process.arch === "x64" &&
-    logicalCodec === "vp9";
-  if (blockedNativeVp9 && backend === "native")
-    throw new Error(
-      "media.encoder_unavailable: native VP9 is unavailable in the pinned Windows x64 binding; use webcodecs",
-    );
   return {
     container,
-    backend:
-      backend === "auto"
-        ? logicalCodec === "prores"
-          ? "native"
-          : "webcodecs"
-        : backend,
+    backend: "webcodecs",
     logicalCodec,
     pixelFormat,
-    videoProfile:
-      logicalCodec === "prores" && videoProfile === "auto"
-        ? "standard"
-        : videoProfile,
+    videoProfile,
   };
 }
 
@@ -95,20 +73,15 @@ async function resolveMediaSettings(
   VideoEncoder = globalThis.VideoEncoder,
 ) {
   const selected = mediaSettings(settings);
-  if (
-    (settings.mediaBackend ?? "auto") !== "auto" ||
-    selected.backend === "native"
-  )
-    return selected;
   const support = await supportedEncoderConfig(
     { ...settings, codec: selected.logicalCodec },
     VideoEncoder,
   );
-  if (support.config) return selected;
-  const native = mediaSettings({ ...settings, mediaBackend: "native" });
+  if (!support.config) throw new Error(support.reason);
   return {
-    ...native,
-    backendFallbackReason: `${support.reason}; using native video encoding`,
+    ...selected,
+    ...support.config,
+    logicalCodec: selected.logicalCodec,
   };
 }
 

@@ -90,22 +90,23 @@ test("rejects a reversed or missing frame and truncated output", () => {
     /decoded byte count/,
   );
 });
+const telemetry = {
+  capture_backend: "electron_shared_texture",
+  conversion_backend: "chromium_webcodecs",
+  encoder_backend: "electron_webcodecs_h264",
+  cpu_readback_frames: 0,
+  fallback_used: false,
+  dropped_frames: 0,
+  stale_frames: 0,
+  frames_expected: 24,
+  frames_rendered: 24,
+  frames_encoded: 24,
+  total_wall_ms: 100,
+  selected_codec: "h264",
+  target_bitrate_bps: 12000000,
+};
+
 test("checks WebCodecs route and mismatched comparison settings", () => {
-  const telemetry = {
-    capture_backend: "electron_shared_texture",
-    conversion_backend: "chromium_webcodecs",
-    encoder_backend: "electron_webcodecs_h264",
-    cpu_readback_frames: 0,
-    fallback_used: false,
-    dropped_frames: 0,
-    stale_frames: 0,
-    frames_expected: 24,
-    frames_rendered: 24,
-    frames_encoded: 24,
-    total_wall_ms: 100,
-    selected_codec: "h264",
-    target_bitrate_bps: 12000000,
-  };
   assertWebCodecsTelemetry(telemetry, "electron", 24);
   assert.throws(
     () =>
@@ -164,87 +165,33 @@ test("checks WebCodecs route and mismatched comparison settings", () => {
     /audio RMS differs/,
   );
 });
-test("accepts Linux bitmap fallback only with matching readback and fallback facts", () => {
-  const linux = {
-    mode: "reference_web_codecs",
-    webcodecs: { hardware_acceleration: "no-preference" },
-    capture_backend: "electron_bitmap",
-    conversion_backend: "chromium_webcodecs",
-    encoder_backend: "electron_webcodecs_h264",
-    cpu_readback_frames: 24,
-    fallback_used: true,
-    fallback_reason:
-      "Shared texture capture unavailable; using bitmap capture with WebCodecs",
-    dropped_frames: 0,
-    stale_frames: 0,
-    frames_expected: 24,
-    frames_rendered: 24,
-    frames_encoded: 24,
-    total_wall_ms: 2993,
-  };
-  assertWebCodecsTelemetry(linux, "electron", 24);
+test("rejects bitmap video capture even with matching readback facts", () => {
   assert.throws(
     () =>
       assertWebCodecsTelemetry(
-        { ...linux, cpu_readback_frames: 23 },
+        {
+          ...telemetry,
+          capture_backend: "electron_bitmap",
+          cpu_readback_frames: 240,
+        },
         "electron",
-        24,
+        240,
       ),
-    /readback/,
+    /capture_backend/,
   );
-  assert.throws(
-    () =>
-      assertWebCodecsTelemetry(
-        { ...linux, fallback_used: false },
-        "electron",
-        24,
-      ),
-    /fallback/,
-  );
-  assert.throws(
-    () =>
-      assertWebCodecsTelemetry(
-        { ...linux, fallback_reason: null },
-        "electron",
-        24,
-      ),
-    /fallback/,
-  );
-  assert.throws(
-    () =>
-      assertWebCodecsTelemetry(
-        { ...linux, webcodecs: { hardware_acceleration: "verified-hardware" } },
-        "electron",
-        24,
-      ),
-    /hardware preference/,
-  );
-  const shared = {
-    ...linux,
-    capture_backend: "electron_shared_texture",
-    cpu_readback_frames: 0,
-    fallback_used: false,
-    fallback_reason: null,
-  };
-  assertWebCodecsTelemetry(shared, "electron", 24);
-  assert.throws(
-    () =>
-      assertWebCodecsTelemetry(
-        { ...shared, cpu_readback_frames: 1 },
-        "electron",
-        24,
-      ),
-    /readback/,
-  );
-  assert.throws(
-    () =>
-      assertWebCodecsTelemetry(
-        { ...shared, fallback_used: true },
-        "electron",
-        24,
-      ),
-    /fallback/,
-  );
+});
+
+test("rejects readback and fallback telemetry on a shared-texture render", () => {
+  for (const change of [
+    { cpu_readback_frames: 1 },
+    { fallback_used: true },
+    { fallback_reason: "unexpected" },
+  ])
+    assert.throws(
+      () =>
+        assertWebCodecsTelemetry({ ...telemetry, ...change }, "electron", 240),
+      /readback|fallback/,
+    );
 });
 test("decoded comparison measures codec noise and rejects wrong frame colors", () => {
   const first = frames([0]);

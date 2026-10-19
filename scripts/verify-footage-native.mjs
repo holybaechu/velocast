@@ -99,7 +99,7 @@ await writeFile(config, `export default ${JSON.stringify({ entry:"dist/index.htm
 const video = join(output, "composed.mp4"), report = join(output, "report.json");
 try {
   execFileSync(process.execPath, [join(root, "packages/cli/dist/bin.js"), "render", "footage-native", "--config", config,
-    "--output", video, "--report", report, "--media-backend", "native", "--json"], { cwd: fixture, env: { ...process.env, VELOCAST_MEDIA_TRACE: join(output, "capture-pixels.jsonl") }, timeout: 300000, windowsHide: true, stdio: "pipe" });
+    "--output", video, "--report", report, "--media-backend", "webcodecs", "--json"], { cwd: fixture, env: { ...process.env, VELOCAST_MEDIA_TRACE: join(output, "capture-pixels.jsonl") }, timeout: 300000, windowsHide: true, stdio: "pipe" });
 } catch (error) {
   throw new Error(`native footage render failed: ${error.stderr?.toString() || error.message}`);
 }
@@ -108,8 +108,8 @@ assert.equal(probe.video?.frameCount, durationFrames);
 assert.equal(probe.video?.width, 320); assert.equal(probe.video?.height, 90);
 assert.equal(probe.audio?.sampleRate, 48000);
 const telemetry = JSON.parse(await readFile(report, "utf8"));
-assert.equal(telemetry.encoder_backend, "electron_native_h264");
-assert.equal(telemetry.cpu_readback_frames, durationFrames);
+assert.equal(telemetry.encoder_backend, "electron_webcodecs_h264");
+assert.equal(telemetry.cpu_readback_frames, 0);
 assert.equal(telemetry.frames_encoded, durationFrames);
 const checked = [];
 for (const frame of [0, 1, 2, 5, 6, 13, 15]) {

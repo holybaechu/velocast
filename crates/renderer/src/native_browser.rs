@@ -5,9 +5,6 @@ use serde_json::{json, Value};
 use velocast_protocol::{AudioPlan, CompositionManifest, RenderJob, RenderSession};
 pub struct NativeBrowser(crate::electron_app::ElectronRenderer);
 impl NativeBrowser {
-    pub(crate) fn surface_mode(&self) -> BrowserSurfaceMode {
-        self.0.surface_mode()
-    }
     pub fn new(mode: BrowserSurfaceMode) -> anyhow::Result<Self> {
         Ok(Self(crate::electron_app::ElectronRenderer::new(mode)?))
     }

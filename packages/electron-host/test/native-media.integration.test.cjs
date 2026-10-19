@@ -14,7 +14,7 @@ test(
     const directory = fs.mkdtempSync(
       path.join(os.tmpdir(), "velocast-codec-timing-"),
     );
-    const session = await createMediaSession({
+    let session = await createMediaSession({
       electronBinary: process.env.VELOCAST_WEBCODECS_TEST_BINARY,
       timeoutMs: 30000,
     });
@@ -87,13 +87,13 @@ test(
 );
 
 test(
-  "native video/audio codecs round-trip through real Electron and all containers",
+  "WebCodecs video and native audio codecs round-trip through real Electron and all containers",
   { skip: !process.env.VELOCAST_WEBCODECS_TEST_BINARY, timeout: 300000 },
   async () => {
     const directory = fs.mkdtempSync(
       path.join(os.tmpdir(), "velocast-native-test-"),
     );
-    const session = await createMediaSession({
+    let session = await createMediaSession({
       electronBinary: process.env.VELOCAST_WEBCODECS_TEST_BINARY,
       timeoutMs: 120000,
     });
@@ -144,27 +144,46 @@ test(
         ["av1", "mkv"],
         ["vp8", "webm"],
         ["vp9", "webm"],
-        ["prores", "mov", "standard"],
-        ["prores", "mov", "hq"],
       ]) {
-        console.log(`native video ${codec}/${container}/${profile ?? "auto"}`);
+        console.log(
+          `WebCodecs video ${codec}/${container}/${profile ?? "auto"}`,
+        );
         const outputPath = path.join(
           directory,
           `${codec}-${profile ?? "auto"}.${container}`,
         );
-        const result = await session.run({
-          kind: "encode-frames",
-          mediaBackend: codec === "vp9" ? "auto" : "native",
-          codec,
-          container,
-          videoProfile: profile,
-          width: 160,
-          height: 100,
-          fps: 30,
-          bitrate: 2000000,
-          framePaths,
-          outputPath,
-        });
+        let result;
+        try {
+          result = await session.run({
+            kind: "encode-frames",
+            mediaBackend: "webcodecs",
+            codec,
+            container,
+            videoProfile: profile,
+            width: 160,
+            height: 100,
+            fps: 30,
+            bitrate: 2000000,
+            framePaths,
+            outputPath,
+          });
+        } catch (error) {
+          if (
+            codec === "h264" ||
+            !/webcodecs\.unsupported_config:|This specific encoder configuration/.test(
+              String(error),
+            )
+          )
+            throw error;
+          assert.equal(fs.existsSync(outputPath), false);
+          console.log(`unavailable browser encoder: ${codec}`);
+          await session.close();
+          session = await createMediaSession({
+            electronBinary: process.env.VELOCAST_WEBCODECS_TEST_BINARY,
+            timeoutMs: 120000,
+          });
+          continue;
+        }
         console.log(`encoded ${codec}`);
         assert.equal(result.container, container);
         assert.equal(result.video.codec, codec === "h264" ? "avc" : codec);

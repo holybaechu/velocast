@@ -6,8 +6,9 @@ then render a video. The common engine is framework-independent; **React is the
 first official authoring helper**. You do not select an internal adapter to use it.
 
 Electron is the browser host on every platform. Mediabunny handles media
-containers and local audio/video I/O. Its native NodeAV/FFmpeg backend supplies
-software codecs by default; Chromium WebCodecs remains an explicit backend.
+containers and local audio/video I/O. Video uses shared GPU textures with
+Mediabunny-managed Chromium WebCodecs.
+Native NodeAV/FFmpeg utilities supply audio codecs and input decoding.
 Windows is the first product target. The checked-in
 [release manifest](release/velocast-release.json) has no published native
 artifact. Native rendering currently requires a local source build or a
@@ -23,7 +24,7 @@ See [PRODUCT.md](PRODUCT.md) for product goals and scope, the
 [architecture](docs/architecture.md) for implementation boundaries.
 
 Current authoring packages require **browser protocol 4** and a matching rebuilt
-native renderer. Prepared runtimes require **Electron host protocol 3** and must
+native renderer. Prepared runtimes require **Electron host protocol 4** and must
 include the Mediabunny server extension and its native dependencies.
 The former experimental encoder environment variable is no longer needed;
 `--acceleration required` now fails because WebCodecs cannot prove hardware use.
@@ -227,16 +228,16 @@ Useful public options, also available as corresponding `renderer` config fields:
 
 | CLI option                      | Meaning                                                                   |
 | ------------------------------- | ------------------------------------------------------------------------- |
-| `--codec h264`                  | Video codec: h264, hevc, av1, vp8, vp9, or prores                         |
+| `--codec h264`                  | Video codec: h264, hevc, av1, vp8, or vp9                                 |
 | `--container webm`              | mp4, mov, webm, or mkv; otherwise inferred from the output path           |
 | `--audio-codec opus`            | Explicit audio codec; auto uses AAC for MP4/MOV and Opus for WebM/MKV     |
-| `--media-backend auto`          | Prefer WebCodecs; use native codecs when the requested encoder is unsupported |
-| `--video-profile hq`            | ProRes profile: standard or hq                                            |
+| `--media-backend auto`          | WebCodecs video; unavailable shared textures or encoders fail explicitly  |
+| `--video-profile auto`          | Browser video profile                                                     |
 | `--bitrate 64M`                 | Requested video bitrate, not a guarantee of achieved bitrate              |
 | `--acceleration required`       | Unsupported: WebCodecs cannot guarantee hardware acceleration             |
-| `--acceleration auto`           | WebCodecs prefers hardware; native encoding currently uses software       |
+| `--acceleration auto`           | WebCodecs prefers hardware; Chromium selects the implementation           |
 | `--acceleration off`            | Prefer software encoding; Chromium makes the final choice                 |
-| `--pixel-format yuv420p`        | Opaque SDR; ProRes uses yuv422p10le from an 8-bit capture source          |
+| `--pixel-format yuv420p`        | Opaque 8-bit SDR capture                                                  |
 | `--concurrency 8`               | Explicit complete-render worker count; `auto` is also accepted            |
 | `--assembly segments`           | Complete-render segment assembly; `reference` selects the reference route |
 | `--report renders/report.json`  | Renderer telemetry, including actual backends and fallback facts          |

@@ -1,38 +1,26 @@
 # Electron media runtime
 
-The Rust renderer starts `main.cjs`. Authored compositions remain sandboxed in
-an offscreen window without Node or trusted media IPC. A separate trusted local
-window owns browser media utilities and WebCodecs sessions. Native video encoding
-runs in a regular Node child process. Rust receives metadata and completed media,
-never operating-system GPU handles.
+The Rust renderer starts `main.cjs`. Authored pages stay sandboxed without Node
+or media IPC. Video requires shared-texture offscreen capture. A separate trusted
+empty window imports GPU frames and uses Mediabunny `VideoSampleSource` for
+WebCodecs encoding and muxing. Rust receives acknowledgments and completed media,
+never OS GPU handles or raw video frames.
 
-`media-session.cjs` prefers WebCodecs in automatic mode and selects a native
-software session when the requested browser encoder is unsupported. Explicit
-backend requests remain binding. `native-video-client.cjs` sends JSON control messages
-and bounded BGRA/RGBA frames over a binary pipe to `native-video-worker.cjs`.
-This avoids Electron's allocator restrictions and V8 serialization-version
-coupling. The bitmap path sends pixels directly from Electron main to the worker.
-Native submissions can buffer packets. Finalization drains the encoder before validating packet counts,
-dimensions, timestamps, codec and container. Capture leases are released only
-after the consumer has closed its frames. WebCodecs retains its conservative
-per-frame flush and packet acknowledgment.
+`media-session.cjs` closes local frame wrappers after each bounded submission.
+It validates packet identities while allowing buffering/reordering, then drains
+once at finalization. `webcodecs-host.cjs` bounds outstanding texture leases and
+releases each original OSR texture only through `allReferencesReleased`. It waits
+for final releases after draining, avoiding a per-frame encode/flush/release
+barrier. There is no canvas, bitmap conversion, native video worker, or CPU video
+fallback in the render path. See the [media guide](../../docs/webcodecs.md).
 
-The CLI supplies its own Node executable through `VELOCAST_NODE_BINARY`.
-Direct renderer integrations must supply an absolute stock Node executable;
-embedded Electron callers of `createMediaSession` can pass `nodeBinary`.
-Workers stay in the host's process group/job, exit on owner disconnect, and are
-joined before successful finalization or cancellation completes.
-
-Automatic common-codec renders start with shared textures; ProRes and explicit
-native renders start with bitmap capture. Browser encoder support is checked
-before frame submission, and automatic native fallback is reported. On Windows
-x64, the pinned native VP9 binding is unavailable, so VP9 requires WebCodecs.
-All native encoding currently uses software. See the [public media guide](../../docs/webcodecs.md)
-for the codec/container matrix, timestamp precision, and output limits.
+Native audio and decoder registrations live in a different utility renderer.
+Explicit image-sequence encoding utilities also get an isolated WebCodecs
+renderer so previous native decoder use cannot change video encoder selection.
 
 ## Protocol and lifecycle
 
-The JSONL handshake advertises **protocol 3**. Request IDs are safe integers;
+The JSONL handshake advertises **protocol 4**. Request IDs are safe integers;
 responses carry the same ID and `ok`, with an error message on failure. Lines
 are bounded to 4 MiB, the input queue holds four commands, and operations have
 deadlines. After `close`, the controller closes stdin and reaps the process.
@@ -49,35 +37,16 @@ deadlines. After `close`, the controller closes stdin and reaps the process.
 | `media-operation`  | Utility operation                         | Operation result                                     |
 | `close`            | None                                      | Acknowledgment and shutdown                          |
 
-The transport retains its historical `webcodecs-*` method names for both
-backends. Settings include dimensions, fps, bitrate, logical video codec,
-`container`, `audioCodec`, `mediaBackend`, `videoProfile`, pixel format,
-and an absolute output path. Explicit requests are binding.
+Settings include dimensions, fps, bitrate, logical codec, container, audio codec,
+acceleration preference, and an absolute output path. `auto` and `webcodecs`
+both require browser video encoding. Explicit requests remain binding.
 
-Rust supplies isolated frame and profile directories through
+Rust supplies task-owned frame/profile directories through
 `VELOCAST_ELECTRON_FRAME_DIRECTORY` and `VELOCAST_ELECTRON_PROFILE_DIRECTORY`.
-PNG uses a compositor fence and exclusive file creation. Bitmap video capture
-keeps GPU composition enabled while transferring BGRA frames to the encoder;
-it remains the fallback for unavailable shared-texture import. Native encoding
-reports CPU readback even when the capture transport uses a shared texture.
-
-Bitmap capture uses Chromium's `Page.captureScreenshot` surface snapshot, which
-forces a redraw before copying pixels. The requested logical viewport is set
-through device emulation, avoiding display-size and DPI-dependent window bounds.
-This provider works with GPU and CPU composition.
-The intermediate PNG requests Chromium's fast lossless encoding because it is
-decoded immediately rather than stored or published.
-Raw software frame leases and PNG exports use the same snapshot provider.
-Frame preparation still awaits authored work, fonts and images. Snapshot capture
-owns the compositor redraw boundary, avoiding an additional page animation-frame
-wait for bitmap video, PNG exports and raw software captures.
-When Electron's
-[reported compositor state](https://www.electronjs.org/docs/latest/api/structures/gpu-feature-status)
-indicates unavailable GPU compositing, the coordinator starts a fresh host with
-hardware acceleration disabled. This bounded retry is allowed only before any
-frames are encoded and propagates to segment workers. The initial viewport is
-observed before adapter initialization. Shared-texture capture retains its
-startup and per-frame paint observations.
+Diagnostic PNG/software observations use Chromium `Page.captureScreenshot`,
+fast lossless PNG encoding, and an explicit logical viewport to avoid display
+size/DPI clamping. They never serve as a video fallback. Shared-texture capture
+retains startup and per-frame compositor observations.
 
 ## Audio and codec adapters
 
@@ -128,17 +97,15 @@ Set `VELOCAST_WEBCODECS_TEST_BINARY` to the pinned Electron executable and run
 `VELOCAST_ELECTRON_TEST_BINARY` also enables software-capture stress tests.
 
 The full CLI gates are `scripts/verify-media-formats.mjs`,
-`scripts/verify-electron-portable.mjs`, and `scripts/verify-native-capture.mjs`.
+`scripts/verify-electron-portable.mjs`, and `scripts/verify-shared-texture-capture.mjs`.
 They cover decoded frame identity,
-audio signal, ranges, assembly, bitmap retry, cancellation, and failure
+audio signal, ranges, assembly, strict capture failures, cancellation, and failure
 preservation. Use output directories outside the repository and clean them
 after inspecting the results.
 
-The native capture gate uses the 4K DOM scene with an initial frame-72 preview.
-It verifies native bitmap capture and decoded identities at reference and
+The shared-texture capture gate uses the 4K DOM scene with an initial frame-72 preview.
+It verifies shared-texture capture and decoded identities at reference and
 four-worker segment starts. Pass `--renderer <binary> --output <new-temp-dir>`;
 `--frames 240 --all-frames true` expands verification to every frame of the full
 scene. Windows, Linux, and macOS CI run the 24-frame, three-repeat gate with
 `--all-frames true`, without requiring a standalone FFmpeg executable.
-`--cpu-compositor true` verifies the explicit CPU fallback and worker propagation;
-Windows CI also runs three reference repetitions of that mode.
