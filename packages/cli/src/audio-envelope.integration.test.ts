@@ -53,10 +53,6 @@ it("real WebCodecs sample fades/ducking match PCM oracle and full-versus-range s
       ],
     };
     const range = sliceAudioPlan(plan, 37, 711);
-    await renderAudioPlanPcm(plan, {
-      outputPath: join(root, "production.f32"),
-      channelCount: 2,
-    });
     const dense = {
       ...plan,
       clips: [
