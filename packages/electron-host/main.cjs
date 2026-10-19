@@ -198,7 +198,9 @@ function schedulePaintRetry(waiter) {
     waiter.retryTimer = null;
     if (paintWaiter === waiter && window && !window.isDestroyed()) {
       try {
-        refreshPaint();
+        // Leave the in-flight GPU copy alive; restarting it here can starve
+        // slow captures when multiple 4K workers compete for the compositor.
+        refreshPaint(false);
       } catch (error) {
         abortPending(error);
       }
@@ -206,9 +208,11 @@ function schedulePaintRetry(waiter) {
   }, 50);
 }
 
-function refreshPaint() {
-  browser().stopPainting();
-  browser().startPainting();
+function refreshPaint(restartCapturer = true) {
+  if (restartCapturer) {
+    browser().stopPainting();
+    browser().startPainting();
+  }
   browser().invalidate();
 }
 
