@@ -91,9 +91,9 @@ async function waitForEndpoint(
   while (Date.now() < deadline) {
     const spawnFailure = getSpawnFailure();
     if (spawnFailure) throw spawnFailure;
-    if (child.exitCode !== null)
+    if (child.exitCode !== null || child.signalCode !== null)
       throw new Error(
-        `audit.browser_exited: browser exited with code ${child.exitCode}`,
+        `audit.browser_exited: browser exited with ${child.exitCode !== null ? `code ${child.exitCode}` : `signal ${child.signalCode}`}`,
       );
     try {
       const [port] = (
