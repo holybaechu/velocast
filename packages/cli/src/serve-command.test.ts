@@ -428,6 +428,96 @@ await withServeCommand(${JSON.stringify({ command: fixture.command, url: "http:/
     ]);
   });
 
+  it.each(["exit", "abort"])(
+    "joins an owned readiness probe before stopping after %s",
+    async (failure) => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      const abortReason = new Error("caller cancelled readiness");
+      const events: string[] = [];
+      let startProbe!: () => void;
+      const started = new Promise<void>((resolve) => {
+        startProbe = resolve;
+      });
+      let finishProbe!: () => void;
+      const probeCleanup = new Promise<void>((resolve) => {
+        finishProbe = resolve;
+      });
+      let resolveExit!: (exit: { code: number }) => void;
+      const exited = new Promise<{ code: number }>((resolve) => {
+        resolveExit = resolve;
+      });
+      let readinessChecks = 0;
+      let probeSignal: AbortSignal | undefined;
+      let probe: Promise<Response> | undefined;
+      vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+        if (++readinessChecks === 1)
+          return Promise.resolve({ ok: false, status: 503 });
+        probeSignal = init.signal!;
+        startProbe();
+        probe = new Promise<Response>((_resolve, reject) => {
+          probeSignal!.addEventListener(
+            "abort",
+            () => reject(probeSignal!.reason),
+            { once: true },
+          );
+        }).finally(async () => {
+          await probeCleanup;
+          events.push("probe released");
+        });
+        return probe;
+      });
+      const result = withServeCommand(
+        { command: "owned-server", url: "http://127.0.0.1:4545" },
+        async () => {
+          events.push("render");
+        },
+        {
+          signal: controller.signal,
+          spawnServeCommand: () => ({
+            exited,
+            stop: () => {
+              events.push("stop");
+            },
+          }),
+        },
+      );
+      let settled = false;
+      void result.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+
+      await started;
+      if (failure === "exit") resolveExit({ code: 1 });
+      else controller.abort(abortReason);
+      await vi.advanceTimersByTimeAsync(0);
+      const abortedBeforeRelease = probeSignal?.aborted;
+      const pendingBeforeRelease = !settled;
+      finishProbe();
+
+      try {
+        if (failure === "exit")
+          await expect(result).rejects.toThrow(
+            "serve.command exited before serve.url http://127.0.0.1:4545 became ready (code 1): owned-server",
+          );
+        else await expect(result).rejects.toBe(abortReason);
+        expect(abortedBeforeRelease).toBe(true);
+        expect(pendingBeforeRelease).toBe(true);
+        expect(events).toEqual(["probe released", "stop"]);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        controller.abort();
+        finishProbe();
+        await probe?.catch(() => {});
+      }
+    },
+  );
+
   it("surfaces serve command spawn errors before the readiness timeout", async () => {
     const events: string[] = [];
 
