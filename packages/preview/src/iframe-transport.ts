@@ -64,7 +64,6 @@ export class IframePreviewConnection {
   readonly iframe: HTMLIFrameElement;
   private readonly host: Window;
   private rpc?: PreviewRpcClient;
-  private available: CompositionManifest[] = [];
   private selected?: CompositionManifest;
   private audioPlan?: AudioPlan;
   private readonly lifetime = new AbortController();
@@ -159,17 +158,14 @@ export class IframePreviewConnection {
       throw new Error(
         `preview.protocol_mismatch: authoring protocol v${BROWSER_PROTOCOL_VERSION} is required`,
       );
-    this.available = compositions(result.compositions);
-    return this.available;
+    return compositions(result.compositions);
   }
   async initialize(
     compositionId: string,
     signal?: AbortSignal,
   ): Promise<PreviewSource> {
-    await this.connect(signal);
-    const composition = this.available.find(
-      (item) => item.id === compositionId,
-    );
+    const available = await this.connect(signal);
+    const composition = available.find((item) => item.id === compositionId);
     if (!composition)
       throw new Error(
         "preview.composition_missing: composition is not registered",
