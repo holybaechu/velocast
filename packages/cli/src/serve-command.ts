@@ -92,19 +92,31 @@ async function isServeProcessUrlReady(
   url: string,
   dependencies: ServeCommandDependencies,
 ): Promise<boolean> {
-  const ready = dependencies.isUrlReady(url, dependencies.signal);
   if (!process.exited) {
-    return ready;
+    return dependencies.isUrlReady(url, dependencies.signal);
   }
 
-  const result = await Promise.race([
-    ready,
-    process.exited.then((exit) => {
-      dependencies.signal?.throwIfAborted();
-      throw serveProcessExitError(command, url, exit);
-    }),
-  ]);
-  return result;
+  const controller = new AbortController();
+  const ready = dependencies.isUrlReady(
+    url,
+    dependencies.signal
+      ? AbortSignal.any([controller.signal, dependencies.signal])
+      : controller.signal,
+  );
+  try {
+    return await Promise.race([
+      ready,
+      process.exited.then((exit) => {
+        dependencies.signal?.throwIfAborted();
+        throw serveProcessExitError(command, url, exit);
+      }),
+    ]);
+  } finally {
+    controller.abort();
+    // Custom probes may ignore cancellation; join only the fetch we own.
+    if (dependencies.isUrlReady === defaultServeCommandDependencies.isUrlReady)
+      await ready.catch(() => {});
+  }
 }
 
 async function waitForNextServePoll(
