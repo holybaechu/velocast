@@ -33,6 +33,8 @@ jobs:
       - name: Run feature checks (Windows)
         if: runner.os == 'Windows'
         run: pnpm check:fast
+      - name: Verify the external Preview package consumer
+        run: pnpm --filter @velocast/preview verify:external-pack
       - name: Check the Windows resource profiler
         if: runner.os == 'Windows'
         run: pnpm test:profiling
