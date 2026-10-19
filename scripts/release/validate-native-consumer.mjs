@@ -12,6 +12,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
+import { validReleasePackageSet } from "./release-package-set.mjs";
 
 const exec = promisify(execFile);
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -56,10 +57,15 @@ try {
     repoRoot,
   );
   const tarballs = readdirSync(packs).filter((name) => name.endsWith(".tgz"));
-  const core = only(tarballs, "velocast-core-");
-  const preview = only(tarballs, "velocast-preview-");
-  const gsapPackage = only(tarballs, "velocast-gsap-");
-  const cli = only(tarballs, "velocast-0");
+  const version = candidate.packageVersion;
+  if (!validReleasePackageSet(tarballs, version))
+    throw new Error(
+      `consumer.pack_invalid: expected complete package set for ${version}, got ${tarballs.join(", ")}`,
+    );
+  const core = `velocast-core-${version}.tgz`;
+  const preview = `velocast-preview-${version}.tgz`;
+  const gsapPackage = `velocast-gsap-${version}.tgz`;
+  const cli = `velocast-${version}.tgz`;
   await run(
     process.execPath,
     [
@@ -258,15 +264,6 @@ async function run(file, args, cwd, env = process.env) {
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-}
-
-function only(names, prefix) {
-  const matches = names.filter((name) => basename(name).startsWith(prefix));
-  if (matches.length !== 1)
-    throw new Error(
-      `consumer.pack_invalid: expected one ${prefix} tarball, got ${matches}`,
-    );
-  return matches[0];
 }
 
 function managerCommand(manager) {
