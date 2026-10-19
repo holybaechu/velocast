@@ -141,6 +141,21 @@ mod tests {
     use serde_json::json;
     use std::num::NonZeroU32;
 
+    fn composition_job_json(overrides: serde_json::Value) -> serde_json::Value {
+        let mut job = json!({
+            "mode": "composition",
+            "composition_id": "product-hero",
+            "serve_url": "http://127.0.0.1:4545",
+            "selector": null,
+            "output": "out/hero.mp4",
+            "codec": "h264"
+        });
+        job.as_object_mut()
+            .unwrap()
+            .extend(overrides.as_object().unwrap().clone());
+        job
+    }
+
     #[test]
     fn public_output_requests_default_to_legacy_render_and_reject_ambiguous_fields() {
         let base = json!({"mode":"composition","composition_id":"hero","serve_url":"http://localhost","output":"out.mp4","codec":"h264"});
@@ -254,17 +269,13 @@ mod tests {
     #[test]
     fn parses_accelerated_paint_capture_probe() {
         let job: RenderJob = serde_json::from_str(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"renders/probe-unused.mp4",
-          "codec":"h264",
-          "pixel_format":"nv12",
-          "acceleration":"required",
-          "capture_probe":"accelerated_paint"
-        }"#,
+            &composition_job_json(json!({
+                "output": "renders/probe-unused.mp4",
+                "pixel_format": "nv12",
+                "acceleration": "required",
+                "capture_probe": "accelerated_paint"
+            }))
+            .to_string(),
         )
         .unwrap();
 
@@ -277,17 +288,13 @@ mod tests {
     #[test]
     fn parses_segment_worker_report_path() {
         let job: RenderJob = serde_json::from_str(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"renders/segment-0.mp4",
-          "codec":"h264",
-          "pixel_format":"nv12",
-          "acceleration":"required",
-          "worker_report_path":"renders/segments/worker-0.report.json"
-        }"#,
+            &composition_job_json(json!({
+                "output": "renders/segment-0.mp4",
+                "pixel_format": "nv12",
+                "acceleration": "required",
+                "worker_report_path": "renders/segments/worker-0.report.json"
+            }))
+            .to_string(),
         )
         .unwrap();
 
@@ -300,16 +307,12 @@ mod tests {
     #[test]
     fn parses_renderer_event_log_path() {
         let job: RenderJob = serde_json::from_str(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"renders/product-hero.mp4",
-          "codec":"h264",
-          "pixel_format":"nv12",
-          "event_log_path":"renders/product-hero.events.jsonl"
-        }"#,
+            &composition_job_json(json!({
+                "output": "renders/product-hero.mp4",
+                "pixel_format": "nv12",
+                "event_log_path": "renders/product-hero.events.jsonl"
+            }))
+            .to_string(),
         )
         .unwrap();
 
@@ -361,16 +364,8 @@ mod tests {
     #[test]
     fn parses_auto_renderer_concurrency() {
         let job: RenderJob = serde_json::from_str(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"out/hero.mp4",
-          "codec":"h264",
-          "pixel_format":"yuv444p",
-          "concurrency":"auto"
-        }"#,
+            &composition_job_json(json!({"pixel_format": "yuv444p", "concurrency": "auto"}))
+                .to_string(),
         )
         .unwrap();
 
@@ -380,16 +375,7 @@ mod tests {
     #[test]
     fn parses_numeric_renderer_concurrency() {
         let job: RenderJob = serde_json::from_str(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"out/hero.mp4",
-          "codec":"h264",
-          "pixel_format":"yuv444p",
-          "concurrency":3
-        }"#,
+            &composition_job_json(json!({"pixel_format": "yuv444p", "concurrency": 3})).to_string(),
         )
         .unwrap();
 
@@ -402,17 +388,12 @@ mod tests {
     #[test]
     fn parses_renderer_acceleration_required() {
         let job: RenderJob = serde_json::from_str(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"out/hero.mp4",
-          "codec":"h264",
-          "pixel_format":"nv12",
-          "bitrate_bps":60000000,
-          "acceleration":"required"
-        }"#,
+            &composition_job_json(json!({
+                "pixel_format": "nv12",
+                "bitrate_bps": 60000000,
+                "acceleration": "required"
+            }))
+            .to_string(),
         )
         .unwrap();
 
@@ -423,15 +404,7 @@ mod tests {
     #[test]
     fn defaults_renderer_acceleration_to_auto() {
         let job: RenderJob = serde_json::from_str(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"out/hero.mp4",
-          "codec":"h264",
-          "pixel_format":"yuv444p"
-        }"#,
+            &composition_job_json(json!({"pixel_format": "yuv444p"})).to_string(),
         )
         .unwrap();
 
@@ -441,18 +414,13 @@ mod tests {
     #[test]
     fn parses_report_path_and_assembly_mode() {
         let job: RenderJob = serde_json::from_str(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"out/hero.mp4",
-          "codec":"h264",
-          "pixel_format":"nv12",
-          "acceleration":"required",
-          "assembly_mode":"segments",
-          "report_path":"renders/report.json"
-        }"#,
+            &composition_job_json(json!({
+                "pixel_format": "nv12",
+                "acceleration": "required",
+                "assembly_mode": "segments",
+                "report_path": "renders/report.json"
+            }))
+            .to_string(),
         )
         .unwrap();
 
@@ -512,15 +480,7 @@ mod tests {
     #[test]
     fn defaults_assembly_mode_to_auto() {
         let job: RenderJob = serde_json::from_str(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"out/hero.mp4",
-          "codec":"h264",
-          "pixel_format":"yuv444p"
-        }"#,
+            &composition_job_json(json!({"pixel_format": "yuv444p"})).to_string(),
         )
         .unwrap();
 
@@ -543,16 +503,7 @@ mod tests {
     #[test]
     fn rejects_zero_renderer_concurrency() {
         let error = serde_json::from_str::<RenderJob>(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"out/hero.mp4",
-          "codec":"h264",
-          "pixel_format":"yuv444p",
-          "concurrency":0
-        }"#,
+            &composition_job_json(json!({"pixel_format": "yuv444p", "concurrency": 0})).to_string(),
         )
         .unwrap_err();
 
@@ -562,18 +513,14 @@ mod tests {
     #[test]
     fn parses_composition_worker_job_fields() {
         let job: RenderJob = serde_json::from_str(
-            r#"{
-          "mode":"composition_worker",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"out/hero.mp4",
-          "codec":"h264",
-          "frame_start":60,
-          "frame_end":120,
-          "frame_step":2,
-          "chunk_output":".velocast/tmp/chunk-0001.bgra"
-        }"#,
+            &composition_job_json(json!({
+                "mode": "composition_worker",
+                "frame_start": 60,
+                "frame_end": 120,
+                "frame_step": 2,
+                "chunk_output": ".velocast/tmp/chunk-0001.bgra"
+            }))
+            .to_string(),
         )
         .unwrap();
 
@@ -598,15 +545,7 @@ mod tests {
     #[test]
     fn rejects_composition_job_with_worker_only_fields() {
         let error = serde_json::from_str::<RenderJob>(
-            r#"{
-          "mode":"composition",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"out/hero.mp4",
-          "codec":"h264",
-          "frame_start":0
-        }"#,
+            &composition_job_json(json!({"frame_start": 0})).to_string(),
         )
         .unwrap_err();
 
@@ -618,16 +557,12 @@ mod tests {
     #[test]
     fn rejects_worker_job_without_chunk_output() {
         let error = serde_json::from_str::<RenderJob>(
-            r#"{
-          "mode":"composition_worker",
-          "composition_id":"product-hero",
-          "serve_url":"http://127.0.0.1:4545",
-          "selector":null,
-          "output":"out/hero.mp4",
-          "codec":"h264",
-          "frame_start":60,
-          "frame_end":120
-        }"#,
+            &composition_job_json(json!({
+                "mode": "composition_worker",
+                "frame_start": 60,
+                "frame_end": 120
+            }))
+            .to_string(),
         )
         .unwrap_err();
 
