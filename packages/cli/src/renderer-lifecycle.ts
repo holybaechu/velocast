@@ -274,9 +274,9 @@ export function reduceRendererLifecycle(
         ...state,
         terminationCompleted: true,
         diagnostics:
-          event.error === undefined
-            ? state.diagnostics
-            : [...state.diagnostics, event.error],
+          "error" in event
+            ? [...state.diagnostics, event.error]
+            : state.diagnostics,
       };
       break;
     }
@@ -292,9 +292,9 @@ export function reduceRendererLifecycle(
         ...state,
         cleanupCompleted: true,
         diagnostics:
-          event.error === undefined
-            ? state.diagnostics
-            : [...state.diagnostics, event.error],
+          "error" in event
+            ? [...state.diagnostics, event.error]
+            : state.diagnostics,
       };
       break;
     }
