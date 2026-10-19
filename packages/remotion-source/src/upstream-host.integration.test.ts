@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it } from "vitest";
 import { runMediaOperation, type MediaProbe } from "velocast/source-media";
-import { writeTestVideo } from "../../cli/src/media-test-fixtures.js";
+import { writeTestVideo } from "../../cli/test-fixtures/media.js";
 import {
   prepareRemotionSource,
   discoverRemotionCompositions,
