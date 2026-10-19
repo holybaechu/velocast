@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -10,77 +10,40 @@ import { validReleasePackageSet } from "../release/release-package-set.mjs";
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const script = join(root, "scripts/release/assemble-release-manifest.mjs");
 
-test("selected Windows assembly does not require five unrelated target artifacts", () => {
-  const temp = mkdtempSync(join(tmpdir(), "velocast-selected-release-"));
-  try {
-    writeFileSync(
-      join(temp, "win32-x64.tar.gz.json"),
-      JSON.stringify({
-        target: "win32-x64",
-        name: "win32-x64.tar.gz",
-        format: "tar.gz",
-        size: 123,
-        sha256: "a".repeat(64),
-        sourceCommit: "b".repeat(40),
-        renderer: "velocast-renderer.exe",
-        root: "velocast-win32-x64",
-        unsigned: true,
-      }),
-    );
-    const result = run([
-      "--target",
-      "win32-x64",
-      "--evidence-dir",
-      temp,
-      "--output",
-      join(temp, "release.json"),
-      "--base-url",
-      "https://artifacts.invalid/",
-    ]);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /release\.signature_missing: win32-x64/);
-    assert.doesNotMatch(result.stderr, /ENOENT.*darwin|linux-arm64/);
-  } finally {
-    rmSync(temp, { recursive: true, force: true });
-  }
+test("selected Windows assembly does not require five unrelated target artifacts", (t) => {
+  const { temp, run } = fixture(t);
+  writeFileSync(
+    join(temp, "win32-x64.tar.gz.json"),
+    JSON.stringify({
+      target: "win32-x64",
+      name: "win32-x64.tar.gz",
+      format: "tar.gz",
+      size: 123,
+      sha256: "a".repeat(64),
+      sourceCommit: "b".repeat(40),
+      renderer: "velocast-renderer.exe",
+      root: "velocast-win32-x64",
+      unsigned: true,
+    }),
+  );
+  const result = run(["--target", "win32-x64"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /release\.signature_missing: win32-x64/);
+  assert.doesNotMatch(result.stderr, /ENOENT.*darwin|linux-arm64/);
 });
 
-test("invalid selected targets fail before reading evidence", () => {
-  const temp = mkdtempSync(join(tmpdir(), "velocast-selected-release-invalid-"));
-  try {
-    const result = run([
-      "--target",
-      "windows-any",
-      "--evidence-dir",
-      temp,
-      "--output",
-      join(temp, "release.json"),
-      "--base-url",
-      "https://artifacts.invalid/",
-    ]);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /release\.target_invalid/);
-  } finally {
-    rmSync(temp, { recursive: true, force: true });
-  }
+test("invalid selected targets fail before reading evidence", (t) => {
+  const { run } = fixture(t, "velocast-selected-release-invalid-");
+  const result = run(["--target", "windows-any"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /release\.target_invalid/);
 });
 
-test("omitting target keeps all-target assembly behavior", () => {
-  const temp = mkdtempSync(join(tmpdir(), "velocast-selected-release-default-"));
-  try {
-    const result = run([
-      "--evidence-dir",
-      temp,
-      "--output",
-      join(temp, "release.json"),
-      "--base-url",
-      "https://artifacts.invalid/",
-    ]);
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /darwin-arm64\.tar\.gz\.json/);
-  } finally {
-    rmSync(temp, { recursive: true, force: true });
-  }
+test("omitting target keeps all-target assembly behavior", (t) => {
+  const { run } = fixture(t, "velocast-selected-release-default-");
+  const result = run();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /darwin-arm64\.tar\.gz\.json/);
 });
 
 test("package identity follows the manifest version without a major-zero prefix", () => {
@@ -88,12 +51,36 @@ test("package identity follows the manifest version without a major-zero prefix"
   expectPackageSet("2.0.0-rc.1");
 });
 
-function run(args) {
-  return spawnSync(process.execPath, [script, ...args], {
-    cwd: root,
-    encoding: "utf8",
-    windowsHide: true,
+function fixture(t, prefix = "velocast-selected-release-") {
+  const temp = mkdtempSync(join(tmpdir(), prefix));
+  const owned = realpathSync(temp);
+  t.after(() => {
+    assert.equal(realpathSync(temp), owned);
+    assert.equal(dirname(owned), realpathSync(tmpdir()));
+    rmSync(owned, { recursive: true, force: true });
   });
+  return {
+    temp,
+    run: (args = []) =>
+      spawnSync(
+        process.execPath,
+        [
+          script,
+          ...args,
+          "--evidence-dir",
+          temp,
+          "--output",
+          join(temp, "release.json"),
+          "--base-url",
+          "https://artifacts.invalid/",
+        ],
+        {
+          cwd: root,
+          encoding: "utf8",
+          windowsHide: true,
+        },
+      ),
+  };
 }
 
 function expectPackageSet(version) {
