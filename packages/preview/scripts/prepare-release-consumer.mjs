@@ -9,7 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 const workspace = resolve(import.meta.dirname, "../../..");
 const { browserProtocolVersion } = JSON.parse(
@@ -27,31 +27,29 @@ await mkdir(packages);
 await mkdir(project);
 await mkdir(join(project, "dist"));
 
-const pnpmExec = process.env.npm_execpath;
-const pnpm = pnpmExec
-  ? pnpmExec.endsWith(".exe")
-    ? { command: pnpmExec, prefix: [] }
-    : { command: process.execPath, prefix: [pnpmExec] }
-  : { command: "pnpm", prefix: [] };
+const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const run = (command, args, cwd = workspace) => {
-  const result = spawnSync(command, args, {
-    cwd,
-    encoding: "utf8",
-    stdio: "pipe",
-  });
+  const batch = process.platform === "win32" && command.endsWith(".cmd");
+  const result = spawnSync(
+    batch ? (process.env.ComSpec ?? "cmd.exe") : command,
+    batch ? ["/d", "/c", "call", command, ...args] : args,
+    {
+      cwd,
+      encoding: "utf8",
+      stdio: "pipe",
+    },
+  );
   if (result.status !== 0)
     throw new Error(
       `${command} ${args.join(" ")} failed (${result.status})\n${result.stdout}\n${result.stderr}`,
     );
   return result.stdout.trim();
 };
-const callPnpm = (args, cwd) =>
-  run(pnpm.command, [...pnpm.prefix, ...args], cwd);
-
 for (const name of ["@velocast/core", "@velocast/preview", "velocast"])
-  callPnpm(["--filter", name, "build"]);
+  run(pnpm, ["--filter", name, "build"]);
 for (const name of ["@velocast/core", "@velocast/preview", "velocast"])
-  callPnpm(["--filter", name, "pack", "--pack-destination", packages]);
+  run(pnpm, ["--filter", name, "pack", "--pack-destination", packages]);
 
 const tarballs = (await readdir(packages))
   .filter((name) => name.endsWith(".tgz"))
@@ -98,12 +96,7 @@ await writeFile(
     2,
   ),
 );
-const npmCli = join(
-  dirname(process.execPath),
-  "node_modules/npm/bin/npm-cli.js",
-);
-run(process.execPath, [
-  npmCli,
+run(npm, [
   "install",
   "--offline",
   "--ignore-scripts",
