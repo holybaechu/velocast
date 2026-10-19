@@ -9,7 +9,6 @@ mod events;
 mod frame_loop;
 mod generated;
 mod input_props;
-mod native_browser;
 mod output_media;
 mod output_result;
 mod output_workspace;
@@ -21,8 +20,8 @@ mod webcodecs;
 
 use args::Args;
 use clap::Parser;
+use electron_app::ElectronRenderer;
 use events::{RendererEvent, RendererEventSink};
-use native_browser::NativeBrowser;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use velocast_protocol::{CompositionManifest, RenderJob, RenderJobKind, RenderOperation};
@@ -207,7 +206,7 @@ async fn run_coordinator_render_with_mode(
         webcodecs::validate_job(job)?;
     }
     let props = input_props::read_input_props(job.input_props_path.as_deref())?;
-    let renderer = NativeBrowser::new(mode)?;
+    let renderer = ElectronRenderer::new(mode)?;
     let started = Instant::now();
     renderer.load(job, props.as_ref()).await?;
     telemetry.page_load_ms += started.elapsed().as_millis();
@@ -338,7 +337,7 @@ async fn run_coordinator_render_with_mode(
 
 use anyhow::Context;
 fn select_url_composition_or_measure(
-    renderer: &NativeBrowser,
+    renderer: &ElectronRenderer,
     compositions: &[CompositionManifest],
     selector: &str,
 ) -> anyhow::Result<CompositionManifest> {
@@ -482,7 +481,7 @@ async fn run_worker(mut job: RenderJob) -> anyhow::Result<()> {
         ));
         resources.check_cancellation()?;
         let mode = initial_surface_for_job(&job);
-        let renderer = NativeBrowser::new(mode)?;
+        let renderer = ElectronRenderer::new(mode)?;
         let load_started = Instant::now();
         renderer.load(&job, props.as_ref()).await?;
         report.page_load_ms += load_started.elapsed().as_millis();

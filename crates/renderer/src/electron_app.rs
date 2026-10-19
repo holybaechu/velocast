@@ -51,6 +51,9 @@ impl ElectronRenderer {
         };
         self.request(request, timeout)
     }
+    pub(crate) fn media_operation(&self, operation: Value) -> anyhow::Result<Value> {
+        self.host_request(json!({"method":"media-operation","operation":operation}))
+    }
     pub async fn load(&self, job: &RenderJob, props: Option<&Value>) -> anyhow::Result<()> {
         let cancellation = RenderCancellation::from_event_log_path(job.event_log_path.as_deref());
         *self.host.borrow_mut() = Some(HostProcess::spawn(cancellation, self.surface_mode)?);
