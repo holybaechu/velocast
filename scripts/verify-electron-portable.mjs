@@ -350,7 +350,16 @@ if (captureExpectation === "unavailable") {
       ["render", "portable", "--output", video, "--report", telemetry],
       {
         allowFailure: true,
-        environment: { ...env, VELOCAST_ELECTRON_HOST_SCRIPT: wrapper },
+        environment: {
+          ...env,
+          // The wrapper lives outside the runtime; resolve Electron from the
+          // real host before overriding its script path for attempt tracking.
+          VELOCAST_ELECTRON_BINARY:
+            env.VELOCAST_ELECTRON_BINARY ??
+            mediaOptions.electronBinary ??
+            require(join(runtimeHost, "node_modules/electron")),
+          VELOCAST_ELECTRON_HOST_SCRIPT: wrapper,
+        },
       },
     );
     if (
