@@ -27,6 +27,33 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
 });
+it.each([
+  { exitCode: 7, signalCode: null, diagnostic: "code 7" },
+  { exitCode: null, signalCode: "SIGTERM", diagnostic: "signal SIGTERM" },
+])(
+  "reports browser startup $diagnostic before DevTools readiness",
+  async ({ exitCode, signalCode, diagnostic }) => {
+    const child = new ChildProcess();
+    Object.assign(child, { pid: 456789, exitCode, signalCode });
+    mocks.spawn.mockReturnValue(child);
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("no such process"), { code: "ESRCH" });
+    });
+    await expect(
+      launchCdpBrowser("about:blank", {
+        executable: process.execPath,
+        timeoutMs: 200,
+      }),
+    ).rejects.toThrow(
+      `audit.browser_exited: browser exited with ${diagnostic}`,
+    );
+    const arguments_ = mocks.spawn.mock.calls[0]![1] as string[];
+    const profile = arguments_
+      .find((argument) => argument.startsWith("--user-data-dir="))!
+      .slice("--user-data-dir=".length);
+    await expect(access(profile)).rejects.toThrow();
+  },
+);
 it("joins delayed owned process termination instead of failing after the graceful deadline", async () => {
   vi.useFakeTimers();
   const child = new ChildProcess();
