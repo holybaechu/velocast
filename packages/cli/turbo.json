@@ -1,0 +1,13 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "$TURBO_ROOT$/packages/electron-host/*.cjs",
+        "$TURBO_ROOT$/packages/electron-host/*.html",
+        "$TURBO_ROOT$/packages/electron-host/package.json"
+      ]
+    }
+  }
+}
