@@ -65,7 +65,12 @@ Bitmap capture uses Chromium's `Page.captureScreenshot` surface snapshot, which
 forces a redraw before copying pixels. The requested logical viewport is set
 through device emulation, avoiding display-size and DPI-dependent window bounds.
 This provider works with GPU and CPU composition.
+The intermediate PNG requests Chromium's fast lossless encoding because it is
+decoded immediately rather than stored or published.
 Raw software frame leases and PNG exports use the same snapshot provider.
+Frame preparation still awaits authored work, fonts and images. Snapshot capture
+owns the compositor redraw boundary, avoiding an additional page animation-frame
+wait for bitmap video, PNG exports and raw software captures.
 When Electron's
 [reported compositor state](https://www.electronjs.org/docs/latest/api/structures/gpu-feature-status)
 indicates unavailable GPU compositing, the coordinator starts a fresh host with

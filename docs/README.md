@@ -13,6 +13,7 @@
 - [Video frame source](video-frame-source.md)
 - [Original Remotion project sources](upstream-remotion.md)
 - [Windows runtime candidate preparation](windows-runtime-candidate-prep.md)
+- [Snapshot capture performance and validation](benchmarks/2026-10-19-capture-synchronization.md)
 
 Start with the [root README](../README.md) for the user workflow. The
 [product definition](../PRODUCT.md) describes goals and scope. Native runtime

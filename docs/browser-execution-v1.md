@@ -22,9 +22,12 @@ running two seeks concurrently. `cancelPending()` invalidates pending work;
 the page. An uncooperative hook can require reloading the page or ending the
 native job.
 
-The renderer also waits for browser paint after the composition reports
-readiness. Browser readiness alone does not establish correct Electron texture
-capture or encoded output. Use an exact-frame output check for that boundary.
+The renderer awaits font and image readiness after the composition settles.
+Bitmap and PNG capture then use a Chromium surface snapshot that forces a
+redraw; frame preparation does not add a separate animation-frame wait on these
+paths. Shared-texture capture retains its page-paint wait and compositor paint
+observations. Browser readiness alone does not establish correct captured pixels
+or encoded output. Decoded frame-identity checks run in the acceptance tests.
 
 See [architecture](architecture.md), [static snapshots](static-input-snapshot.md),
 and [authored audio](authored-audio.md) for the surrounding contracts.

@@ -362,6 +362,9 @@ async function captureSnapshot(width, height) {
   const snapshot = await deadline(
     snapshotDebugger().sendCommand("Page.captureScreenshot", {
       format: "png",
+      // This PNG is decoded immediately; prioritize lossless capture latency
+      // over compressing an intermediate that is never published or retained.
+      optimizeForSpeed: true,
       fromSurface: true,
       captureBeyondViewport: false,
       clip: { x: 0, y: 0, width, height, scale: 1 },
