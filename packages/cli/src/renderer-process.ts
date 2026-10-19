@@ -394,6 +394,8 @@ export async function runRenderer(
   let signalCancellation: (() => void) | undefined;
   let terminationPending: Promise<void> | undefined;
   const cleanupProtocol = async () => {
+    if (signalCancellation)
+      options.signal?.removeEventListener("abort", signalCancellation);
     // The lifecycle may request protocol cleanup while termination is pending.
     // Keep the fence (and its containing private directory) until the tree settles.
     if (terminationPending) {
@@ -403,8 +405,6 @@ export async function runRenderer(
         if (!rendererProcessHasExited(child)) throw error;
       }
     }
-    if (signalCancellation)
-      options.signal?.removeEventListener("abort", signalCancellation);
     try {
       await (
         options.cleanupEventProtocol ?? cleanupTemporaryRendererEventProtocol
