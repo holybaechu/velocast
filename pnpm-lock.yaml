@@ -162,6 +162,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  mediabunny@1.60.0: 12dbf6bab779aee19a9fb0b7b22b8a052a2a3ddb81e8056f66e03c99784912c6
+
 importers:
 
   .:
@@ -302,10 +305,10 @@ importers:
     dependencies:
       '@mediabunny/server':
         specifier: 1.60.0
-        version: 1.60.0(mediabunny@1.60.0)(supports-color@8.1.1)
+        version: 1.60.0(mediabunny@1.60.0(patch_hash=12dbf6bab779aee19a9fb0b7b22b8a052a2a3ddb81e8056f66e03c99784912c6))(supports-color@8.1.1)
       mediabunny:
         specifier: 1.60.0
-        version: 1.60.0
+        version: 1.60.0(patch_hash=12dbf6bab779aee19a9fb0b7b22b8a052a2a3ddb81e8056f66e03c99784912c6)
     devDependencies:
       electron:
         specifier: 44.4.5
@@ -3304,15 +3307,15 @@ snapshots:
   '@leichtgewicht/ip-codec@2.0.5':
     optional: true
 
-  '@mediabunny/prores@1.60.0(mediabunny@1.60.0)':
+  '@mediabunny/prores@1.60.0(mediabunny@1.60.0(patch_hash=12dbf6bab779aee19a9fb0b7b22b8a052a2a3ddb81e8056f66e03c99784912c6))':
     dependencies:
-      mediabunny: 1.60.0
+      mediabunny: 1.60.0(patch_hash=12dbf6bab779aee19a9fb0b7b22b8a052a2a3ddb81e8056f66e03c99784912c6)
       turbores: 1.2.2
 
-  '@mediabunny/server@1.60.0(mediabunny@1.60.0)(supports-color@8.1.1)':
+  '@mediabunny/server@1.60.0(mediabunny@1.60.0(patch_hash=12dbf6bab779aee19a9fb0b7b22b8a052a2a3ddb81e8056f66e03c99784912c6))(supports-color@8.1.1)':
     dependencies:
-      '@mediabunny/prores': 1.60.0(mediabunny@1.60.0)
-      mediabunny: 1.60.0
+      '@mediabunny/prores': 1.60.0(mediabunny@1.60.0(patch_hash=12dbf6bab779aee19a9fb0b7b22b8a052a2a3ddb81e8056f66e03c99784912c6))
+      mediabunny: 1.60.0(patch_hash=12dbf6bab779aee19a9fb0b7b22b8a052a2a3ddb81e8056f66e03c99784912c6)
       node-av: 6.1.1(supports-color@8.1.1)
     transitivePeerDependencies:
       - supports-color
@@ -4655,7 +4658,7 @@ snapshots:
 
   mdn-data@2.27.1: {}
 
-  mediabunny@1.60.0:
+  mediabunny@1.60.0(patch_hash=12dbf6bab779aee19a9fb0b7b22b8a052a2a3ddb81e8056f66e03c99784912c6):
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13
@@ -5382,7 +5385,7 @@ snapshots:
     dependencies:
       buffer: 6.0.3
       debug: 4.4.0(supports-color@8.1.1)
-      mediabunny: 1.60.0
+      mediabunny: 1.60.0(patch_hash=12dbf6bab779aee19a9fb0b7b22b8a052a2a3ddb81e8056f66e03c99784912c6)
     transitivePeerDependencies:
       - supports-color
     optional: true

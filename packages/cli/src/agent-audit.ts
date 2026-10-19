@@ -410,17 +410,17 @@ async function auditCompositionInContext(
       return media.handle(request, response, identity);
     },
   });
-  const inputProps = snapshot.inputPropsPath
-    ? JSON.parse(
-        (await readFile(snapshot.inputPropsPath, "utf8")).replace(
-          /^\uFEFF/,
-          "",
-        ),
-      )
-    : undefined;
   let browser: CdpBrowser | undefined;
   let primaryFailure: { error: unknown } | undefined;
   try {
+    const inputProps = snapshot.inputPropsPath
+      ? JSON.parse(
+          (await readFile(snapshot.inputPropsPath, "utf8")).replace(
+            /^\uFEFF/,
+            "",
+          ),
+        )
+      : undefined;
     browser = await launchCdpBrowser("about:blank", {
       executable: options.browser,
     });

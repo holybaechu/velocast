@@ -62,6 +62,7 @@ export class VelocastRuntime {
   private protocol: BrowserProtocol | undefined;
   private project: VelocastProject | undefined;
   private projectPrepared = false;
+  private preparedInputProps: unknown;
 
   readonly global: VelocastGlobal = {
     registerAdapter: (compositionId, adapter, options) =>
@@ -159,7 +160,7 @@ export class VelocastRuntime {
           await this.protocolOptions.setInputProps?.(nextInputProps, signal);
           signal.throwIfAborted();
           if (this.project) await this.prepareProject(nextInputProps, signal);
-          else this.inputProps = nextInputProps;
+          this.inputProps = nextInputProps;
         });
       },
     };
@@ -226,6 +227,7 @@ export class VelocastRuntime {
     this.protocol = undefined;
     this.project = undefined;
     this.projectPrepared = false;
+    this.preparedInputProps = undefined;
   }
 
   /** Validate the entire catalog before publishing it or installing the browser protocol. */
@@ -277,16 +279,12 @@ export class VelocastRuntime {
     context: RenderContext | undefined,
     signal: AbortSignal,
   ): Promise<void> {
-    if (
-      this.project &&
-      context &&
-      Object.prototype.hasOwnProperty.call(context, "inputProps") &&
-      !sameProps(snapshotProps(context.inputProps), this.inputProps)
-    ) {
-      await this.prepareProject(context.inputProps, signal);
-    } else {
-      await this.ensureProjectPrepared(signal);
-    }
+    await this.prepareProject(
+      context && Object.prototype.hasOwnProperty.call(context, "inputProps")
+        ? context.inputProps
+        : this.inputProps,
+      signal,
+    );
   }
 
   private async prepareProject(
@@ -295,7 +293,8 @@ export class VelocastRuntime {
   ): Promise<void> {
     if (!this.project) return;
     const snapshot = snapshotProps(inputProps);
-    if (this.projectPrepared && sameProps(snapshot, this.inputProps)) return;
+    if (this.projectPrepared && sameProps(snapshot, this.preparedInputProps))
+      return;
     const records: AdapterRecord[] = [];
     for (const composition of this.project.compositions) {
       const props = resolveProps(composition, snapshot);
@@ -311,7 +310,7 @@ export class VelocastRuntime {
     this.adapters.clear();
     for (const record of records)
       this.adapters.set(record.compositionId, record);
-    this.inputProps = snapshot;
+    this.preparedInputProps = snapshot;
     this.projectPrepared = true;
   }
 
@@ -565,8 +564,10 @@ export class VelocastRuntime {
       // and a new mount; otherwise a late old mount could mutate the new frame.
       await Promise.allSettled([...this.pendingOperations.keys()]);
       await this.releaseAdapters();
+      this.inputProps = undefined;
       this.renderSession = undefined;
       this.projectPrepared = false;
+      this.preparedInputProps = undefined;
       cleaned = true;
     })().finally(() => {
       this.teardown = undefined;
@@ -593,7 +594,6 @@ export class VelocastRuntime {
 
     this.initializedAdapters.clear();
 
-    this.inputProps = undefined;
     if (destroyFailure) {
       this.cancelled = true;
       throw destroyFailure;
@@ -629,6 +629,12 @@ function sameProps(left: unknown, right: unknown): boolean {
   if (!left || !right || typeof left !== "object" || typeof right !== "object")
     return false;
   if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (
+    Array.isArray(left) &&
+    Array.isArray(right) &&
+    left.length !== right.length
+  )
+    return false;
   const leftKeys = Object.keys(left);
   const rightKeys = Object.keys(right);
   return (

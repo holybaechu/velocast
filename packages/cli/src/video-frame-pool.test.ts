@@ -70,20 +70,17 @@ function backend() {
     times: number[] = [];
   let closes = 0;
   const metadata = buildVideoPtsIndex({
-    streams: [
-      {
-        width: 2,
-        height: 1,
-        codec_name: "vp8",
-        pix_fmt: "yuv420p",
-        time_base: "1/1000",
-      },
-    ],
+    width: 2,
+    height: 1,
+    codedWidth: 2,
+    codedHeight: 1,
+    codec: "vp8",
+    rotation: 0,
+    timeBase: { numerator: 1, denominator: 1000 },
     frames: [2300, 2600, 2900].map((pts, index) => ({
       pts,
-      best_effort_timestamp: pts,
       duration: 300,
-      key_frame: index === 0 ? 1 : 0,
+      keyframe: index === 0,
     })),
   });
   const open = async (
@@ -291,6 +288,61 @@ it("close initiates decoder shutdown, joins late work, and never returns its can
   await expect(pool.frameAt("clip.webm", 0)).rejects.toThrow(
     "video.pool_closed",
   );
+});
+
+it("preserves source bytes and reports failed shutdown after a cancelled late open", async () => {
+  const f = await fixture(),
+    b = backend(),
+    failure = new Error("decoder shutdown was not confirmed");
+  let started!: () => void, finish!: () => void;
+  const began = new Promise<void>((resolve) => (started = resolve));
+  const available = new Promise<void>((resolve) => (finish = resolve));
+  let closes = 0;
+  const pool = await createVideoFramePool(f, {
+    openSource: async (options) => {
+      const source = await b.open(options);
+      started();
+      await available;
+      return {
+        ...source,
+        close: async () => {
+          closes++;
+          throw failure;
+        },
+      };
+    },
+  });
+  const request = pool.frameAt("clip.webm", 0),
+    rejected = expect(request).rejects.toThrow("video.pool_cancelled");
+  await began;
+  const closing = pool.close(),
+    failedCleanup = expect(closing).rejects.toBe(failure);
+  finish();
+  await Promise.all([rejected, failedCleanup]);
+
+  expect(closes).toBe(1);
+  expect(await readFile(b.paths[0]!)).toEqual(bytes);
+  expect(await readFile(join(f.directory, "keep.txt"), "utf8")).toBe(
+    "caller data",
+  );
+  await expect(pool.close()).rejects.toBe(failure);
+  expect(closes).toBe(1);
+});
+
+it("cleans downloaded bytes when opening fails without owning a decoder", async () => {
+  const f = await fixture(),
+    failure = new Error("decoder open failed");
+  const pool = await createVideoFramePool(f, {
+    openSource: async () => {
+      throw failure;
+    },
+  });
+  pools.push(pool);
+
+  await expect(pool.frameAt("clip.webm", 0)).rejects.toBe(failure);
+  await pool.close();
+
+  expect(await readdir(f.directory)).toEqual(["keep.txt"]);
 });
 
 it("close aborts an unfinished streamed fetch and removes only its owned child", async () => {

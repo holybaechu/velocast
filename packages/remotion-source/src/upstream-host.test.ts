@@ -1,16 +1,20 @@
 // @vitest-environment node
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 const mocks = vi.hoisted(() => ({
   bundle: vi.fn(),
   close: vi.fn(),
@@ -120,7 +124,12 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 it("keeps authored bundle unchanged, snapshots input, and closes only its own directory", async () => {
-  const props = { label: "original" };
+  const props = {
+    label: "original",
+    closingTag: "</SCRIPT></ScRiPt>",
+    comment: "<!--<script>",
+  };
+  const serializedProps = serialize(props);
   const pending = prepareRemotionSource({
     entryPoint,
     compositionId: "Original",
@@ -141,6 +150,31 @@ it("keeps authored bundle unchanged, snapshots input, and closes only its own di
         join(directory, owned, "bundle/velocast.html"),
         "utf8",
       );
+    const metadata = await readFile(
+      join(directory, owned, "bundle/metadata.html"),
+      "utf8",
+    );
+    const { JSDOM } = createRequire(import.meta.url)("jsdom") as {
+      JSDOM: new (
+        html: string,
+        options: { runScripts: "dangerously" },
+      ) => {
+        window: {
+          remotion_inputProps?: unknown;
+          document: Document;
+          close(): void;
+        };
+      };
+    };
+    const dom = new JSDOM(metadata, { runScripts: "dangerously" });
+    try {
+      expect(dom.window.remotion_inputProps).toBe(serializedProps);
+      expect(
+        dom.window.document.querySelectorAll('script[src="/bundle.js"]'),
+      ).toHaveLength(1);
+    } finally {
+      dom.window.close();
+    }
     expect(original).not.toContain("__velocast");
     expect(native).toContain("__velocast");
     expect(native).toContain("original");
@@ -152,6 +186,33 @@ it("keeps authored bundle unchanged, snapshots input, and closes only its own di
   }
   expect(mocks.close).toHaveBeenCalledOnce();
   expect(await readdir(directory)).toEqual(["caller-owned.txt"]);
+});
+it("unlinks a replaced workspace root without deleting another source directory", async () => {
+  const source = await prepareRemotionSource({
+    entryPoint,
+    compositionId: "Original",
+    workDirectory: directory,
+  });
+  try {
+    const owned = (await readdir(directory)).find((name) =>
+      name.startsWith("velocast-remotion-"),
+    )!;
+    const workspace = join(directory, owned);
+    const unrelated = join(directory, "velocast-remotion-unrelated");
+    await mkdir(unrelated);
+    await writeFile(join(unrelated, "caller-owned.txt"), "keep");
+    await rename(workspace, join(directory, "moved-owned"));
+    await symlink(unrelated, workspace, "junction");
+
+    await source.close();
+
+    expect(await readFile(join(unrelated, "caller-owned.txt"), "utf8")).toBe(
+      "keep",
+    );
+    await expect(lstat(workspace)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await source.close();
+  }
 });
 it("discovers original metadata without upstream compositor APIs", async () => {
   expect(

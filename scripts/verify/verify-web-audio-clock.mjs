@@ -55,10 +55,25 @@ try {
     const { launchCdpBrowser } = await import(
       pathToFileURL(join(repo, "packages/cli/dist/browser-cdp.js")).href
     );
-    const cdp = await launchCdpBrowser(url, {
+    const cdp = await launchCdpBrowser("about:blank", {
       executable: resolve(browserExecutable),
     });
     browser = { close: () => cdp.close() };
+    await cdp.call("Page.navigate", { url });
+    let ready = false;
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      try {
+        ready = await cdp.evaluate(
+          `location.href === ${JSON.stringify(url)} && document.readyState === "complete"`,
+        );
+      } catch {
+        // Navigation can replace the execution context during this check.
+      }
+      if (ready) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(ready, "offline audio verification page did not load");
     page = {
       evaluate: (callback) => cdp.evaluate(`(${callback.toString()})()`),
     };
@@ -82,7 +97,7 @@ try {
       { length: 512 },
       (_, index) => ((index % 13) - 6) / 16,
     );
-    async function render(plan, channels = 1) {
+    async function render(plan, channels = 1, range) {
       const offline = new OfflineAudioContext(
         channels,
         plan.durationSamples,
@@ -109,9 +124,14 @@ try {
           return decoded;
         },
       });
-      await clock.play();
+      await clock.play(range?.start, range?.end);
       const rendered = await offline.startRendering();
+      const finalSample = clock.currentSample();
       await clock.dispose();
+      if (range && finalSample !== range.end)
+        throw new Error(
+          `Playback advanced to sample ${finalSample} beyond selected end ${range.end}`,
+        );
       return Array.from({ length: channels }, (_, channel) =>
         Array.from(rendered.getChannelData(channel)),
       );
@@ -138,6 +158,19 @@ try {
               { sample: 57, gain: 0.2 },
               { sample: 79, gain: 1 },
               { sample: 100, gain: 0 },
+            ],
+          },
+        ],
+      },
+      {
+        name: "envelope-constant-extension",
+        clips: [
+          {
+            ...clip,
+            volumeEnvelope: [
+              { sample: 20, gain: 0.2 },
+              { sample: 30, gain: 0.6 },
+              { sample: 50, gain: 0.3 },
             ],
           },
         ],
@@ -212,9 +245,32 @@ try {
         ),
       ),
     });
+    const playbackRange = { start: 19, end: 61 };
+    const bounded = (await render(envelopePlan, 1, playbackRange))[0];
+    results.push({
+      name: "envelope-playback-range-end",
+      samples: bounded.length,
+      silentTailPeak: Math.max(
+        ...bounded
+          .slice(playbackRange.end - playbackRange.start)
+          .map((sample) => Math.abs(sample)),
+      ),
+      maxAbsoluteError: Math.max(
+        ...bounded.map((sample, index) =>
+          Math.abs(
+            sample -
+              (index < playbackRange.end - playbackRange.start
+                ? envelopeFull[index + playbackRange.start]
+                : 0),
+          ),
+        ),
+      ),
+    });
     return { cases: results, userAgent: navigator.userAgent };
   });
   for (const resultCase of result.cases) {
+    if (resultCase.silentTailPeak !== undefined)
+      assert.equal(resultCase.silentTailPeak, 0, resultCase.name);
     if (
       resultCase.name.includes("envelope") ||
       resultCase.name === "fade-duck-preroll"

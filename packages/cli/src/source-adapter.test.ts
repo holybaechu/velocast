@@ -171,6 +171,7 @@ it("captures props once and routes native video, source audio, and cleanup throu
         );
       },
       renderSourceOutput: async (options) => {
+        expect(options.composition).toEqual(composition);
         await options.renderVideo(join(root, "stage.mp4"), options.signal!);
         await options.renderAudio(join(root, "stage.aac"), options.signal!);
         order.push("publish");
@@ -296,6 +297,43 @@ it("cleans up after missing composition or malformed source metadata", async () 
     inspectCompositions(invalid.config, undefined, {}, invalid.dependencies),
   ).rejects.toThrow("source.invalid_compositions");
   expect(invalid.close).toHaveBeenCalledOnce();
+
+  const root = await directory();
+  const renderFrameOverride = vi.fn(async (_frame: number, path: string) => {
+    await writeFile(path, png);
+  });
+  const invalidTiming = fixture({
+    compositions: [{ ...composition, fps: 0 }],
+    renderFrame: renderFrameOverride,
+  });
+  await expect(
+    inspectCompositions(
+      invalidTiming.config,
+      "Intro",
+      {},
+      invalidTiming.dependencies,
+    ),
+  ).rejects.toThrow(
+    "composition dimensions, fps and duration must be positive",
+  );
+  await expect(
+    renderFrame(
+      invalidTiming.config,
+      "Intro",
+      join(root, "frame.png"),
+      { frame: 0 },
+      invalidTiming.dependencies,
+    ),
+  ).rejects.toThrow(
+    "composition dimensions, fps and duration must be positive",
+  );
+  expect(renderFrameOverride).not.toHaveBeenCalled();
+  expect(await readdir(root)).toEqual([]);
+  expect(invalidTiming.close).toHaveBeenCalledTimes(2);
+  expect(invalidTiming.results.map((result) => result.status)).toEqual([
+    "failure",
+    "failure",
+  ]);
 });
 
 it("rejects snapshot identity and unsupported operations with structured failures", async () => {

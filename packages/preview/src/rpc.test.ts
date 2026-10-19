@@ -74,6 +74,11 @@ it("host rejects wrong windows/origins/channels/requests/sessions and accepts it
     target,
     "http://127.0.0.1:9001",
   );
+  host.dispatch(
+    { ...response, method: { toString: null } },
+    target,
+    "http://127.0.0.1:9001",
+  );
   await Promise.resolve();
   expect(resolved).toBe(false);
   host.dispatch(response, target, "http://127.0.0.1:9001");

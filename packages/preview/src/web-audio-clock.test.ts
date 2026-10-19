@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { PreviewController } from "./controller.js";
 import { prepareWebAudioClock } from "./web-audio-clock.js";
 
 function deferred<T>() {
@@ -24,6 +25,11 @@ const plan = () => ({
 const buffer = (length = 48000, rate = 48000) =>
   ({ sampleRate: rate, length, numberOfChannels: 2 }) as AudioBuffer;
 function device() {
+  const automation: {
+    method: "set" | "ramp";
+    value: number;
+    time: number;
+  }[][] = [];
   const sources: {
     start: number[];
     stops: number;
@@ -68,12 +74,27 @@ function device() {
       };
     },
     createGain() {
-      return { gain: { value: 1 }, connect() {}, disconnect() {} };
+      const events: (typeof automation)[number] = [];
+      automation.push(events);
+      return {
+        gain: {
+          value: 1,
+          setValueAtTime(value: number, time: number) {
+            events.push({ method: "set", value, time });
+          },
+          linearRampToValueAtTime(value: number, time: number) {
+            events.push({ method: "ramp", value, time });
+          },
+        },
+        connect() {},
+        disconnect() {},
+      };
     },
   };
   return {
     context,
     sources,
+    automation,
     closes: () => closes,
     resumeWith: (operation: () => Promise<void>) => {
       resume = operation;
@@ -105,6 +126,176 @@ it("schedules original source trim and offset, follows audio time, and replaces 
   await clock.dispose();
   expect(fake.closes()).toBe(1);
   expect(() => clock.currentSample()).toThrow("preview.audio_closed");
+});
+
+it("bounds scheduled audio and its cursor independently of visual ticks, then supports seek, replay and full-plan resume", async () => {
+  const fake = device();
+  const clock = await prepareWebAudioClock(plan(), fake.options);
+  await clock.play(0, 12000);
+  expect(fake.sources[0]!.start).toEqual([100.1, 0.2, 0.15]);
+  fake.context.currentTime = 101;
+  expect(clock.currentSample()).toBe(12000);
+
+  clock.seek(9600);
+  expect(fake.sources[0]!.stops).toBe(1);
+  expect(fake.sources[1]!.start).toEqual([101, 0.3, 0.05]);
+  clock.seek(12000);
+  expect(fake.sources[1]!.stops).toBe(1);
+  expect(fake.sources).toHaveLength(2);
+  await clock.play(4800, 12000);
+  expect(fake.sources[2]!.start).toEqual([101, 0.2, 0.15]);
+  fake.context.currentTime = 102;
+  clock.pause();
+  expect(clock.currentSample()).toBe(12000);
+
+  await clock.play();
+  expect(fake.sources[3]!.start).toEqual([102, 0.35, 0.35]);
+  fake.context.currentTime = 103;
+  expect(clock.currentSample()).toBe(48000);
+  await clock.dispose();
+});
+
+it("changes playback end without moving the cursor and rejects invalid ranges before stopping sound", async () => {
+  const fake = device();
+  const clock = await prepareWebAudioClock(plan(), fake.options);
+  await clock.play(4800, 24000);
+  fake.context.currentTime = 100.125;
+  expect(clock.currentSample()).toBe(10800);
+  for (const end of [-1, 0.5, 48001])
+    await expect(clock.play(undefined, end)).rejects.toThrow(
+      "preview.audio_position",
+    );
+  await expect(clock.play(24001, 24000)).rejects.toThrow("preview.audio_range");
+  await expect(clock.play(undefined, 9600)).rejects.toThrow(
+    "preview.audio_range",
+  );
+  expect(fake.sources[0]!.stops).toBe(0);
+  expect(clock.currentSample()).toBe(10800);
+
+  await clock.play(undefined, 12000);
+  expect(fake.sources[0]!.stops).toBe(1);
+  expect(fake.sources[1]!.start).toEqual([100.125, 0.325, 0.025]);
+  fake.context.currentTime = 101;
+  expect(clock.currentSample()).toBe(12000);
+  await clock.dispose();
+});
+
+it("rejects invalid range changes without cancelling a pending bounded resume", async () => {
+  const fake = device();
+  const resumed = deferred<void>();
+  fake.resumeWith(() => resumed.promise);
+  const clock = await prepareWebAudioClock(plan(), fake.options);
+  const pending = clock.play(4800, 12000);
+  await expect(clock.play(24000, 12000)).rejects.toThrow("preview.audio_range");
+  resumed.resolve();
+  await pending;
+  expect(fake.sources[0]!.start).toEqual([100, 0.2, 0.15]);
+  await clock.dispose();
+});
+
+it("ends range audio while a visual seek is still pending", async () => {
+  const fake = device();
+  const clock = await prepareWebAudioClock(plan(), fake.options);
+  const seeking = deferred<void>();
+  const frame = deferred<number>();
+  let tick: (() => void) | undefined;
+  const controller = new PreviewController({
+    transport: {
+      initialize: async () => {},
+      seekFrame: async (requested) => {
+        if (requested !== 1) return requested;
+        seeking.resolve();
+        return frame.promise;
+      },
+      dispose: async () => {},
+    },
+    prepareAudio: async () => clock,
+    scheduler: {
+      now: () => fake.context.currentTime * 1000,
+      schedule(callback) {
+        tick = callback;
+        return () => {
+          tick = undefined;
+        };
+      },
+    },
+  });
+  await controller.refresh({
+    session: { sessionId: "session", sourceVersion: "version" },
+    composition: {
+      id: "scene",
+      width: 320,
+      height: 180,
+      fps: 10,
+      durationFrames: 10,
+    },
+    audioPlan: plan(),
+  });
+  await controller.setPlaybackRange({ start: 0, end: 3 });
+  await controller.play();
+  fake.context.currentTime = 100.125;
+  const callback = tick!;
+  tick = undefined;
+  callback();
+  await seeking.promise;
+  expect(tick).toBeUndefined();
+
+  fake.context.currentTime = 102;
+  expect(fake.sources[0]!.start).toEqual([100.1, 0.2, 0.2]);
+  expect(clock.currentSample()).toBe(14400);
+  const disposal = controller.dispose();
+  frame.resolve(1);
+  await disposal;
+});
+
+it("keeps envelope prefix timing and starts seeks at their interpolated gain", async () => {
+  const fake = device();
+  fake.context.sampleRate = 10;
+  const clock = await prepareWebAudioClock(
+    {
+      sampleRate: 10,
+      durationSamples: 20,
+      clips: [
+        {
+          source: "voice.wav",
+          startSample: 2,
+          sourceStartSample: 0,
+          durationSamples: 15,
+          gain: 0.5,
+          volumeEnvelope: [
+            { sample: 3, gain: 0.2 },
+            { sample: 6, gain: 1 },
+            { sample: 10, gain: 1 },
+            { sample: 12, gain: 0.5 },
+          ],
+        },
+      ],
+    },
+    {
+      ...fake.options,
+      loadBuffer: async () => buffer(50, 10),
+    },
+  );
+  await clock.play();
+  expect(fake.automation[0]).toEqual([
+    { method: "set", value: 0.1, time: 100.2 },
+    { method: "ramp", value: 0.1, time: 100.2 + 0.3 },
+    { method: "ramp", value: 0.5, time: 100.2 + 0.6 },
+    { method: "ramp", value: 0.5, time: 100.2 + 1 },
+    { method: "ramp", value: 0.25, time: 100.2 + 1.2 },
+  ]);
+  clock.seek(6);
+  expect(fake.automation[1]).toEqual([
+    { method: "set", value: 0.5 * (0.2 + 0.8 / 3), time: 100 },
+    { method: "ramp", value: 0.5, time: 100.2 },
+    { method: "ramp", value: 0.5, time: 100.6 },
+    { method: "ramp", value: 0.25, time: 100.8 },
+  ]);
+  clock.seek(15);
+  expect(fake.automation[2]).toEqual([
+    { method: "set", value: 0.25, time: 100 },
+  ]);
+  await clock.dispose();
 });
 
 it("reuses decoded source PCM, allows sums above one, and pads missing source tails with silence", async () => {

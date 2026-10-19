@@ -375,7 +375,7 @@ function runCommand(input) {
     let stderr = "";
     let timedOut = false;
     let outputLimitExceeded = false;
-    let stopping = false;
+    let stopping;
     const maxOutputBytes = 64 * 1024 * 1024;
     const collect = (target, chunk) => {
       const next = target + String(chunk);
@@ -401,8 +401,15 @@ function runCommand(input) {
       clearTimeout(timeout);
       reject(error);
     });
-    joined.then(({ code, signal }) => {
+    joined.then(async ({ code, signal }) => {
       clearTimeout(timeout);
+      try {
+        // The leader can close while a descendant still needs forced shutdown.
+        await stopping;
+      } catch (error) {
+        reject(error);
+        return;
+      }
       resolveRun({
         exitCode:
           timedOut || outputLimitExceeded ? 124 : (code ?? (signal ? 1 : 0)),
@@ -413,24 +420,27 @@ function runCommand(input) {
       });
     });
 
-    async function stopTree(reason) {
-      if (stopping) return;
-      stopping = true;
-      stderr += `${stderr ? "\n" : ""}private_rc.terminated: ${reason}\n`;
-      await terminateProcessTree(child);
-      let joinTimer;
-      const outcome = await Promise.race([
-        joined.then(() => "joined"),
-        new Promise(
-          (resolveWait) =>
-            (joinTimer = setTimeout(() => resolveWait("timeout"), 10_000)),
-        ),
-      ]);
-      clearTimeout(joinTimer);
-      if (outcome !== "joined") {
-        child.kill("SIGKILL");
-        reject(new Error("private_rc.process_tree_join_timeout"));
-      }
+    function stopTree(reason) {
+      if (stopping) return stopping;
+      stopping = Promise.resolve().then(async () => {
+        stderr += `${stderr ? "\n" : ""}private_rc.terminated: ${reason}\n`;
+        await terminateProcessTree(child);
+        let joinTimer;
+        const outcome = await Promise.race([
+          joined.then(() => "joined"),
+          new Promise(
+            (resolveWait) =>
+              (joinTimer = setTimeout(() => resolveWait("timeout"), 10_000)),
+          ),
+        ]);
+        clearTimeout(joinTimer);
+        if (outcome !== "joined") {
+          child.kill("SIGKILL");
+          throw new Error("private_rc.process_tree_join_timeout");
+        }
+      });
+      void stopping.catch(reject);
+      return stopping;
     }
   });
 }

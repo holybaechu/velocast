@@ -1,4 +1,5 @@
 import {
+  evaluateAudioEnvelope,
   normalizeAudioPlan,
   sliceAudioEnvelope,
   secondsToSamples,
@@ -110,6 +111,7 @@ function makeClock(
   buffers: Map<string, AudioBuffer>,
 ): AudioPlanClock {
   let position = 0;
+  let playbackEnd = plan.durationSamples;
   let originTime = 0;
   let playing = false;
   let revision = 0;
@@ -150,7 +152,7 @@ function makeClock(
     assertOpen();
     if (!playing) return position;
     return Math.min(
-      plan.durationSamples,
+      playbackEnd,
       position +
         secondsToSamples(
           Math.max(0, context.currentTime - originTime),
@@ -168,11 +170,13 @@ function makeClock(
   };
   const schedule = () => {
     originTime = context.currentTime;
-    if (position === plan.durationSamples) return;
+    if (position >= playbackEnd) return;
     try {
       for (const clip of plan.clips) {
         const start = Math.max(position, clip.startSample);
-        const duration = clip.startSample + clip.durationSamples - start;
+        const duration =
+          Math.min(clip.startSample + clip.durationSamples, playbackEnd) -
+          start;
         if (duration <= 0) continue;
         const offset = clip.sourceStartSample + start - clip.startSample;
         const buffer = buffers.get(clip.source)!;
@@ -192,12 +196,16 @@ function makeClock(
             start - clip.startSample,
             start - clip.startSample + available,
           );
-          gain.gain.setValueAtTime(clip.gain * points[0]!.gain, when);
-          for (const point of points.slice(1))
-            gain.gain.linearRampToValueAtTime(
-              clip.gain * point.gain,
-              when + samplesToSeconds(point.sample, plan.sampleRate),
-            );
+          gain.gain.setValueAtTime(
+            clip.gain * evaluateAudioEnvelope(points, 0),
+            when,
+          );
+          for (const point of points)
+            if (point.sample > 0)
+              gain.gain.linearRampToValueAtTime(
+                clip.gain * point.gain,
+                when + samplesToSeconds(point.sample, plan.sampleRate),
+              );
         }
         source.connect(gain);
         gain.connect(context.destination);
@@ -229,10 +237,21 @@ function makeClock(
     currentSample,
     pause,
     seek,
-    async play(sample) {
+    async play(sample, endSample = plan.durationSamples) {
       assertOpen();
-      if (sample !== undefined) seek(sample);
-      if (playing || position === plan.durationSamples) return;
+      validatePosition(endSample);
+      const start = sample ?? currentSample();
+      validatePosition(start);
+      if (start > endSample)
+        throw new RangeError(
+          "preview.audio_range: start sample must not exceed playback end",
+        );
+      if (sample !== undefined || endSample !== playbackEnd) {
+        pause();
+        position = start;
+        playbackEnd = endSample;
+      }
+      if (playing || position === playbackEnd) return;
       const request = ++revision;
       await context.resume();
       assertOpen();

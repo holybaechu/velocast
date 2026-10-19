@@ -295,6 +295,87 @@ mod tests {
     }
 
     #[test]
+    fn maximum_size_envelopes_keep_constant_endpoint_extension() {
+        let points: Vec<_> = (0..10000)
+            .map(|index| AudioEnvelopePoint {
+                sample: index * 2 + 2,
+                gain: (index % 2) as f64,
+            })
+            .collect();
+        let plan = AudioPlan {
+            sample_rate: 48_000,
+            duration_samples: 20002,
+            clips: vec![AudioClip {
+                source: "voice.wav".to_owned(),
+                start_sample: 0,
+                source_start_sample: 0,
+                duration_samples: 20002,
+                gain: 1.0,
+                volume_envelope: Some(points.clone()),
+            }],
+        };
+        plan.validate().unwrap();
+        let normalized = plan.normalized().unwrap();
+        assert_eq!(normalized, plan);
+        assert_eq!(normalized.normalized().unwrap(), normalized);
+        let sliced = plan.slice_samples(3, 19999).unwrap();
+        let sliced_points = sliced.clips[0].volume_envelope.as_ref().unwrap();
+        assert!(sliced_points.len() <= 10000);
+        for sample in [0, 1, 9997, sliced.duration_samples - 1] {
+            assert_eq!(
+                envelope_gain(sliced_points, sample),
+                envelope_gain(&points, sample + 3)
+            );
+        }
+    }
+
+    #[test]
+    fn envelope_slices_preserve_crossing_ramps_and_constant_windows() {
+        let points = vec![
+            AudioEnvelopePoint {
+                sample: 2,
+                gain: 0.25,
+            },
+            AudioEnvelopePoint {
+                sample: 5,
+                gain: 1.0,
+            },
+            AudioEnvelopePoint {
+                sample: 8,
+                gain: 1.0,
+            },
+            AudioEnvelopePoint {
+                sample: 10,
+                gain: 0.0,
+            },
+        ];
+        assert_eq!(slice_envelope(&points, 0, 12), points);
+        assert_eq!(
+            slice_envelope(&points, 6, 7),
+            vec![AudioEnvelopePoint {
+                sample: 0,
+                gain: 1.0
+            }]
+        );
+        assert_eq!(
+            slice_envelope(&points, 11, 12),
+            vec![AudioEnvelopePoint {
+                sample: 0,
+                gain: 0.0
+            }]
+        );
+        for (start, end) in [(0, 4), (3, 9), (6, 7), (9, 12), (4, 4)] {
+            let sliced = slice_envelope(&points, start, end);
+            for sample in 0..=end - start {
+                assert!(
+                    (envelope_gain(&sliced, sample) - envelope_gain(&points, sample + start)).abs()
+                        < 1e-14
+                );
+            }
+        }
+    }
+
+    #[test]
     fn native_rounding_is_signed_and_overflow_checked() {
         assert_eq!(
             audio_frames_to_samples(1, 24, 44100, AudioSampleRounding::Floor).unwrap(),
@@ -395,23 +476,38 @@ fn envelope_gain(points: &[AudioEnvelopePoint], sample: u64) -> f64 {
     points.last().unwrap().gain
 }
 fn slice_envelope(points: &[AudioEnvelopePoint], start: u64, end: u64) -> Vec<AudioEnvelopePoint> {
-    let mut result = vec![AudioEnvelopePoint {
-        sample: 0,
-        gain: envelope_gain(points, start),
-    }];
-    result.extend(
-        points
-            .iter()
-            .filter(|point| point.sample > start && point.sample < end)
-            .map(|point| AudioEnvelopePoint {
+    let mut result = Vec::new();
+    for (index, point) in points.iter().enumerate() {
+        let previous = index.checked_sub(1).map(|index| &points[index]);
+        if previous.is_some_and(|previous| {
+            previous.sample < start && point.sample > start && previous.gain != point.gain
+        }) {
+            result.push(AudioEnvelopePoint {
+                sample: 0,
+                gain: envelope_gain(points, start),
+            });
+        }
+        if point.sample >= start && point.sample <= end {
+            result.push(AudioEnvelopePoint {
                 sample: point.sample - start,
                 gain: point.gain,
-            }),
-    );
-    if end > start {
+            });
+        }
+        if end > start
+            && previous.is_some_and(|previous| {
+                previous.sample < end && point.sample > end && previous.gain != point.gain
+            })
+        {
+            result.push(AudioEnvelopePoint {
+                sample: end - start,
+                gain: envelope_gain(points, end),
+            });
+        }
+    }
+    if result.is_empty() {
         result.push(AudioEnvelopePoint {
-            sample: end - start,
-            gain: envelope_gain(points, end),
+            sample: 0,
+            gain: envelope_gain(points, start),
         });
     }
     result

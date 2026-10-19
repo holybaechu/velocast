@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { createRef, useEffect, useLayoutEffect, useState } from "react";
 import { clearFrameAdaptersForTest } from "@velocast/core/testing";
 import { startVelocast } from "@velocast/core";
+import type { VideoFrame } from "@velocast/react";
 import * as pinned from "remotion-pinned";
 import {
   AbsoluteFill as AliasedAbsoluteFill,
@@ -22,10 +23,12 @@ import {
   interpolate,
   staticFile,
   Audio,
+  OffthreadVideo,
   VERSION,
   Sequence,
   delayRender,
   continueRender,
+  cancelRender,
   Composition,
   registerRoot,
 } from "./remotion.js";
@@ -53,6 +56,13 @@ function OriginalStyle({ label }: { label: string }) {
 }
 
 const config = { width: 320, height: 180, fps: 60, durationInFrames: 120 };
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 const originalDecode = Object.getOwnPropertyDescriptor(
   HTMLImageElement.prototype,
   "decode",
@@ -370,8 +380,194 @@ it("waits for captured delay handles before the first frame commit", async () =>
   expect(mounted).not.toHaveBeenCalled();
   continueRender(handle);
   await pending;
-  expect(mounted).toHaveBeenCalledOnce();
+  expect(mounted).toHaveBeenCalled();
+  expect(document.body.textContent).toBe("ready");
 });
+
+it.each(["render", "effect"] as const)(
+  "settles a %s-created delay handle and commits its resulting state before capture",
+  async (location) => {
+    let complete: (() => void) | undefined;
+    function Scene() {
+      const [ready, setReady] = useState(false);
+      const [renderHandle] = useState(() =>
+        location === "render" ? delayRender("render data") : undefined,
+      );
+      useEffect(() => {
+        const handle = renderHandle ?? delayRender("effect data");
+        complete = () => {
+          setReady(true);
+          continueRender(handle);
+        };
+      }, [renderHandle]);
+      return <span>{ready ? "ready" : "loading"}</span>;
+    }
+    const options = { ...config, component: Scene };
+    const protocol =
+      location === "render"
+        ? registerRemotionComposition("delayed", options)
+        : startVelocast([
+            defineRemotionComposition({
+              id: "delayed",
+              ...options,
+              defaultProps: {},
+            }),
+          ]);
+    let ready = false;
+    const pending = protocol.seekFrame("delayed", 0).then(() => {
+      ready = true;
+    });
+    await vi.waitFor(() => expect(complete).toBeDefined());
+    expect(ready).toBe(false);
+    expect(document.body.textContent).toBe("loading");
+    complete!();
+    await pending;
+    expect(document.body.textContent).toBe("ready");
+  },
+);
+
+it("settles chained handles and prepares media mounted by the final state update", async () => {
+  const image = deferred<void>();
+  const video = deferred<VideoFrame>();
+  const decode = vi
+    .spyOn(HTMLImageElement.prototype, "decode")
+    .mockImplementation(() => image.promise);
+  const getVideoFrame = vi.fn(() => video.promise);
+  const paint = vi.fn();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    clearRect() {},
+    createImageData: () => ({ data: new Uint8ClampedArray(4) }),
+    putImageData: paint,
+  } as unknown as CanvasRenderingContext2D);
+  let complete: (() => void) | undefined;
+  function Media() {
+    const [ready, setReady] = useState(false);
+    useEffect(() => {
+      const handle = delayRender("chained data");
+      setReady(true);
+      continueRender(handle);
+    }, []);
+    return ready ? (
+      <>
+        <Img src="image.png" />
+        <OffthreadVideo src="video.mp4" muted />
+        <Audio src="audio.wav" />
+        <span>ready</span>
+      </>
+    ) : (
+      <span>loading child</span>
+    );
+  }
+  function Scene() {
+    const [ready, setReady] = useState(false);
+    const [handle] = useState(() => delayRender("initial data"));
+    useEffect(() => {
+      complete = () => {
+        setReady(true);
+        continueRender(handle);
+      };
+    }, [handle]);
+    return ready ? <Media /> : <span>loading parent</span>;
+  }
+  const protocol = registerRemotionComposition("media", {
+    ...config,
+    component: Scene,
+    getVideoFrame,
+    audio: { sampleRate: 48_000, tracks: [{ src: "audio.wav" }] },
+  });
+  let ready = false;
+  const pending = protocol.seekFrame("media", 0).then(() => {
+    ready = true;
+  });
+  await vi.waitFor(() => expect(complete).toBeDefined());
+  expect(ready).toBe(false);
+  expect(decode).not.toHaveBeenCalled();
+  complete!();
+  await vi.waitFor(() => expect(getVideoFrame).toHaveBeenCalledOnce());
+  expect(decode).toHaveBeenCalledOnce();
+  expect(ready).toBe(false);
+  expect(paint).not.toHaveBeenCalled();
+  image.resolve();
+  await Promise.resolve();
+  expect(ready).toBe(false);
+  video.resolve({
+    pts: 0,
+    timeBase: { numerator: 1, denominator: 60 },
+    width: 1,
+    height: 1,
+    rgba: new Uint8Array([20, 40, 60, 255]),
+  });
+  await pending;
+  expect(paint).toHaveBeenCalledOnce();
+  expect(document.querySelector("canvas")?.dataset.velocastVideoPts).toBe("0");
+  expect(document.body.textContent).toBe("ready");
+});
+
+it("cancels delayed readiness and runs effect cleanup before a new mount", async () => {
+  const cleanup = vi.fn();
+  function Scene() {
+    const [handle] = useState(() => delayRender("canceled data"));
+    useEffect(
+      () => () => {
+        continueRender(handle);
+        cleanup();
+      },
+      [handle],
+    );
+    return <span>waiting</span>;
+  }
+  const protocol = registerRemotionComposition("canceled", {
+    ...config,
+    component: Scene,
+  });
+  const pending = protocol.seekFrame("canceled", 0);
+  await vi.waitFor(() => expect(document.body.textContent).toBe("waiting"));
+  protocol.cancelPending();
+  await expect(pending).rejects.toThrow("VELOCAST_REQUEST_CANCELLED");
+  await protocol.destroy();
+  expect(cleanup).toHaveBeenCalledOnce();
+  expect(document.body.children).toHaveLength(0);
+  clearFrameAdaptersForTest();
+  const next = registerRemotionComposition("next", {
+    ...config,
+    component: () => <span>next</span>,
+  });
+  await next.seekFrame("next", 0);
+  expect(document.body.textContent).toBe("next");
+});
+
+it.each(["render", "effect", "preload"] as const)(
+  "reports %s cancellation without a delay handle and permits an independent render",
+  async (location) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const fail = () => {
+      cancelRender(new Error("fatal preparation"));
+    };
+    function Scene() {
+      useEffect(() => {
+        if (location === "effect") fail();
+      }, []);
+      if (location === "render") fail();
+      return <span>must not capture</span>;
+    }
+    const protocol = registerRemotionComposition("fatal", {
+      ...config,
+      component: Scene,
+      preload: location === "preload" ? fail : undefined,
+    });
+    await expect(protocol.seekFrame("fatal", 0)).rejects.toThrow(
+      "fatal preparation",
+    );
+    await protocol.destroy();
+    clearFrameAdaptersForTest();
+    const next = registerRemotionComposition("next", {
+      ...config,
+      component: () => <span>next</span>,
+    });
+    await next.seekFrame("next", 0);
+    expect(document.body.textContent).toBe("next");
+  },
+);
 
 it("binds unchanged registerRoot identity to an explicit host manifest", async () => {
   const Root = () => null;

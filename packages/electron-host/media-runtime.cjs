@@ -598,7 +598,8 @@ function audioSelectionMetadata(metadata, selection, copied = false) {
 async function mux(op) {
   const inputs = [],
     sink = outputFile(op.outputPath, op.container);
-  let audioInput;
+  let audioInput,
+    producers = [];
   try {
     const paths = op.paths ?? [op.videoPath];
     if (!Array.isArray(paths) || !paths.length)
@@ -697,7 +698,8 @@ async function mux(op) {
       await encodeAudioTrack(audioTrack, audioSource, selection);
       audioSource.close();
     };
-    await Promise.all([addVideo(), addAudio()]);
+    producers = [addVideo(), addAudio()];
+    await Promise.all(producers);
     await sink.output.finalize();
     sink.close();
     const metadata = await probe({ path: op.outputPath });
@@ -705,7 +707,27 @@ async function mux(op) {
       ? audioSelectionMetadata(metadata, selection, copyAudio)
       : metadata;
   } catch (error) {
-    await sink.cancel();
+    const errors = [error];
+    try {
+      // Stop encoder/writer backpressure without deleting the output or
+      // disposing inputs that the other producer can still be reading.
+      await sink.output.cancel();
+    } catch (cleanup) {
+      errors.push(cleanup);
+    } finally {
+      await Promise.allSettled(producers);
+    }
+    try {
+      await sink.cancel();
+    } catch (cleanup) {
+      if (!errors.includes(cleanup)) errors.push(cleanup);
+    }
+    if (errors.length > 1)
+      throw new AggregateError(
+        errors,
+        `${error?.message ?? String(error)}; mux cleanup failed`,
+        { cause: error },
+      );
     throw error;
   } finally {
     for (const input of inputs) input.dispose();

@@ -630,6 +630,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publication_preserves_an_existing_directory_at_the_output_path() {
+        let root = test_directory("directory-output");
+        let directory = root.join("workspace");
+        let output = root.join("movie.mp4");
+        let temporary = directory.join("movie.final.mp4");
+        tokio::fs::create_dir_all(&output).await.unwrap();
+        tokio::fs::write(output.join("keep.txt"), b"caller data")
+            .await
+            .unwrap();
+
+        let result = RenderJobResources::run(Some(&output), &temporary, &directory, async |_| {
+            tokio::fs::write(&temporary, b"complete video").await?;
+            Ok(())
+        })
+        .await;
+        let preserved = tokio::fs::read(output.join("keep.txt")).await;
+        let workspace_remains = directory.exists();
+        tokio::fs::remove_dir_all(root).await.unwrap();
+
+        assert!(result.is_err(), "publication replaced a caller directory");
+        assert_eq!(preserved.unwrap(), b"caller data");
+        assert!(!workspace_remains);
+    }
+
+    #[tokio::test]
     async fn capture_probe_finishes_without_requiring_or_replacing_a_video() {
         let root = test_directory("probe");
         let directory = root.join("workspace");

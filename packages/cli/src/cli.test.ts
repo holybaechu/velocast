@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCli, type CliDependencies } from "./cli.js";
+import { buildCompositionRenderCommandJobFromSource } from "./render-command-job.js";
 
 const config = { entry: "index.html" };
 
@@ -360,6 +361,32 @@ describe("CLI dispatch", () => {
       "out.mp4",
       expect.objectContaining({ verifySegments: false }),
     );
+  });
+
+  it("rejects a string-valued verification flag with boolean flag guidance", async () => {
+    await expect(
+      runCli(
+        argv(
+          "render",
+          "hero",
+          "--output",
+          "out.mp4",
+          "--verify-segments=false",
+        ),
+        {
+          ...commandDependencies(),
+          renderComposition: async (config, id, output, options) => {
+            buildCompositionRenderCommandJobFromSource(
+              config,
+              id,
+              "http://127.0.0.1:4545",
+              output,
+              options,
+            );
+          },
+        },
+      ),
+    ).rejects.toThrow("use --verify-segments or --no-verify-segments");
   });
 
   it.each([

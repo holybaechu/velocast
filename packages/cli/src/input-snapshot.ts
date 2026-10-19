@@ -528,29 +528,30 @@ export async function createInputSnapshot(
       return;
     }
     if (requestUrl.pathname === "/__velocast-media/frame") {
-      if (!options.handleMediaRequest) {
+      const handleMediaRequest = options.handleMediaRequest;
+      if (!handleMediaRequest) {
         response.writeHead(404).end();
         return;
       }
-      void options
-        .handleMediaRequest(request, response, {
-          url: `${origin}/${entryName.split("/").map(encodeURIComponent).join("/")}`,
-          session,
-        })
+      void Promise.resolve()
+        .then(() =>
+          handleMediaRequest(request, response, {
+            url: `${origin}/${entryName.split("/").map(encodeURIComponent).join("/")}`,
+            session,
+          }),
+        )
         .catch((error) => {
           if (!response.headersSent) {
             response.setHeader("Content-Type", "application/json");
-            response
-              .writeHead(500)
-              .end(
-                JSON.stringify({
-                  error: {
-                    code: "video.request_failed",
-                    message:
-                      error instanceof Error ? error.message : String(error),
-                  },
-                }),
-              );
+            response.writeHead(500).end(
+              JSON.stringify({
+                error: {
+                  code: "video.request_failed",
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
+              }),
+            );
           } else response.destroy();
         });
       return;

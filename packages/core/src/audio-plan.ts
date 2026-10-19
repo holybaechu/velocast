@@ -213,20 +213,40 @@ export function evaluateAudioEnvelope(
   );
 }
 
+/** Preserve constant endpoint extension; the first retained point may follow sample zero. */
 export function sliceAudioEnvelope(
   points: readonly AudioEnvelopePoint[],
   start: number,
   end: number,
 ): readonly AudioEnvelopePoint[] {
-  return [
-    { sample: 0, gain: evaluateAudioEnvelope(points, start) },
-    ...points
-      .filter((p) => p.sample > start && p.sample < end)
-      .map((p) => ({ sample: p.sample - start, gain: p.gain })),
-    ...(end > start
-      ? [{ sample: end - start, gain: evaluateAudioEnvelope(points, end) }]
-      : []),
-  ];
+  const result: AudioEnvelopePoint[] = [];
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index]!;
+    const previous = points[index - 1];
+    if (
+      previous &&
+      previous.sample < start &&
+      point.sample > start &&
+      previous.gain !== point.gain
+    )
+      result.push({ sample: 0, gain: evaluateAudioEnvelope(points, start) });
+    if (point.sample >= start && point.sample <= end)
+      result.push({ sample: point.sample - start, gain: point.gain });
+    if (
+      end > start &&
+      previous &&
+      previous.sample < end &&
+      point.sample > end &&
+      previous.gain !== point.gain
+    )
+      result.push({
+        sample: end - start,
+        gain: evaluateAudioEnvelope(points, end),
+      });
+  }
+  return result.length
+    ? result
+    : [{ sample: 0, gain: evaluateAudioEnvelope(points, start) }];
 }
 
 /** Fade boundaries are sample-accurate. Nonoverlapping fades may include a unity plateau. */

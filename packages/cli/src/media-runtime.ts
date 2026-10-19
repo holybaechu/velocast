@@ -7,6 +7,7 @@ import { resolveDeveloperElectronRuntime } from "./electron-runtime.js";
 
 export interface MediaProbe {
   duration: number;
+  container?: string;
   videoTrackCount?: number;
   audioTrackCount?: number;
   video?: {

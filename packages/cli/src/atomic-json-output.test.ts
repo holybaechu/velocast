@@ -1,8 +1,20 @@
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { writeJsonOutput } from "./atomic-json-output.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...fs, writeFile: vi.fn(fs.writeFile) };
+});
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -33,4 +45,23 @@ it("preserves an existing output when staging fails before publication", async (
     writeJsonOutput(output, "replacement\n", true),
   ).rejects.toBeInstanceOf(Error);
   expect(await readdir(root)).toEqual(["value.json"]);
+});
+
+it("leaves no partial new output when writing fails", async () => {
+  const root = await mkdtemp(join(tmpdir(), "velocast-json-output-write-"));
+  roots.push(root);
+  const output = join(root, "value.json");
+  const fs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  const failure = new Error("simulated full disk");
+  vi.mocked(writeFile).mockImplementationOnce(async (path, _data, options) => {
+    await fs.writeFile(path, '{"partial":', options);
+    throw failure;
+  });
+  await expect(
+    writeJsonOutput(output, '{"complete":true}\n', false),
+  ).rejects.toBe(failure);
+  expect(await readdir(root)).toEqual([]);
 });

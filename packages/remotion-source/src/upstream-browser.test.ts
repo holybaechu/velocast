@@ -157,13 +157,33 @@ it("cancels an in-flight wait and allows a later operation to select", async () 
   await expect(protocol.waitForReady?.()).resolves.toBeUndefined();
 });
 
-it("escapes hostile props before embedding the script in HTML", () => {
+it("preserves JSON props while escaping them for inline HTML", async () => {
+  const inputProps = JSON.parse(
+    '{"__proto__":{"label":"top"},"nested":{"__proto__":{"label":"nested"}},"title":"</script><script>alert(1)</script>"}',
+  );
+  const serializedProps = JSON.stringify(inputProps);
   const script = createUpstreamRemotionBridgeScript({
     ...options,
-    inputProps: { title: "</script><script>alert(1)</script>" },
+    inputProps,
+    serializedInputPropsWithCustomSchema: serializedProps,
   });
   expect(script).not.toContain("</script>");
   expect(script).toContain("\\u003c/script>");
+  new Function(script)();
+  const protocol = window.__velocast!;
+  try {
+    expect(remotionWindow().remotion_inputProps).toBe(serializedProps);
+    await expect(
+      protocol.setInputProps(JSON.parse(serializedProps)),
+    ).resolves.toBeUndefined();
+    const different = JSON.parse(serializedProps);
+    different.nested["__proto__"].label = "different";
+    await expect(protocol.setInputProps(different)).rejects.toThrow(
+      "VELOCAST_INPUT_PROPS_MISMATCH",
+    );
+  } finally {
+    await protocol.destroy?.();
+  }
 });
 
 it("passes the modern composition defaults through to the original runtime", async () => {

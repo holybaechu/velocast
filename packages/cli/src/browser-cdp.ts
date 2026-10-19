@@ -145,14 +145,16 @@ export async function stopBrowser(
   gracefulShutdown?: () => Promise<unknown>,
 ): Promise<void> {
   const exited = () => child.exitCode !== null || child.signalCode !== null;
-  if (exited()) return;
-  let onClose!: () => void;
-  const closed = new Promise<void>((resolveClose) => {
-    onClose = resolveClose;
-    child.once("close", onClose);
-  });
+  const initiallyExited = exited();
+  let onClose: (() => void) | undefined;
+  const closed = initiallyExited
+    ? Promise.resolve()
+    : new Promise<void>((resolveClose) => {
+        onClose = resolveClose;
+        child.once("close", onClose);
+      });
   try {
-    if (gracefulShutdown) {
+    if (gracefulShutdown && !initiallyExited) {
       // A CDP acknowledgement does not mean Chrome has finished shutdown. Keep
       // watching the process, and bound only this cooperative phase.
       void Promise.resolve()
@@ -170,7 +172,10 @@ export async function stopBrowser(
         clearTimeout(timer);
       }
     }
-    if (!exited() && child.pid !== undefined) {
+    if (
+      child.pid !== undefined &&
+      (process.platform !== "win32" || !exited())
+    ) {
       if (process.platform === "win32") {
         await new Promise<void>((done, reject) => {
           const killer = spawn(
@@ -208,12 +213,13 @@ export async function stopBrowser(
         });
       } else {
         // Browser launches own their POSIX process group (detached: true).
+        // Descendants can survive both an earlier exit and cooperative shutdown.
         try {
           process.kill(-child.pid, "SIGKILL");
         } catch (error) {
-          if (!exited() && !child.kill("SIGKILL"))
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH")
             throw new Error(
-              "audit.browser_termination_failed: could not terminate the owned browser",
+              "audit.browser_termination_failed: could not terminate the owned browser process group",
               { cause: error },
             );
         }
@@ -223,7 +229,7 @@ export async function stopBrowser(
     // Reap it instead of treating a second arbitrary deadline as a failure.
     await closed;
   } finally {
-    child.removeListener("close", onClose);
+    if (onClose) child.removeListener("close", onClose);
   }
 }
 
@@ -286,12 +292,30 @@ export async function launchCdpBrowser(
       options.timeoutMs ?? 15_000,
       () => spawnFailure,
     );
-    const targets = (await (
-      await fetch(`${endpoint}/json/list`)
-    ).json()) as Array<{
+    const discovery = new AbortController();
+    const discoveryTimeout = setTimeout(
+      () =>
+        discovery.abort(
+          new Error(
+            "audit.browser_target_timeout: DevTools target discovery timed out",
+          ),
+        ),
+      options.timeoutMs ?? 15_000,
+    );
+    let targets: Array<{
       type: string;
       webSocketDebuggerUrl: string;
     }>;
+    try {
+      targets = await (
+        await fetch(`${endpoint}/json/list`, { signal: discovery.signal })
+      ).json();
+    } catch (error) {
+      discovery.signal.throwIfAborted();
+      throw error;
+    } finally {
+      clearTimeout(discoveryTimeout);
+    }
     const target = targets.find((item) => item.type === "page");
     if (!target)
       throw new Error("audit.browser_target_missing: no page target");

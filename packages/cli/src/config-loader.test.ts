@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadConfigFromPath, resolveConfigPath } from "./config-loader.js";
@@ -135,9 +136,7 @@ describe("loadConfigFromPath", () => {
 });
 
 async function mkCliTempDir(prefix: string): Promise<string> {
-  const cacheDir = join(process.cwd(), "node_modules", ".cache");
-  await mkdir(cacheDir, { recursive: true });
-  const dir = await mkdtemp(join(cacheDir, prefix));
+  const dir = await mkdtemp(join(tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
 }

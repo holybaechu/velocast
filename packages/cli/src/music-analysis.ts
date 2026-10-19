@@ -138,7 +138,10 @@ export async function analyzeMusic(
     throw new Error("audio.no_samples: source decoded to no audio samples");
   const hop = 512;
   const rms = rmsWindows(samples, 1024, hop);
-  const peak = Math.max(...rms, Number.EPSILON);
+  const peak = rms.reduce(
+    (maximum, value) => Math.max(maximum, value),
+    Number.EPSILON,
+  );
   const energy: MusicAnalysis["energy"] = [];
   const markerStride = Math.max(1, Math.round((sampleRate * 0.25) / hop));
   for (let index = 0; index < rms.length; index += markerStride) {
@@ -152,6 +155,10 @@ export async function analyzeMusic(
   }
   const flux = rms.map((value, index) =>
     Math.max(0, value - (rms[index - 1] ?? value)),
+  );
+  const fluxPeak = flux.reduce(
+    (maximum, value) => Math.max(maximum, value),
+    Number.EPSILON,
   );
   const mean = flux.reduce((sum, value) => sum + value, 0) / flux.length;
   const deviation = Math.sqrt(
@@ -172,7 +179,7 @@ export async function analyzeMusic(
     const z = deviation > 0 ? (flux[index]! - mean) / deviation : 0;
     beatCandidates.push({
       timeSeconds: round((index * hop) / sampleRate, 4),
-      strength: round(flux[index]! / Math.max(...flux, Number.EPSILON)),
+      strength: round(flux[index]! / fluxPeak),
       confidence: round(Math.min(0.95, Math.max(0.05, 0.25 + z * 0.12)), 3),
     });
     last = index;

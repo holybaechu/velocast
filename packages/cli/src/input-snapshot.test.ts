@@ -141,16 +141,29 @@ it("rejects unsafe preview origins, paths and authored namespace collisions", as
 it("dispatches only the reserved media endpoint after origin admission with the frozen identity", async () => {
   const { root } = await fixture();
   const calls: unknown[] = [];
+  let ready = false;
   const snapshot = await createInputSnapshot({
     root,
     entryPath: "index.html",
-    async handleMediaRequest(_request, response, identity) {
+    handleMediaRequest(_request, response, identity) {
+      if (!ready)
+        throw new Error("video.service_not_ready: media runtime is not ready");
       calls.push(identity);
       response.end("frame bytes");
+      return Promise.resolve();
     },
   });
   cleanups.push(snapshot.close);
   const endpoint = new URL("/__velocast-media/frame?seconds=0", snapshot.url);
+  const failed = await fetch(endpoint);
+  expect(failed.status).toBe(500);
+  expect(await failed.json()).toEqual({
+    error: {
+      code: "video.request_failed",
+      message: "video.service_not_ready: media runtime is not ready",
+    },
+  });
+  ready = true;
   expect(await (await fetch(endpoint)).text()).toBe("frame bytes");
   expect(calls).toEqual([{ url: snapshot.url, session: snapshot.session }]);
   expect(

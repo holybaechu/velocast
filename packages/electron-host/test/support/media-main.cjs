@@ -4,6 +4,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+fs.writeFileSync(
+  path.join(process.env.PIPE_TEST_ROOT, "owner.json"),
+  JSON.stringify({
+    pid: process.pid,
+    scratch: process.env.VELOCAST_MEDIA_SCRATCH,
+  }),
+);
 const holder = spawn(
   process.execPath,
   [path.join(__dirname, "media-pipe-holder.cjs")],
@@ -11,7 +18,7 @@ const holder = spawn(
     env: process.env,
     stdio: ["ignore", "ignore", process.stderr],
     windowsHide: true,
-    detached: true,
+    detached: process.env.PIPE_TEST_OWNED_GROUP !== "1",
   },
 );
 holder.unref();
@@ -32,5 +39,6 @@ process.stdin.on("data", (bytes) => {
     request.response,
     JSON.stringify({ ok: true, result: { complete: true } }),
   );
+  if (process.env.PIPE_TEST_EXIT_AFTER_REQUEST === "1") process.exit(0);
 });
 process.stdin.on("end", () => process.exit(0));

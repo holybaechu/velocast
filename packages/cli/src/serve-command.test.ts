@@ -1,10 +1,52 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawn } from "node:child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { isServeUrlReady, withServeCommand } from "./serve-command.js";
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
+
+function createServeFixture() {
+  const directory = mkdtempSync(join(tmpdir(), "velocast-serve-command-"));
+  const script = join(directory, "server.cjs");
+  const pidPath = join(directory, "server.pid");
+  const heartbeatPath = join(directory, "heartbeat");
+  writeFileSync(
+    script,
+    `const fs = require("node:fs");
+process.on("SIGTERM", () => {});
+fs.writeFileSync(process.argv[2], String(process.pid));
+fs.writeFileSync(process.argv[3], ".");
+setInterval(() => fs.appendFileSync(process.argv[3], "."), 10);
+`,
+  );
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  return {
+    heartbeatPath,
+    command: `${[process.execPath, script, pidPath, heartbeatPath].map(quote).join(" ")}; wait`,
+    close() {
+      if (existsSync(pidPath)) {
+        try {
+          process.kill(Number(readFileSync(pidPath, "utf8")), "SIGKILL");
+        } catch {
+          // Cleanup also runs when the server already exited.
+        }
+      }
+      rmSync(directory, { recursive: true, force: true });
+    },
+  };
+}
 
 describe("isServeUrlReady", () => {
   it("treats non-5xx HEAD responses as ready", async () => {
@@ -44,9 +86,111 @@ describe("isServeUrlReady", () => {
     await expect(result).resolves.toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("aborts and joins an active HEAD probe when its caller cancels", async () => {
+    const controller = new AbortController();
+    const failure = new Error("render interrupted");
+    vi.stubGlobal(
+      "fetch",
+      (_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        }),
+    );
+    const ready = isServeUrlReady(
+      "http://127.0.0.1:4545",
+      5_000,
+      controller.signal,
+    );
+    controller.abort(failure);
+    await expect(ready).rejects.toBe(failure);
+  });
 });
 
 describe("withServeCommand", () => {
+  it.skipIf(process.platform === "win32")(
+    "stops a server descendant that ignores SIGTERM after its shell exits",
+    async () => {
+      const fixture = createServeFixture();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: existsSync(fixture.heartbeatPath),
+          status: existsSync(fixture.heartbeatPath) ? 200 : 503,
+        })),
+      );
+      try {
+        await withServeCommand(
+          {
+            command: fixture.command,
+            url: "http://127.0.0.1:4545",
+          },
+          async () => {},
+        );
+        const heartbeat = readFileSync(fixture.heartbeatPath, "utf8");
+        await delay(100);
+        expect(readFileSync(fixture.heartbeatPath, "utf8")).toBe(heartbeat);
+      } finally {
+        fixture.close();
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32").each([false, true])(
+    "cleans up on SIGINT and preserves an existing once handler: %s",
+    async (existingHandler) => {
+      const fixture = createServeFixture();
+      const moduleUrl = new URL("./serve-command.ts", import.meta.url).href;
+      const owner = spawn(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `
+import { withServeCommand } from ${JSON.stringify(moduleUrl)};
+import { existsSync } from "node:fs";
+const done = ${existingHandler ? 'new Promise(resolve => process.once("SIGINT", resolve))' : "new Promise(() => {})"};
+globalThis.fetch = async () => {
+  const ready = ${existingHandler} && existsSync(${JSON.stringify(fixture.heartbeatPath)});
+  return { ok: ready, status: ready ? 200 : 503 };
+};
+await withServeCommand(${JSON.stringify({ command: fixture.command, url: "http://127.0.0.1:4545" })}, () => done).catch(() => {});
+`,
+        ],
+        { stdio: "ignore" },
+      );
+      const exited = new Promise<{
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }>((resolve, reject) => {
+        owner.once("error", reject);
+        owner.once("close", (code, signal) => resolve({ code, signal }));
+      });
+      try {
+        await vi.waitFor(() =>
+          expect(existsSync(fixture.heartbeatPath)).toBe(true),
+        );
+        owner.kill("SIGINT");
+        await expect(exited).resolves.toEqual(
+          existingHandler
+            ? { code: 0, signal: null }
+            : { code: null, signal: "SIGINT" },
+        );
+        const heartbeat = readFileSync(fixture.heartbeatPath, "utf8");
+        await delay(100);
+        expect(readFileSync(fixture.heartbeatPath, "utf8")).toBe(heartbeat);
+      } finally {
+        owner.kill("SIGKILL");
+        await exited;
+        fixture.close();
+      }
+    },
+  );
+
   it("starts the configured serve command before rendering when the URL is not ready", async () => {
     const events: string[] = [];
     let readinessChecks = 0;

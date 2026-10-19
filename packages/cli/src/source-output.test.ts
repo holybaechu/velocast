@@ -1,5 +1,9 @@
 import { runMediaOperation, type MediaProbe } from "./media-runtime.js";
-import { writeTestVideo, writeTestWav } from "./media-test-fixtures.js";
+import {
+  writeTestPng,
+  writeTestVideo,
+  writeTestWav,
+} from "./media-test-fixtures.js";
 import {
   copyFile,
   mkdtemp,
@@ -21,6 +25,13 @@ let encodedOpus: string;
 let automaticAudioCodec: string;
 let combined: string;
 let otherVideo: string;
+const composition = {
+  id: "fixture",
+  width: 160,
+  height: 100,
+  fps: 10,
+  durationFrames: 6,
+};
 
 async function streams(
   path: string,
@@ -92,6 +103,7 @@ it("publishes video with source audio using the available WebCodecs codec", asyn
   expect(
     await renderSourceOutput({
       output,
+      composition,
       renderVideo: async (path) => {
         order.push("video");
         await copyFile(video, path);
@@ -114,6 +126,116 @@ it("publishes video with source audio using the available WebCodecs codec", asyn
   expect(
     (await readdir(directory)).filter((name) => name.includes(".velocast-")),
   ).toEqual([]);
+}, 120_000);
+
+it.each([
+  { field: "dimensions", expected: { ...composition, width: 320 } },
+  { field: "frame count", expected: { ...composition, durationFrames: 7 } },
+  { field: "frame timing", expected: { ...composition, fps: 20 } },
+])(
+  "rejects source video with unexpected $field and preserves the previous output",
+  async ({ field, expected }) => {
+    const output = join(directory, `unexpected-${field}.mp4`);
+    await writeFile(output, "previous video");
+    let audioCalled = false;
+    await expect(
+      renderSourceOutput({
+        output,
+        composition: expected,
+        renderVideo: (path) => copyFile(video, path),
+        renderAudio: async () => {
+          audioCalled = true;
+          return null;
+        },
+      }),
+    ).rejects.toThrow(`Video renderer ${field} differ`);
+    expect(audioCalled).toBe(false);
+    expect(await readFile(output, "utf8")).toBe("previous video");
+    expect(
+      (await readdir(directory)).filter((name) => name.includes(".velocast-")),
+    ).toEqual([]);
+  },
+  120_000,
+);
+
+it("checks actual container bytes and preserves explicit format overrides", async () => {
+  const inferred = join(directory, "wrong-container.webm");
+  await writeFile(inferred, "previous video");
+  await expect(
+    renderSourceOutput({
+      output: inferred,
+      renderVideo: (path) => copyFile(video, path),
+      renderAudio: async () => null,
+    }),
+  ).rejects.toThrow(
+    "Video renderer container differs from requested webm: mp4",
+  );
+  expect(await readFile(inferred, "utf8")).toBe("previous video");
+
+  const explicit = join(directory, "explicit-container.webm");
+  await renderSourceOutput({
+    output: explicit,
+    container: "mp4",
+    renderVideo: (path) => copyFile(video, path),
+    renderAudio: async () => null,
+  });
+  const metadata = await runMediaOperation<MediaProbe>({
+    kind: "probe",
+    path: explicit,
+  });
+  expect(metadata.container).toBe("mp4");
+}, 120_000);
+
+it("retains the last frame duration when muxing 30 fps video into coarse WebM timestamps", async () => {
+  const expected = { ...composition, fps: 30, durationFrames: 7 };
+  const source = join(directory, "coarse-source.webm");
+  const sound = join(directory, "coarse-audio.wav");
+  const output = join(directory, "coarse-output.webm");
+  const frames: string[] = [];
+  for (let index = 0; index < expected.durationFrames; index++) {
+    const path = join(directory, `coarse-${index}.png`);
+    await writeTestPng(path, expected.width, expected.height, [
+      index * 30,
+      100,
+      200,
+    ]);
+    frames.push(path);
+  }
+  await runMediaOperation({
+    kind: "encode-frames",
+    framePaths: frames,
+    width: expected.width,
+    height: expected.height,
+    fps: expected.fps,
+    codec: "vp9",
+    bitrate: 1_000_000,
+    outputPath: source,
+  });
+  await writeTestWav(sound, expected.durationFrames / expected.fps, 48000);
+  await renderSourceOutput({
+    output,
+    composition: expected,
+    renderVideo: (path) => copyFile(source, path),
+    renderAudio: async (path) => {
+      await copyFile(sound, path);
+      return path;
+    },
+  });
+  const metadata = await runMediaOperation<MediaProbe>({
+    kind: "probe",
+    path: output,
+    frames: true,
+  });
+  expect(metadata.video?.timeBase).toEqual({ numerator: 1, denominator: 1000 });
+  expect(metadata.video?.frames?.map((frame) => frame.pts)).toEqual([
+    0, 33, 67, 100, 133, 167, 200,
+  ]);
+  expect(metadata.video?.frames?.at(-1)?.duration).toBeGreaterThan(0);
+  expect(metadata.video?.duration).toBeCloseTo(
+    expected.durationFrames / expected.fps,
+    3,
+  );
+  expect(metadata.audio?.codec).toBe("opus");
 }, 120_000);
 
 it.each(["auto", "opus"])(
@@ -213,6 +335,28 @@ it("rejects a video changed after the first probe and preserves prior output", a
       },
     }),
   ).rejects.toThrow(/Final media video/);
+  expect(await readFile(output, "utf8")).toBe("original");
+}, 120_000);
+
+it("rejects changed interior frame timestamps with the same video duration", async () => {
+  const shifted = join(directory, "shifted-timing.mp4");
+  await writeTestVideo(shifted, directory, {
+    ...composition,
+    frames: composition.durationFrames,
+    timestamps: [0, 0.1, 0.25, 0.3, 0.4, 0.5],
+  });
+  const output = join(directory, "changed-timing.mp4");
+  await writeFile(output, "original");
+  await expect(
+    renderSourceOutput({
+      output,
+      renderVideo: (path) => copyFile(video, path),
+      renderAudio: async (path) => {
+        await copyFile(shifted, join(dirname(path), "video.mp4"));
+        return null;
+      },
+    }),
+  ).rejects.toThrow("Final media frame timing differs from the rendered video");
   expect(await readFile(output, "utf8")).toBe("original");
 }, 120_000);
 

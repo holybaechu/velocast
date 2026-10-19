@@ -72,6 +72,19 @@ describe("buildCompositionRenderCommandJob", () => {
     });
   });
 
+  it("rejects non-boolean segment verification config instead of enabling it", () => {
+    expect(() =>
+      buildCompositionRenderCommandJob(
+        {
+          serve: { url: "http://127.0.0.1:4545" },
+          renderer: { verifySegments: "false" as unknown as boolean },
+        },
+        "product-hero",
+        "renders/hero.mp4",
+      ),
+    ).toThrow("verifySegments must be a boolean");
+  });
+
   it("builds composition jobs using shared renderer option precedence", () => {
     const cwd = mkTempDir();
     const inputPropsFile = join(cwd, "input-props.json");

@@ -1,0 +1,50 @@
+diff --git a/src/matroska/matroska-muxer.ts b/src/matroska/matroska-muxer.ts
+--- a/src/matroska/matroska-muxer.ts
++++ b/src/matroska/matroska-muxer.ts
+@@ -1269,8 +1269,8 @@
+ 
+ 		const msDuration = Math.round(1000 * chunk.duration);
+ 
+-		// Subtitle cues need an explicit BlockDuration (a SimpleBlock has none)
+-		const needsBlockGroup = !!chunk.additions || trackData.type === 'subtitle';
++		// Subtitle cues and video without a default duration need explicit BlockDuration.
++		const needsBlockGroup = !!chunk.additions || trackData.type === 'subtitle' || (trackData.type === 'video' && trackData.track.metadata.frameRate === undefined && msDuration > 0);
+ 
+ 		if (!needsBlockGroup) {
+ 			// No additions, we can write out a SimpleBlock
+diff --git a/dist/modules/src/matroska/matroska-muxer.js b/dist/modules/src/matroska/matroska-muxer.js
+--- a/dist/modules/src/matroska/matroska-muxer.js
++++ b/dist/modules/src/matroska/matroska-muxer.js
+@@ -995,7 +995,7 @@
+         view.setInt16(1, relativeTimestamp, false);
+         const msDuration = Math.round(1000 * chunk.duration);
+         // Subtitle cues need an explicit BlockDuration (a SimpleBlock has none)
+-        const needsBlockGroup = !!chunk.additions || trackData.type === 'subtitle';
++        const needsBlockGroup = !!chunk.additions || trackData.type === 'subtitle' || (trackData.type === 'video' && trackData.track.metadata.frameRate === undefined && msDuration > 0);
+         if (!needsBlockGroup) {
+             // No additions, we can write out a SimpleBlock
+             view.setUint8(3, Number(chunk.type === 'key') << 7); // Flags (keyframe flag only present for SimpleBlock)
+diff --git a/dist/bundles/mediabunny.node.cjs b/dist/bundles/mediabunny.node.cjs
+--- a/dist/bundles/mediabunny.node.cjs
++++ b/dist/bundles/mediabunny.node.cjs
+@@ -33387,7 +33387,7 @@
+       view2.setUint8(0, 128 | trackData.track.id);
+       view2.setInt16(1, relativeTimestamp, false);
+       const msDuration = Math.round(1e3 * chunk.duration);
+-      const needsBlockGroup = !!chunk.additions || trackData.type === "subtitle";
++      const needsBlockGroup = !!chunk.additions || trackData.type === "subtitle" || (trackData.type === "video" && trackData.track.metadata.frameRate === undefined && msDuration > 0);
+       if (!needsBlockGroup) {
+         view2.setUint8(3, Number(chunk.type === "key") << 7);
+         const simpleBlock = { id: 163 /* SimpleBlock */, data: [
+diff --git a/dist/bundles/mediabunny.cjs b/dist/bundles/mediabunny.cjs
+--- a/dist/bundles/mediabunny.cjs
++++ b/dist/bundles/mediabunny.cjs
+@@ -33385,7 +33385,7 @@
+       view2.setUint8(0, 128 | trackData.track.id);
+       view2.setInt16(1, relativeTimestamp, false);
+       const msDuration = Math.round(1e3 * chunk.duration);
+-      const needsBlockGroup = !!chunk.additions || trackData.type === "subtitle";
++      const needsBlockGroup = !!chunk.additions || trackData.type === "subtitle" || (trackData.type === "video" && trackData.track.metadata.frameRate === undefined && msDuration > 0);
+       if (!needsBlockGroup) {
+         view2.setUint8(3, Number(chunk.type === "key") << 7);
+         const simpleBlock = { id: 163 /* SimpleBlock */, data: [

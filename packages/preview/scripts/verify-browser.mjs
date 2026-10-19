@@ -43,8 +43,28 @@ const send = (response, status, value, type = "application/json") => {
 };
 
 let parentOrigin;
+let changedRevision;
+let changeObservations = 0;
+let changeError = false;
+let selectionWaiting = false;
+let frameWaiting = false;
+let changesReleased = Promise.withResolvers();
+const selectionReleased = Promise.withResolvers();
+let frameReleased = Promise.withResolvers();
 const child = await listen(async (request, response) => {
   const path = new URL(request.url, "http://fixture").pathname;
+  if (path === "/hold-frame") {
+    frameWaiting = true;
+    await frameReleased.promise;
+    send(response, 200, {});
+    return;
+  }
+  if (path === "/hold-selection") {
+    selectionWaiting = true;
+    await selectionReleased.promise;
+    send(response, 200, {});
+    return;
+  }
   if (path === "/") {
     send(
       response,
@@ -52,9 +72,9 @@ const child = await listen(async (request, response) => {
       `<!doctype html><html><head><style>html,body,#root{margin:0;width:100%;height:100%}#root{display:grid;place-items:center;background:#13263b;color:#fff;font:700 28px sans-serif}</style></head><body><div id="root">boot</div><script>
       (()=>{let session; const root=document.querySelector('#root'); window.__velocast={protocolVersion:${browserProtocolVersion},
       async beginSession(value){session={...value}},getSession(){return session},cancelPending(){},
-      async getCompositions(){return [{id:'scene',width:320,height:180,fps:30,durationFrames:60,target:'#root'}]},
+      async getCompositions(){return ['scene','other'].map(id=>({id,width:320,height:180,fps:30,durationFrames:60,target:'#root'}))},
       async getDurationFrames(){return 60},async setInputProps(value){root.dataset.label=value?.label||''},
-      async seekFrame(_id,frame){root.dataset.frame=String(frame);root.textContent=(root.dataset.label||'scene')+' / '+frame},
+      async seekFrame(_id,frame){if(_id==='other')await fetch('/hold-selection');root.dataset.frame=String(frame);root.textContent=(root.dataset.label||'scene')+' / '+frame;if(frame===1){const later=document.createElement('span');later.id='only-frame-one';later.textContent='frame one';root.appendChild(later)}root.style.width=frame===1?'100px':'320px';if(frame===1)await fetch('/hold-frame')},
       async getAudioPlan(){return null},async waitForReady(){},async destroy(){root.dataset.destroyed='true'}}})();
       </script><script type="module" src="/__velocast-preview/bridge.js"></script></body></html>`,
       "text/html",
@@ -91,6 +111,20 @@ let source = 1;
 const outputs = [];
 const parent = await listen(async (request, response) => {
   const path = new URL(request.url, "http://fixture").pathname;
+  if (path === "/api/changes") {
+    if (changedRevision && ++changeObservations === 2) {
+      await changesReleased.promise;
+      if (changeError) {
+        send(response, 500, { error: "fixture changes failure" });
+        return;
+      }
+    }
+    send(response, 200, {
+      enabled: true,
+      revision: changedRevision ?? `revision-${source}`,
+    });
+    return;
+  }
   if (path === "/api/session" || path === "/api/refresh") {
     if (path === "/api/refresh") {
       const requestBody = await body(request);
@@ -107,6 +141,8 @@ const parent = await listen(async (request, response) => {
         sourceVersion: `source-${source}`,
       },
       inputProps: { label: `source-${source}` },
+      sourceRevision: `revision-${source}`,
+      autoRefresh: true,
     });
     return;
   }
@@ -128,12 +164,25 @@ const parent = await listen(async (request, response) => {
   }
   const relative = path === "/" ? "ui/index.html" : `ui/${path.slice(1)}`;
   try {
-    send(
-      response,
-      200,
-      await readFile(join(dist, relative)),
-      contentType(relative),
-    );
+    let content = await readFile(join(dist, relative));
+    if (relative === "ui/index.html") {
+      // Observe replies before the app registers its RPC listener.
+      content = content.toString().replace(
+        "<head>",
+        `<head><script>
+        window.addEventListener('message', event => {
+          if (event.data?.type !== 'response' || event.data.method !== 'inspect') return;
+          if (window.seekOnInspection) {
+            window.seekOnInspection = false;
+            document.querySelector('[data-seek]').value='1';
+            document.querySelector('[data-seek]').dispatchEvent(new Event('change'));
+          }
+          setTimeout(() => window.inspectionHandled = true, 0);
+        }, {capture: true});
+      </script>`,
+      );
+    }
+    send(response, 200, content, contentType(relative));
   } catch {
     send(response, 404, "missing", "text/plain");
   }
@@ -213,7 +262,12 @@ try {
   };
   const until = async (expression, message) => {
     for (let attempt = 0; attempt < 200; attempt += 1) {
-      if (await evaluate(expression)) return;
+      if (
+        await (typeof expression === "function"
+          ? expression()
+          : evaluate(expression))
+      )
+        return;
       await wait(50);
     }
     throw new Error(message);
@@ -230,6 +284,73 @@ try {
     )) !== "source-1"
   )
     throw new Error("initial version mismatch");
+  await evaluate(`
+    window.seekOnInspection = true;
+    document.querySelector('[data-selector]').value='#root';
+    document.querySelector('[data-inspect]').click();
+  `);
+  await until(() => frameWaiting, "visual seek did not reach gate");
+  await until(
+    `window.inspectionHandled`,
+    "old inspection reply did not arrive",
+  );
+  if (!(await evaluate(`document.querySelector('.element-outline').hidden`)))
+    throw new Error("old inspection restored its outline during a newer seek");
+
+  // A new inspection explicitly requested during that seek still targets its result.
+  await evaluate(`document.querySelector('[data-inspect]').click()`);
+  frameReleased.resolve();
+  await until(
+    `document.querySelector('[data-status]').textContent==='Frame ready'&&document.querySelector('[data-inspection]').textContent.includes('"frame": 1')&&!document.querySelector('.element-outline').hidden`,
+    "inspection requested during seek did not inspect the new frame",
+  );
+  await evaluate(`
+    document.querySelector('[data-seek]').value='0';
+    document.querySelector('[data-seek]').dispatchEvent(new Event('change'));
+  `);
+  await until(
+    `document.querySelector('[data-status]').textContent==='Frame ready'&&document.querySelector('[data-seek]').value==='0'`,
+    "seek zero did not finish before inspection failure control",
+  );
+  await evaluate(`
+    window.inspectionHandled=false;
+    document.querySelector('[data-selector]').value='#only-frame-one';
+    document.querySelector('[data-inspect]').click();
+  `);
+  await until(`window.inspectionHandled`, "current inspection failure missing");
+  if (
+    !(await evaluate(
+      `!document.querySelector('[data-error]').hidden&&document.querySelector('[data-error]').textContent.includes('preview.element_missing')`,
+    ))
+  )
+    throw new Error("current inspection failure was suppressed");
+
+  frameWaiting = false;
+  frameReleased = Promise.withResolvers();
+  await evaluate(`
+    window.inspectionHandled=false;
+    window.seekOnInspection=true;
+    document.querySelector('[data-inspect]').click();
+  `);
+  await until(() => frameWaiting, "newer seek did not reach failure gate");
+  await until(`window.inspectionHandled`, "old inspection failure missing");
+  if (!(await evaluate(`document.querySelector('[data-error]').hidden`)))
+    throw new Error("old inspection failure overwrote the newer seek");
+  frameReleased.resolve();
+  await until(
+    `document.querySelector('[data-status]').textContent==='Frame ready'`,
+    "newer seek did not finish after inspection failure",
+  );
+  await evaluate(
+    `window.inspectionHandled=false;document.querySelector('[data-inspect]').click()`,
+  );
+  await until(`window.inspectionHandled`, "current inspection success missing");
+  if (
+    !(await evaluate(
+      `document.querySelector('[data-error]').hidden&&!document.querySelector('.element-outline').hidden&&document.querySelector('[data-inspection]').textContent.includes('"selector": "#only-frame-one"')`,
+    ))
+  )
+    throw new Error("current inspection did not find the new frame's element");
   await evaluate(
     `document.querySelector('[data-seek]').value='12';document.querySelector('[data-seek]').dispatchEvent(new Event('change',{bubbles:true}))`,
   );
@@ -284,6 +405,73 @@ try {
     throw new Error("UI ended with visible error");
   if (outputs.length !== 3)
     throw new Error(`expected 3 output requests, received ${outputs.length}`);
+
+  // Mark the next task after a changes response is consumed, so the test can
+  // release selection only after the poll continuation has decided what to do.
+  await evaluate(`{
+    for (const method of ['json', 'text']) {
+      const read = Response.prototype[method];
+      Response.prototype[method] = async function () {
+        const value = await read.call(this);
+        if (new URL(this.url).pathname === '/api/changes')
+          setTimeout(() => window.pollHandled = true, 0);
+        return value;
+      };
+    }
+  }`);
+  changedRevision = "revision-4";
+  await until(
+    () => changeObservations === 2,
+    "changes poll did not reach gate",
+  );
+  await evaluate(
+    `document.querySelector('[data-composition]').value='other';document.querySelector('[data-composition]').dispatchEvent(new Event('change'))`,
+  );
+  await until(
+    () => selectionWaiting,
+    "composition selection did not reach gate",
+  );
+  await evaluate(`window.pollHandled = false`);
+  changesReleased.resolve();
+  await until(
+    `window.pollHandled`,
+    "delayed changes response was not consumed",
+  );
+  selectionReleased.resolve();
+  await until(
+    `document.querySelector('[data-composition]').value==='other'&&document.querySelector('[data-status]').textContent==='Frame ready'&&!document.querySelector('[data-composition]').disabled`,
+    "delayed poll replaced the user's composition selection",
+  );
+  await until(
+    `document.querySelector('[data-source-version]').textContent==='source-4'&&!document.querySelector('[data-refresh]').disabled`,
+    "automatic refresh did not resume after selection",
+  );
+  if (
+    (await evaluate(`document.querySelector('[data-composition]').value`)) !==
+    "other"
+  )
+    throw new Error("automatic refresh lost the selected composition");
+
+  changesReleased = Promise.withResolvers();
+  changeObservations = 0;
+  changeError = true;
+  changedRevision = "revision-5";
+  await until(() => changeObservations === 2, "failed poll did not reach gate");
+  await evaluate(
+    `document.querySelector('[data-composition]').value='scene';document.querySelector('[data-composition]').dispatchEvent(new Event('change'))`,
+  );
+  await until(
+    `document.querySelector('[data-status]').textContent==='Frame ready'&&!document.querySelector('[data-composition]').disabled`,
+    "selection did not finish before the delayed poll failure",
+  );
+  await evaluate(`window.pollHandled = false`);
+  changesReleased.resolve();
+  await until(`window.pollHandled`, "delayed changes failure was not consumed");
+  if (
+    (await evaluate(`document.querySelector('[data-status]').textContent`)) !==
+    "Frame ready"
+  )
+    throw new Error("stale poll failure replaced the selected frame's status");
   console.log(
     JSON.stringify(
       {
@@ -291,8 +479,12 @@ try {
         initialSeek: 12,
         playbackRange: [10, 15],
         endedFrame: 14,
-        refreshedVersions: ["source-2", "source-3"],
+        refreshedVersions: ["source-2", "source-3", "source-4"],
         staleOutputSuppressed: true,
+        selectionPreservedDuringPoll: true,
+        stalePollFailureSuppressed: true,
+        inspectionTracksSelectedFrame: true,
+        staleInspectionFailureSuppressed: true,
         outputRequests: outputs,
       },
       null,
@@ -300,6 +492,9 @@ try {
     ),
   );
 } finally {
+  frameReleased.resolve();
+  changesReleased.resolve();
+  selectionReleased.resolve();
   socket?.close();
   chrome.kill();
   await Promise.race([

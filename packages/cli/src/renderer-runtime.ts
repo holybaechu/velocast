@@ -51,7 +51,11 @@ export class RendererRuntimeAcquisition {
     return managed ? this.managedRuntime(managed) : undefined;
   }
 
-  async acquire(configuredBinary?: string): Promise<AcquiredRendererRuntime> {
+  async acquire(
+    configuredBinary?: string,
+    signal?: AbortSignal,
+  ): Promise<AcquiredRendererRuntime> {
+    signal?.throwIfAborted();
     const local = this.resolveLocal(configuredBinary);
     if (local) return local;
     if (!this.allowsManagedRuntime(configuredBinary)) {
@@ -65,7 +69,9 @@ export class RendererRuntimeAcquisition {
         "renderer.setup_unavailable: runtime adapter only supports inspection",
       );
     }
-    return this.managedRuntime(await artifacts.setup());
+    const runtime = await artifacts.setup(signal);
+    signal?.throwIfAborted();
+    return this.managedRuntime(runtime);
   }
 
   private resolveLocal(

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
   openVideoFrameSource,
@@ -41,6 +42,41 @@ beforeAll(async () => {
     fps: 10,
     rotation: 90,
   });
+  // Reuse encoded packets with non-square display pixels, without transcoding.
+  const { mb, inputFile, outputFile } = createRequire(import.meta.url)(
+    "../../electron-host/media-io.cjs",
+  );
+  const input = inputFile(join(directory, "rotated.mp4"));
+  const sink = outputFile(join(directory, "anamorphic.mp4"));
+  try {
+    const track = await input.getPrimaryVideoTrack();
+    const config = await track.getDecoderConfig();
+    const packets = new mb.EncodedVideoPacketSource(await track.getCodec());
+    sink.output.addVideoTrack(packets, { frameRate: 10 });
+    await sink.output.start();
+    let count = 0;
+    for await (const packet of new mb.EncodedPacketSink(track).packets())
+      await packets.add(
+        packet,
+        count++
+          ? undefined
+          : {
+              decoderConfig: {
+                ...config,
+                displayAspectWidth: 160,
+                displayAspectHeight: 64,
+              },
+            },
+      );
+    packets.close();
+    await sink.output.finalize();
+    sink.close();
+  } catch (error) {
+    await sink.cancel();
+    throw error;
+  } finally {
+    input.dispose();
+  }
 }, 120_000);
 afterAll(async () => {
   await Promise.allSettled(sources.splice(0).map((source) => source.close()));
@@ -88,6 +124,20 @@ it("applies container rotation to the decoded display raster", async () => {
   expect(frame.rgba.length).toBe(64 * 80 * 4);
   expect(frame.width).toBe(64);
   expect(frame.height).toBe(80);
+}, 120_000);
+it("decodes the display raster of non-square-pixel footage", async () => {
+  const source = await open("anamorphic.mp4");
+  expect(source.metadata).toMatchObject({
+    encodedWidth: 80,
+    encodedHeight: 64,
+    width: 160,
+    height: 64,
+    rotationDegrees: 0,
+    frameBytes: 160 * 64 * 4,
+  });
+  const frame = await source.frameAt(0);
+  expect(frame).toMatchObject({ pts: 0, width: 160, height: 64 });
+  expect(frame.rgba.length).toBe(160 * 64 * 4);
 }, 120_000);
 it("bounds the request queue and joins an aborted real decode", async () => {
   const source = await open("cfr.mp4", { maxQueuedRequests: 1 });

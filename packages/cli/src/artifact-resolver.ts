@@ -27,6 +27,7 @@ import {
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import { extract } from "tar";
 import {
   availableReleaseTargets,
@@ -44,7 +45,6 @@ const OFFLINE_ENV = "VELOCAST_OFFLINE";
 const LOCAL_ARTIFACT_ENV = "VELOCAST_ARTIFACT_DIR";
 const LOCAL_ARTIFACT_MANIFEST_SHA_ENV = "VELOCAST_ARTIFACT_MANIFEST_SHA256";
 const LOCK_TIMEOUT_MS = 30_000;
-const STALE_LOCK_MS = 10 * 60_000;
 
 export interface ArtifactResolverOptions {
   env?: NodeJS.ProcessEnv;
@@ -53,6 +53,7 @@ export interface ArtifactResolverOptions {
   manifest?: VelocastReleaseManifest;
   fetch?: typeof globalThis.fetch;
   now?: () => number;
+  /** @deprecated Ignored; lock age cannot establish ownership. */
   lockStat?: typeof statSync;
 }
 
@@ -87,7 +88,6 @@ export class ArtifactResolver {
   private readonly manifest: VelocastReleaseManifest;
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly now: () => number;
-  private readonly lockStat: typeof statSync;
 
   constructor(options: ArtifactResolverOptions = {}) {
     this.env = options.env ?? process.env;
@@ -97,7 +97,6 @@ export class ArtifactResolver {
     assertCompatibleVelocastVersions(this.manifest);
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.now = options.now ?? Date.now;
-    this.lockStat = options.lockStat ?? statSync;
   }
 
   releaseManifest(): VelocastReleaseManifest {
@@ -113,7 +112,8 @@ export class ArtifactResolver {
     );
   }
 
-  async setup(): Promise<ResolvedReleaseRuntime> {
+  async setup(signal?: AbortSignal): Promise<ResolvedReleaseRuntime> {
+    signal?.throwIfAborted();
     const targetId = this.targetId();
     const target = this.manifest.targets[targetId];
     const artifact = requireReleasedArtifact(this.manifest, targetId);
@@ -146,8 +146,9 @@ export class ArtifactResolver {
 
     const lockDir = `${destination}.lock`;
     mkdirSync(dirname(destination), { recursive: true });
-    await this.acquireLock(lockDir);
+    await this.acquireLock(lockDir, signal);
     try {
+      signal?.throwIfAborted();
       const afterLock = this.verifyCachedRuntime(
         targetId,
         target,
@@ -162,6 +163,7 @@ export class ArtifactResolver {
         target,
         artifact,
         destination,
+        signal,
       );
     } finally {
       rmSync(lockDir, { recursive: true, force: true });
@@ -284,7 +286,9 @@ export class ArtifactResolver {
     target: ReleaseTarget,
     artifact: ReleaseArtifact,
     destination: string,
+    signal?: AbortSignal,
   ): Promise<ResolvedReleaseRuntime> {
+    signal?.throwIfAborted();
     mkdirSync(dirname(destination), { recursive: true });
     const archive = `${destination}.partial-${process.pid}`;
     const staging = `${destination}.staging-${process.pid}`;
@@ -297,6 +301,7 @@ export class ArtifactResolver {
         await pipeline(
           createReadStream(fileURLToPath(url)),
           createWriteStream(archive, { flags: "wx" }),
+          { signal },
         );
       } else {
         const proxyUrl =
@@ -308,13 +313,16 @@ export class ArtifactResolver {
           let response;
           if (proxyUrl && this.fetchImpl === globalThis.fetch) {
             const { fetch: proxyFetch, ProxyAgent } = await import("undici");
+            signal?.throwIfAborted();
             const proxy = new ProxyAgent(proxyUrl);
-            closeProxy = () => proxy.close();
-            response = await proxyFetch(url, { dispatcher: proxy });
+            closeProxy = () =>
+              signal?.aborted ? proxy.destroy() : proxy.close();
+            response = await proxyFetch(url, { dispatcher: proxy, signal });
           } else {
-            response = await this.fetchImpl(url);
+            response = await this.fetchImpl(url, { signal });
           }
           if (!response.ok || response.body === null) {
+            await response.body?.cancel();
             throw new Error(
               `artifact.download_failed: ${url} returned HTTP ${response.status}; check HTTPS_PROXY or set ${MIRROR_ENV}`,
             );
@@ -322,11 +330,13 @@ export class ArtifactResolver {
           await pipeline(
             Readable.fromWeb(response.body as never),
             createWriteStream(archive, { flags: "wx" }),
+            { signal },
           );
         } finally {
           await closeProxy?.();
         }
       }
+      signal?.throwIfAborted();
       verifyArchiveFile(archive, artifact);
       await extract({
         file: archive,
@@ -335,8 +345,10 @@ export class ArtifactResolver {
         preservePaths: false,
         strict: true,
       });
+      signal?.throwIfAborted();
       const root = resolveContainedPath(staging, artifact.root);
       verifyRuntimeDirectory(root, targetId, target, artifact, this.manifest);
+      signal?.throwIfAborted();
       renameSync(root, destination);
       if (root !== staging) {
         rmSync(staging, { recursive: true, force: true });
@@ -350,15 +362,20 @@ export class ArtifactResolver {
       };
     } catch (error) {
       rmSync(staging, { recursive: true, force: true });
+      signal?.throwIfAborted();
       throw error;
     } finally {
       rmSync(archive, { force: true });
     }
   }
 
-  private async acquireLock(lockDir: string): Promise<void> {
+  private async acquireLock(
+    lockDir: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const started = this.now();
     while (true) {
+      signal?.throwIfAborted();
       try {
         mkdirSync(lockDir);
         return;
@@ -366,23 +383,17 @@ export class ArtifactResolver {
         if (!isAlreadyExists(error)) {
           throw error;
         }
-        let lockAge: number | undefined;
-        try {
-          lockAge = this.now() - this.lockStat(lockDir).mtimeMs;
-        } catch (statError) {
-          if (!isNotFound(statError)) throw statError;
-        }
-        if (lockAge !== undefined && lockAge > STALE_LOCK_MS) {
-          rmSync(lockDir, { recursive: true, force: true });
-          continue;
-        }
+        // Age does not prove that a slow download's owner has stopped.
         if (this.now() - started >= LOCK_TIMEOUT_MS) {
           throw new Error(
-            `artifact.setup_locked: another setup owns ${lockDir}; wait or remove the lock after confirming no setup is running`,
+            `artifact.setup_locked: another setup may still be using ${lockDir}; wait for it to finish, or remove this lock only after confirming no setup is running, then rerun velocast setup`,
             { cause: error },
           );
         }
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+        await delay(100, undefined, { signal }).catch((error: unknown) => {
+          signal?.throwIfAborted();
+          throw error;
+        });
       }
     }
   }
@@ -769,18 +780,10 @@ function sha256File(path: string): string {
 }
 
 function isAlreadyExists(error: unknown): boolean {
-  return isErrorCode(error, "EEXIST");
-}
-
-function isNotFound(error: unknown): boolean {
-  return isErrorCode(error, "ENOENT");
-}
-
-function isErrorCode(error: unknown, code: string): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    error.code === code
+    error.code === "EEXIST"
   );
 }

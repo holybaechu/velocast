@@ -1,8 +1,11 @@
 // @vitest-environment node
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { createReadStream, type ReadStream } from "node:fs";
+import { get, type ClientRequest, type IncomingMessage } from "node:http";
 import {
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rm,
@@ -11,7 +14,13 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createMediaSession } from "velocast/source-media";
 import { serveRemotionBundle } from "./media-server.js";
+vi.mock("velocast/source-media", () => ({ createMediaSession: vi.fn() }));
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return { ...original, createReadStream: vi.fn(original.createReadStream) };
+});
 it("serves contained byte ranges and refuses escaped symlinks and unrelated browser origins", async () => {
   const directory = await mkdtemp(
     join(tmpdir(), "velocast-remotion-server-test-"),
@@ -82,6 +91,129 @@ it("streams bounded media downloads and accounts for source count and aggregate 
       server.freeze("data:application/octet-stream;base64,Bw=="),
     ).rejects.toThrow("source_count_limit");
   } finally {
+    await server?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+it.each(["startup", "shutdown"])(
+  "closes the HTTP listener when the media session fails during %s",
+  async (phase) => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "velocast-remotion-close-test-"),
+    );
+    let server: Awaited<ReturnType<typeof serveRemotionBundle>> | undefined;
+    const failure = new Error(`media ${phase} failed`);
+    const close = vi.fn().mockRejectedValue(failure);
+    if (phase === "startup")
+      vi.mocked(createMediaSession).mockRejectedValueOnce(failure);
+    else
+      vi.mocked(createMediaSession).mockResolvedValueOnce({
+        run: vi.fn().mockRejectedValue(new Error("frame failed")),
+        close,
+      });
+    try {
+      const root = join(directory, "bundle");
+      await mkdir(root);
+      await writeFile(join(root, "index.html"), "bundle");
+      server = await serveRemotionBundle(
+        root,
+        directory,
+        new AbortController().signal,
+      );
+      const response = await fetch(
+        `${server.url}/proxy?src=/index.html&time=0`,
+      );
+      expect(response.status).toBe(422);
+      await response.text();
+      await expect(server.close()).rejects.toBe(failure);
+      await expect(fetch(server.url)).rejects.toThrow();
+      await expect(server.close()).rejects.toBe(failure);
+      if (phase === "shutdown") expect(close).toHaveBeenCalledOnce();
+    } finally {
+      await server?.close().catch(() => {});
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+it("cancels and joins owned downloads before closing", async () => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "velocast-remotion-download-close-test-"),
+  );
+  let server: Awaited<ReturnType<typeof serveRemotionBundle>> | undefined;
+  let cancelled = false;
+  const fetchMedia = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    ),
+  );
+  try {
+    const root = join(directory, "bundle");
+    await mkdir(root);
+    server = await serveRemotionBundle(
+      root,
+      directory,
+      new AbortController().signal,
+    );
+    const download = expect(
+      server.freeze("https://media.example/video.mp4"),
+    ).rejects.toThrow();
+    await server.close();
+    await download;
+    expect(cancelled).toBe(true);
+    expect(await readdir(join(directory, "media"))).toEqual([]);
+    await expect(server.freeze("/new.wav")).rejects.toThrow();
+  } finally {
+    fetchMedia.mockRestore();
+    await server?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+it("closes a static file stream before shutdown completes with a paused client", async () => {
+  const directory = await mkdtemp(
+    join(tmpdir(), "velocast-remotion-static-close-test-"),
+  );
+  let server: Awaited<ReturnType<typeof serveRemotionBundle>> | undefined;
+  let request: ClientRequest | undefined;
+  let response: IncomingMessage | undefined;
+  let source: ReadStream | undefined;
+  try {
+    const root = join(directory, "bundle");
+    await mkdir(root);
+    const file = await open(join(root, "large.mp4"), "w");
+    try {
+      await file.truncate(16 * 1024 * 1024);
+    } finally {
+      await file.close();
+    }
+    server = await serveRemotionBundle(
+      root,
+      directory,
+      new AbortController().signal,
+    );
+    response = await new Promise<IncomingMessage>((resolve, reject) => {
+      request = get(`${server!.url}/large.mp4`, resolve);
+      request.on("error", reject);
+    });
+    response.on("error", () => {});
+    response.pause();
+    source = vi.mocked(createReadStream).mock.results.at(-1)!.value;
+    expect(source!.closed).toBe(false);
+
+    await server.close();
+
+    expect(source!.closed).toBe(true);
+    expect(source!.readableEnded).toBe(false);
+  } finally {
+    response?.destroy();
+    request?.destroy();
+    source?.destroy();
     await server?.close();
     await rm(directory, { recursive: true, force: true });
   }

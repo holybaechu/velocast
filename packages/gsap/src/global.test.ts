@@ -27,28 +27,32 @@ describe("VelocastGSAP global", () => {
     delete window.Velocast;
     delete (globalThis as typeof globalThis & { VelocastGSAP?: unknown })
       .VelocastGSAP;
-    delete (globalThis as typeof globalThis & { gsap?: unknown }).gsap;
+    delete (globalThis as { gsap?: unknown }).gsap;
   });
 
   it("attaches VelocastGSAP and Velocast globals", async () => {
-    (globalThis as typeof globalThis & { gsap?: unknown }).gsap = {};
+    (globalThis as { gsap?: unknown }).gsap = {};
 
     await import("./global.js");
 
     expect(window.Velocast?.registerAdapter).toBeTypeOf("function");
     expect(
-      (globalThis as typeof globalThis & {
-        VelocastGSAP?: { register?: unknown };
-      }).VelocastGSAP?.register,
+      (
+        globalThis as typeof globalThis & {
+          VelocastGSAP?: { register?: unknown };
+        }
+      ).VelocastGSAP?.register,
     ).toBeTypeOf("function");
   });
 
   it("reports missing GSAP for global registration", async () => {
     await import("./global.js");
 
-    const globalApi = (globalThis as typeof globalThis & {
-      VelocastGSAP?: { register: (...args: unknown[]) => unknown };
-    }).VelocastGSAP;
+    const globalApi = (
+      globalThis as typeof globalThis & {
+        VelocastGSAP?: { register: (...args: unknown[]) => unknown };
+      }
+    ).VelocastGSAP;
 
     expect(() =>
       globalApi?.register("hero", undefined, {
@@ -62,7 +66,7 @@ describe("VelocastGSAP global", () => {
 
   it("registers timelines through the explicit global API", async () => {
     const timeline = fakeTimeline(4);
-    (globalThis as typeof globalThis & { gsap?: unknown }).gsap = {};
+    (globalThis as { gsap?: unknown }).gsap = {};
 
     await import("./global.js");
     (
@@ -96,7 +100,7 @@ describe("VelocastGSAP global", () => {
 
   it("supports repeatable seeks for explicitly registered timelines", async () => {
     const timeline = fakeTimeline(4);
-    (globalThis as typeof globalThis & { gsap?: unknown }).gsap = {};
+    (globalThis as { gsap?: unknown }).gsap = {};
 
     await import("./global.js");
     (

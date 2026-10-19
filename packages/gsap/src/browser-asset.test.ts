@@ -5,7 +5,7 @@ declare const process: {
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-type BrowserScope = typeof globalThis & {
+type BrowserScope = Omit<typeof globalThis, "gsap"> & {
   gsap?: unknown;
   Velocast?: unknown;
   VelocastGSAP?: {

@@ -13,7 +13,6 @@ import {
   stat,
   mkdtemp,
   readFile,
-  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -136,13 +135,13 @@ async function openRemotionSource(
       } catch (error) {
         failures.push(error);
       }
-      const target = await realpath(workspace);
       if (
-        dirname(target) !== (await realpath(parent)) ||
-        !basename(target).startsWith("velocast-remotion-")
+        dirname(workspace) !== parent ||
+        !basename(workspace).startsWith("velocast-remotion-")
       )
         throw new Error("remotion.cleanup_scope");
-      await rm(target, { recursive: true, force: true });
+      // Remove our directory entry without following a replaced root symlink.
+      await rm(workspace, { recursive: true, force: true });
       if (failures.length)
         throw new AggregateError(
           failures,
@@ -183,11 +182,24 @@ async function openRemotionSource(
         throw new Error("Unsupported Remotion bundle: missing bundle script");
       return html.replace(
         bundleScript,
-        (tag) =>
-          `<script>${script.replace(/<\/script/gi, "<\\/script")}</script>${tag}`,
+        (tag) => `<script>${script}</script>${tag}`,
       );
     };
-    const bootstrap = `window.process ??= {env:{}}; window.process.env.NODE_ENV='production'; Object.assign(window,${JSON.stringify({ remotion_inputProps: serializedInputProps, remotion_puppeteerTimeout: timeout, remotion_initialFrame: 0, remotion_attempt: 1, remotion_proxyPort: server.port, remotion_audioEnabled: false, remotion_videoEnabled: false, remotion_isMainTab: true, remotion_mediaCacheSizeInBytes: null, remotion_initialMemoryAvailable: 536870912, remotion_sampleRate: 48000, remotion_logLevel: options.logLevel ?? "warn" })});`;
+    const bootstrapOptions = JSON.stringify({
+      remotion_inputProps: serializedInputProps,
+      remotion_puppeteerTimeout: timeout,
+      remotion_initialFrame: 0,
+      remotion_attempt: 1,
+      remotion_proxyPort: server.port,
+      remotion_audioEnabled: false,
+      remotion_videoEnabled: false,
+      remotion_isMainTab: true,
+      remotion_mediaCacheSizeInBytes: null,
+      remotion_initialMemoryAvailable: 536870912,
+      remotion_sampleRate: 48000,
+      remotion_logLevel: options.logLevel ?? "warn",
+    }).replace(/</g, "\\u003c");
+    const bootstrap = `window.process ??= {env:{}}; window.process.env.NODE_ENV='production'; Object.assign(window,${bootstrapOptions});`;
     await writeFile(join(bundle, "metadata.html"), inject(bootstrap));
     browser = await launchCdpBrowser(`${server.url}/metadata.html`, {
       executable: options.browserExecutable,

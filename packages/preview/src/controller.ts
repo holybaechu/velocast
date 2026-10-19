@@ -470,7 +470,10 @@ export class PreviewController<Frame> {
               throw new Error(
                 "preview.audio_duration_mismatch: audio plan must cover playback range",
               );
-            await waitForAudio(this.audio.play(), operation.signal);
+            await waitForAudio(
+              this.audio.play(undefined, end),
+              operation.signal,
+            );
             this.current(intent, operation.signal);
           } else this.anchor = { frame: intent.frame, time: this.readTime() };
         }

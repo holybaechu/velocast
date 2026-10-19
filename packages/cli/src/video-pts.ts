@@ -1,4 +1,5 @@
 import { isObjectRecord } from "./internal/validation.js";
+import type { MediaProbe } from "./media-runtime.js";
 
 export interface VideoTimeBase {
   readonly numerator: number;
@@ -14,7 +15,7 @@ export interface VideoPtsIndex {
   /** Encoded raster before the container display transform. */
   readonly encodedWidth: number;
   readonly encodedHeight: number;
-  /** RGBA display raster after the explicit container rotation. */
+  /** RGBA display raster after aspect-ratio adjustment and container rotation. */
   readonly width: number;
   readonly height: number;
   readonly codec: string;
@@ -54,10 +55,10 @@ function positive(value: unknown, label: string): number {
   return number;
 }
 function timeBase(value: unknown): VideoTimeBase {
-  const match = typeof value === "string" ? /^(\d+)\/(\d+)$/.exec(value) : null;
-  if (!match) throw new Error("video.invalid_pts: missing rational time base");
-  const numerator = positive(Number(match[1]), "time base numerator"),
-    denominator = positive(Number(match[2]), "time base denominator");
+  if (!isObjectRecord(value))
+    throw new Error("video.invalid_pts: missing rational time base");
+  const numerator = positive(value.numerator, "time base numerator"),
+    denominator = positive(value.denominator, "time base denominator");
   let a = numerator,
     b = denominator;
   while (b) {
@@ -80,45 +81,8 @@ function ptsSeconds(pts: number, base: VideoTimeBase): number {
   return product / base.denominator;
 }
 
-function displayRotation(stream: Record<string, unknown>): number {
-  let value: unknown = isObjectRecord(stream.tags)
-    ? stream.tags.rotate
-    : undefined;
-  if (Array.isArray(stream.side_data_list)) {
-    const matrix = stream.side_data_list.find(
-      (side) =>
-        isObjectRecord(side) && side.side_data_type === "Display Matrix",
-    );
-    if (isObjectRecord(matrix)) {
-      value = matrix.rotation;
-      const rows =
-        typeof matrix.displaymatrix === "string"
-          ? [
-              ...matrix.displaymatrix.matchAll(
-                /:\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)/g,
-              ),
-            ]
-          : [];
-      if (rows.length !== 3)
-        throw new Error(
-          "video.unsupported_format: display matrix could not be verified",
-        );
-      const a = Number(rows[0]![1]),
-        b = Number(rows[0]![2]),
-        c = Number(rows[1]![1]),
-        d = Number(rows[1]![2]),
-        unit = 65_536 ** 2;
-      if (
-        a * d - b * c !== unit ||
-        a * a + b * b !== unit ||
-        c * c + d * d !== unit
-      )
-        throw new Error(
-          "video.unsupported_format: mirrored or scaled display matrices are not supported",
-        );
-    }
-  }
-  const rotation = value === undefined ? 0 : Number(value);
+function displayRotation(clockwise: number): number {
+  const rotation = -clockwise;
   if (!Number.isFinite(rotation))
     throw new Error("video.unsupported_format: invalid display rotation");
   const nearest = Math.round(rotation / 90) * 90;
@@ -129,8 +93,8 @@ function displayRotation(stream: Record<string, unknown>): number {
   return ((nearest % 360) + 360) % 360;
 }
 
-export function parseVideoStreamHeader(
-  stream: unknown,
+function parseVideoHeader(
+  video: NonNullable<MediaProbe["video"]>,
   limits: VideoPtsLimits = {},
 ): Pick<
   VideoPtsIndex,
@@ -147,30 +111,40 @@ export function parseVideoStreamHeader(
   | "normalization"
   | "timeBase"
 > {
-  if (!isObjectRecord(stream))
-    throw new Error("video.invalid_probe: video stream metadata is missing");
   const maxFrameBytes = positive(
     limits.maxFrameBytes ?? 32 * 1024 * 1024,
     "maxFrameBytes",
   );
-  const encodedWidth = positive(stream.width, "width"),
-    encodedHeight = positive(stream.height, "height"),
-    rotationDegrees = displayRotation(stream),
-    swapsDimensions = rotationDegrees === 90 || rotationDegrees === 270,
-    width = swapsDimensions ? encodedHeight : encodedWidth,
-    height = swapsDimensions ? encodedWidth : encodedHeight,
+  const encodedWidth = positive(video.codedWidth, "coded width"),
+    encodedHeight = positive(video.codedHeight, "coded height"),
+    rotationDegrees = displayRotation(video.rotation),
+    width = positive(video.width, "display width"),
+    height = positive(video.height, "display height"),
     frameBytes = width * height * 4;
   if (!Number.isSafeInteger(frameBytes) || frameBytes > maxFrameBytes)
     throw new Error("video.frame_limit: decoded RGBA frame exceeds byte limit");
-  const codec = String(stream.codec_name),
-    pixelFormat = String(stream.pix_fmt),
-    transfer = String(stream.color_transfer ?? "unknown"),
+  const codec = video.codec === "avc" ? "h264" : video.codec,
+    color = video.colorSpace,
+    transfer =
+      color?.transfer === "pq"
+        ? "smpte2084"
+        : color?.transfer === "hlg"
+          ? "arib-std-b67"
+          : (color?.transfer ?? "unknown"),
     hdr = ["smpte2084", "arib-std-b67"].includes(transfer),
     inputColor = Object.freeze({
       transfer,
-      primaries: String(stream.color_primaries ?? "unknown"),
-      matrix: String(stream.color_space ?? "unknown"),
-      range: String(stream.color_range ?? "unknown"),
+      primaries: color?.primaries ?? "unknown",
+      matrix:
+        color?.matrix === "bt2020-ncl"
+          ? "bt2020nc"
+          : (color?.matrix ?? "unknown"),
+      range:
+        color?.fullRange === true
+          ? "pc"
+          : color?.fullRange === false
+            ? "tv"
+            : "unknown",
     });
   if (
     hdr &&
@@ -181,41 +155,9 @@ export function parseVideoStreamHeader(
     throw new Error(
       "video.unsupported_color: HDR input requires explicit BT.2020 non-constant-luminance limited-range metadata",
     );
-  if (
-    !["h264", "hevc", "vp8", "vp9", "av1"].includes(codec) ||
-    ![
-      "yuv420p",
-      "yuvj420p",
-      "yuv422p",
-      "yuvj422p",
-      "yuv444p",
-      "yuvj444p",
-      "nv12",
-      "gbrp",
-      "rgb24",
-      "rgba",
-      "bgra",
-      "yuv420p10le",
-      "yuv422p10le",
-      "yuv444p10le",
-      "p010le",
-      "gbrp10le",
-    ].includes(pixelFormat) ||
-    (typeof stream.field_order === "string" &&
-      !["unknown", "progressive"].includes(stream.field_order)) ||
-    (Array.isArray(stream.side_data_list) &&
-      stream.side_data_list.some(
-        (side) =>
-          isObjectRecord(side) &&
-          side.side_data_type === "Display Matrix" &&
-          (typeof side.rotation !== "number" ||
-            typeof side.displaymatrix !== "string"),
-      ))
-  )
-    throw new Error(
-      "video.unsupported_format: unsupported codec, pixel format, interlace mode or display transform",
-    );
-  const base = timeBase(stream.time_base);
+  if (!["h264", "hevc", "vp8", "vp9", "av1"].includes(codec))
+    throw new Error("video.unsupported_format: unsupported video codec");
+  const base = timeBase(video.timeBase);
   return Object.freeze({
     encodedWidth,
     encodedHeight,
@@ -223,7 +165,7 @@ export function parseVideoStreamHeader(
     height,
     frameBytes,
     codec,
-    pixelFormat,
+    pixelFormat: "rgba",
     rotationDegrees,
     inputColor,
     outputColorSpace: hdr
@@ -236,22 +178,15 @@ export function parseVideoStreamHeader(
 
 /** Original presentation timestamps, not decoded ordinals or a guessed constant FPS. */
 export function buildVideoPtsIndex(
-  probe: unknown,
+  video: NonNullable<MediaProbe["video"]>,
   limits: VideoPtsLimits = {},
 ): VideoPtsIndex {
-  if (
-    !isObjectRecord(probe) ||
-    !Array.isArray(probe.streams) ||
-    probe.streams.length !== 1 ||
-    !isObjectRecord(probe.streams[0]) ||
-    !Array.isArray(probe.frames)
-  )
+  if (!isObjectRecord(video) || !Array.isArray(video.frames))
     throw new Error(
       "video.invalid_probe: expected one selected video stream and decoded frame metadata",
     );
-  const stream = probe.streams[0],
-    maxFrames = positive(limits.maxFrames ?? 250_000, "maxFrames");
-  if (probe.frames.length === 0 || probe.frames.length > maxFrames)
+  const maxFrames = positive(limits.maxFrames ?? 250_000, "maxFrames");
+  if (video.frames.length === 0 || video.frames.length > maxFrames)
     throw new Error("video.index_limit: empty or oversized decoded PTS index");
   const {
     encodedWidth,
@@ -266,21 +201,15 @@ export function buildVideoPtsIndex(
     outputColorSpace,
     normalization,
     timeBase: base,
-  } = parseVideoStreamHeader(stream, limits);
+  } = parseVideoHeader(video, limits);
   let keyframeIndex = -1;
-  const frames: VideoPtsFrame[] = probe.frames.map((frame, index) => {
+  const frames: VideoPtsFrame[] = video.frames.map((frame, index) => {
     if (!isObjectRecord(frame))
       throw new Error("video.invalid_pts: frame metadata must be an object");
-    const pts = integer(frame.best_effort_timestamp ?? frame.pts, "frame PTS");
-    if (frame.pts !== undefined && integer(frame.pts, "frame pts") !== pts)
-      throw new Error(
-        "video.invalid_pts: decoded and best-effort PTS disagree",
-      );
-    if (frame.key_frame === 1) keyframeIndex = index;
-    if (keyframeIndex < 0 || frame.interlaced_frame === 1)
-      throw new Error(
-        "video.invalid_pts: missing initial keyframe or interlaced input",
-      );
+    const pts = integer(frame.pts, "frame PTS");
+    if (frame.keyframe === true) keyframeIndex = index;
+    if (keyframeIndex < 0)
+      throw new Error("video.invalid_pts: missing initial keyframe");
     return Object.freeze({
       index,
       pts,
@@ -296,28 +225,11 @@ export function buildVideoPtsIndex(
       throw new Error(
         "video.invalid_pts: timestamps must be strictly increasing",
       );
-  const last = probe.frames.at(-1) as Record<string, unknown>,
+  const last = video.frames.at(-1)!,
     lastPts = frames.at(-1)!.pts;
-  const duration = last.duration ?? last.pkt_duration;
-  let endPts: number;
-  if (
-    typeof duration === "number" &&
-    Number.isSafeInteger(duration) &&
-    duration > 0
-  )
-    endPts = lastPts + duration;
-  else if (
-    typeof stream.duration_ts === "number" &&
-    Number.isSafeInteger(stream.duration_ts) &&
-    stream.duration_ts > 0
-  )
-    endPts =
-      integer(stream.start_pts ?? frames[0]!.pts, "stream start PTS") +
-      stream.duration_ts;
-  else
-    throw new Error(
-      "video.unknown_end: last-frame duration or stream duration is required",
-    );
+  if (!Number.isSafeInteger(last.duration) || last.duration <= 0)
+    throw new Error("video.unknown_end: last-frame duration is required");
+  const endPts = lastPts + last.duration;
   if (!Number.isSafeInteger(endPts) || endPts <= lastPts)
     throw new Error("video.unknown_end: invalid final PTS boundary");
   if (ptsSeconds(endPts, base) <= frames.at(-1)!.seconds)
@@ -394,18 +306,4 @@ export function findVideoFrameOffset(
     else high = middle;
   }
   return index.frames[Math.max(0, low - 1)]!;
-}
-
-/** WebCodecs timestamps are microseconds: floor rather than rounding beyond the selected keyframe. */
-export function videoSeekTimestamp(pts: number, base: VideoTimeBase): string {
-  integer(pts, "seek PTS");
-  positive(base.numerator, "time base numerator");
-  positive(base.denominator, "time base denominator");
-  const numerator = BigInt(pts) * BigInt(base.numerator) * 1_000_000n,
-    denominator = BigInt(base.denominator);
-  let micros = numerator / denominator;
-  if (numerator % denominator < 0n) micros--;
-  const sign = micros < 0n ? "-" : "";
-  if (micros < 0n) micros = -micros;
-  return `${sign}${micros / 1_000_000n}.${String(micros % 1_000_000n).padStart(6, "0")}`;
 }

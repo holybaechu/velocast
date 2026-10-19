@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use tokio::io::AsyncWriteExt;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderModeLabel {
@@ -185,12 +186,84 @@ pub async fn write_report(path: &Path, report: &RenderTelemetry) -> anyhow::Resu
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(path, serde_json::to_vec_pretty(report)?).await?;
-    Ok(())
+    let mut temporary_name = path.as_os_str().to_os_string();
+    temporary_name.push(format!(".report-{}.tmp", std::process::id()));
+    let temporary = std::path::PathBuf::from(temporary_name);
+    let bytes = serde_json::to_vec_pretty(report)?;
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .await?;
+    let written = async {
+        file.write_all(&bytes).await?;
+        file.flush().await?;
+        Ok::<(), std::io::Error>(())
+    }
+    .await;
+    drop(file);
+    let result = match written {
+        Ok(()) => tokio::fs::rename(&temporary, path).await,
+        Err(error) => Err(error),
+    };
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&temporary).await;
+    }
+    result.map_err(Into::into)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn report_directory() -> std::path::PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "velocast-report-publication-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    #[tokio::test]
+    async fn report_replacement_preserves_a_hard_linked_output() {
+        let directory = report_directory();
+        let output = directory.join("movie.mp4");
+        let report_path = directory.join("report.json");
+        std::fs::write(&output, b"previous movie").unwrap();
+        std::fs::hard_link(&output, &report_path).unwrap();
+        let report = RenderTelemetry::new(RenderModeLabel::ReferenceWebCodecs);
+
+        write_report(&report_path, &report).await.unwrap();
+
+        assert_eq!(std::fs::read(&output).unwrap(), b"previous movie");
+        let written: RenderTelemetry =
+            serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
+        assert_eq!(written.mode, report.mode);
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 2);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_report_publication_preserves_destination_and_removes_staging() {
+        let directory = report_directory();
+        let report_path = directory.join("report.json");
+        std::fs::create_dir(&report_path).unwrap();
+        std::fs::write(report_path.join("previous"), b"previous contents").unwrap();
+        let report = RenderTelemetry::new(RenderModeLabel::ReferenceWebCodecs);
+
+        assert!(write_report(&report_path, &report).await.is_err());
+
+        assert_eq!(
+            std::fs::read(report_path.join("previous")).unwrap(),
+            b"previous contents"
+        );
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn report_does_not_claim_hardware_selection() {
         let mut t = RenderTelemetry::new(RenderModeLabel::ReferenceWebCodecs);

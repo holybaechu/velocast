@@ -92,7 +92,17 @@ pub(crate) async fn promote_temp_output(
             previous_output.display()
         ));
     }
-    let had_previous = tokio::fs::try_exists(output).await?;
+    let had_previous = match tokio::fs::symlink_metadata(output).await {
+        Ok(metadata) => {
+            anyhow::ensure!(
+                metadata.is_file() || metadata.file_type().is_symlink(),
+                "output.invalid_target: output must be a file path, not a directory or special file"
+            );
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
     if had_previous {
         tokio::fs::rename(output, &previous_output).await?;
     }

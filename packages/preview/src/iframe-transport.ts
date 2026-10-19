@@ -67,6 +67,8 @@ export class IframePreviewConnection {
   private available: CompositionManifest[] = [];
   private selected?: CompositionManifest;
   private audioPlan?: AudioPlan;
+  private readonly lifetime = new AbortController();
+  private connecting?: Promise<CompositionManifest[]>;
   private closed = false;
   private closing?: Promise<void>;
   constructor(
@@ -92,64 +94,73 @@ export class IframePreviewConnection {
   }
   async connect(signal?: AbortSignal): Promise<CompositionManifest[]> {
     if (this.closed) throw cancelled();
-    if (this.rpc) return this.available;
+    const abort = () => this.lifetime.abort(cancelled());
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     try {
-      await new Promise<void>((resolve, reject) => {
-        if (signal?.aborted) {
-          reject(cancelled());
-          return;
-        }
-        const cleanup = () => {
-          clearTimeout(timer);
-          this.iframe.removeEventListener("load", loaded);
-          this.iframe.removeEventListener("error", failed);
-          signal?.removeEventListener("abort", abort);
-        };
-        const loaded = () => {
-          cleanup();
-          resolve();
-        };
-        const failed = () => {
-          cleanup();
-          reject(
-            new Error("preview.iframe_load_failed: snapshot did not load"),
-          );
-        };
-        const abort = () => {
-          cleanup();
-          reject(cancelled());
-        };
-        const timer = setTimeout(failed, this.options.timeoutMs ?? 15000);
-        this.iframe.addEventListener("load", loaded, { once: true });
-        this.iframe.addEventListener("error", failed, { once: true });
-        signal?.addEventListener("abort", abort, { once: true });
-        this.iframe.src = this.snapshot.snapshotUrl;
-        this.options.container.appendChild(this.iframe);
-      });
-      if (this.closed || signal?.aborted) throw cancelled();
-      if (!this.iframe.contentWindow)
-        throw new Error("preview.iframe_missing: browsing context unavailable");
-      this.rpc = new PreviewRpcClient({
-        host: this.host,
-        target: this.iframe.contentWindow,
-        targetOrigin: new URL(this.snapshot.snapshotUrl).origin,
-        session: this.snapshot.session,
-        timeoutMs: this.options.timeoutMs,
-      });
-      const result = await this.rpc.request<{
-        protocolVersion: number;
-        compositions: unknown;
-      }>("connect", { inputProps: this.snapshot.inputProps }, signal);
-      if (result.protocolVersion !== BROWSER_PROTOCOL_VERSION)
-        throw new Error(
-          `preview.protocol_mismatch: authoring protocol v${BROWSER_PROTOCOL_VERSION} is required`,
-        );
-      this.available = compositions(result.compositions);
-      return this.available;
+      const available = await (this.connecting ??= this.connectOnce());
+      if (this.closed || this.lifetime.signal.aborted) throw cancelled();
+      return available;
     } catch (error) {
       await this.dispose();
       throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
     }
+  }
+  private async connectOnce(): Promise<CompositionManifest[]> {
+    const signal = this.lifetime.signal;
+    await new Promise<void>((resolve, reject) => {
+      if (signal.aborted) {
+        reject(cancelled());
+        return;
+      }
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.iframe.removeEventListener("load", loaded);
+        this.iframe.removeEventListener("error", failed);
+        signal.removeEventListener("abort", abort);
+      };
+      const loaded = () => {
+        cleanup();
+        resolve();
+      };
+      const failed = () => {
+        cleanup();
+        reject(new Error("preview.iframe_load_failed: snapshot did not load"));
+      };
+      const abort = () => {
+        cleanup();
+        reject(cancelled());
+      };
+      const timer = setTimeout(failed, this.options.timeoutMs ?? 15000);
+      this.iframe.addEventListener("load", loaded, { once: true });
+      this.iframe.addEventListener("error", failed, { once: true });
+      signal.addEventListener("abort", abort, { once: true });
+      this.iframe.src = this.snapshot.snapshotUrl;
+      this.options.container.appendChild(this.iframe);
+    });
+    if (this.closed || signal.aborted) throw cancelled();
+    if (!this.iframe.contentWindow)
+      throw new Error("preview.iframe_missing: browsing context unavailable");
+    this.rpc = new PreviewRpcClient({
+      host: this.host,
+      target: this.iframe.contentWindow,
+      targetOrigin: new URL(this.snapshot.snapshotUrl).origin,
+      session: this.snapshot.session,
+      timeoutMs: this.options.timeoutMs,
+    });
+    const result = await this.rpc.request<{
+      protocolVersion: number;
+      compositions: unknown;
+    }>("connect", { inputProps: this.snapshot.inputProps }, signal);
+    if (this.closed || signal.aborted) throw cancelled();
+    if (result.protocolVersion !== BROWSER_PROTOCOL_VERSION)
+      throw new Error(
+        `preview.protocol_mismatch: authoring protocol v${BROWSER_PROTOCOL_VERSION} is required`,
+      );
+    this.available = compositions(result.compositions);
+    return this.available;
   }
   async initialize(
     compositionId: string,
@@ -223,6 +234,7 @@ export class IframePreviewConnection {
   dispose(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true;
+    this.lifetime.abort(cancelled());
     this.closing = (async () => {
       try {
         if (this.rpc) {
@@ -246,6 +258,8 @@ export class IframePreviewConnection {
         this.rpc?.close();
         this.rpc = undefined;
         this.iframe.remove();
+        // Join the raw attempt, not connect()'s error path that awaits disposal.
+        await this.connecting?.catch(() => {});
       }
     })();
     return this.closing;

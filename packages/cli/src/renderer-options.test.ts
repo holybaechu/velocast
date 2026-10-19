@@ -407,15 +407,15 @@ describe("resolveRendererPixelFormat", () => {
     ).toBe("yuv420p");
   });
 
-  it("normalizes required hardware pixel format casing", () => {
-    expect(resolveRendererPixelFormat({}, " NV12 ", "required")).toBe("nv12");
+  it("preserves explicit pixel format casing for native validation", () => {
+    expect(resolveRendererPixelFormat({}, " NV12 ", "required")).toBe("NV12");
     expect(
       resolveRendererPixelFormat(
         { renderer: { pixelFormat: "YUV420P" } },
         undefined,
         "required",
       ),
-    ).toBe("yuv420p");
+    ).toBe("YUV420P");
   });
 
   it("trims CLI pixel format values", () => {
@@ -423,28 +423,24 @@ describe("resolveRendererPixelFormat", () => {
     expect(resolveRendererPixelFormat({}, " rgb24 ", "off")).toBe("rgb24");
   });
 
-  it("keeps configured pixel format values strict", () => {
-    expect(() =>
+  it("forwards configured pixel format values without trimming", () => {
+    expect(
       resolveRendererPixelFormat(
         { renderer: { pixelFormat: " nv12 " } },
         undefined,
         "required",
       ),
-    ).toThrow(
-      "accelerated rendering currently supports nv12/yuv420p output, but  nv12  was requested.\nUse --pixel-format nv12, or use --acceleration off for the software BGRA path.",
-    );
+    ).toBe(" nv12 ");
   });
 
-  it("rejects yuv444p for required acceleration", () => {
-    expect(() =>
+  it("leaves acceleration and pixel format support checks to the native runtime", () => {
+    expect(
       resolveRendererPixelFormat(
         { renderer: { pixelFormat: "yuv444p" } },
         undefined,
         "required",
       ),
-    ).toThrow(
-      "accelerated rendering currently supports nv12/yuv420p output, but yuv444p was requested.\nUse --pixel-format nv12, or use --acceleration off for the software BGRA path.",
-    );
+    ).toBe("yuv444p");
   });
 
   it("rejects an empty configured pixel format", () => {

@@ -466,27 +466,29 @@ export class PreviewApp {
   }
 
   private async pollSource(): Promise<void> {
+    const snapshot = this.snapshot;
+    const source = this.controller.getState().source;
+    const current = () =>
+      !this.disposed &&
+      !this.operation &&
+      !this.outputOperation &&
+      this.snapshot === snapshot &&
+      this.controller.getState().source === source;
     try {
-      if (
-        this.disposed ||
-        this.operation ||
-        this.outputOperation ||
-        !this.snapshot
-      )
-        return;
-      if (this.snapshot.autoRefresh === false || !this.snapshot.sourceRevision)
-        return;
+      if (!current() || !snapshot) return;
+      if (snapshot.autoRefresh === false || !snapshot.sourceRevision) return;
       const change = await this.api.changes!(this.lifetime.signal);
+      if (!current()) return;
       if (
         change.enabled &&
-        this.refreshGate.observe(this.snapshot.sourceRevision, change.revision)
+        this.refreshGate.observe(snapshot.sourceRevision, change.revision)
       ) {
         if (!(await this.load(true, true)))
           this.refreshGate.reject(change.revision);
       }
     } catch (error) {
       // A build may temporarily remove the entry tree. Keep presenting the frozen source.
-      if (!this.disposed && !isAbort(error))
+      if (current() && !isAbort(error))
         this.status.textContent = "Waiting for a completed build";
     } finally {
       this.scheduleRefresh();
@@ -497,18 +499,36 @@ export class PreviewApp {
     if (this.operation || this.disposed) return;
     await this.controller.pause();
     const state = this.controller.getState();
-    if (!state.source || state.presentedFrame === undefined) return;
+    if (
+      this.operation ||
+      this.disposed ||
+      !state.source ||
+      state.phase !== "ready" ||
+      state.presentedFrame === undefined
+    )
+      return;
     const selector = required<HTMLInputElement>(
       this.options.root,
       "[data-selector]",
     ).value;
-    const value = await this.transport.inspect(selector, this.lifetime.signal);
-    if (
-      this.disposed ||
-      this.controller.getState().source?.session.sourceVersion !==
-        state.source.session.sourceVersion
-    )
+    const current = () => {
+      const latest = this.controller.getState();
+      return (
+        !this.disposed &&
+        !this.operation &&
+        latest.phase === "ready" &&
+        latest.source === state.source &&
+        latest.presentedFrame === state.presentedFrame
+      );
+    };
+    let value: ElementInspection;
+    try {
+      value = await this.transport.inspect(selector, this.lifetime.signal);
+    } catch (error) {
+      if (current()) throw error;
       return;
+    }
+    if (!current()) return;
     this.inspection = {
       value,
       frame: state.presentedFrame,

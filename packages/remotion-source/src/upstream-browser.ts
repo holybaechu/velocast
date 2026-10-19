@@ -424,7 +424,10 @@ export function createUpstreamRemotionBridgeScript(
   ) {
     throw new Error("Invalid upstream Remotion bridge options");
   }
-  // Escape `<` so user props cannot terminate the containing inline script tag.
-  const serializedOptions = JSON.stringify(options).replace(/</g, "\\u003c");
-  return `(${installUpstreamRemotionBridge.toString()})(${serializedOptions});`;
+  // Parse JSON so `__proto__` remains an own key; escape `<` for inline HTML.
+  const serializedOptions = JSON.stringify(JSON.stringify(options)).replace(
+    /</g,
+    "\\u003c",
+  );
+  return `(${installUpstreamRemotionBridge.toString()})(JSON.parse(${serializedOptions}));`;
 }

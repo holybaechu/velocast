@@ -7,6 +7,7 @@ export type {
   ReactCompositionDefinitionOptions,
   ReactFont,
   ReactPreloadContext,
+  ReactFrameReadinessContext,
   ReactAudioContext,
 } from "./composition.js";
 export { startVelocast } from "@velocast/core";

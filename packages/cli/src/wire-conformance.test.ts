@@ -9,7 +9,7 @@ import {
   buildUrlRenderCommandJob,
   buildCaptureProbeCommandJobFromSource,
 } from "./render-command-job.js";
-import { validateComposition } from "@velocast/core";
+import { normalizeAudioPlan, validateComposition } from "@velocast/core";
 import {
   validateCompositionManifest,
   validateRenderContext,
@@ -92,8 +92,24 @@ describe("cross-language renderer wire", () => {
       gain: 0.5,
     };
     const plan = { sampleRate: 48000, durationSamples: 10, clips: [clip] };
-    validateAudioPlan(plan);
-    expect(JSON.parse(native("audio-plans", [plan]))).toEqual([plan]);
+    const normalizedEnvelope = normalizeAudioPlan({
+      sampleRate: 48000,
+      durationSamples: 20002,
+      clips: [
+        {
+          ...clip,
+          startSample: 0,
+          durationSamples: 20002,
+          volumeEnvelope: Array.from({ length: 10000 }, (_, index) => ({
+            sample: index * 2 + 2,
+            gain: index % 2,
+          })),
+        },
+      ],
+    });
+    const plans = [plan, normalizedEnvelope];
+    for (const accepted of plans) validateAudioPlan(accepted);
+    expect(JSON.parse(native("audio-plans", plans))).toEqual(plans);
     for (const invalid of [
       { ...plan, sampleRate: 0 },
       { ...plan, durationSamples: Number.MAX_SAFE_INTEGER + 1 },

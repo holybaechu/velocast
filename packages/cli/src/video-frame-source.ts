@@ -29,6 +29,7 @@ export { videoPixelChecksum } from "./video-frame-decoder.js";
 export interface VideoFrameSourceLimits extends VideoPtsLimits {
   maxSourceBytes?: number;
   maxIndexBytes?: number;
+  /** @deprecated Ignored by the persistent media runtime. */
   maxLogBytes?: number;
   maxCacheBytes?: number;
   maxQueuedRequests?: number;
@@ -46,6 +47,7 @@ export interface VideoFrameSourceOptions {
   limits?: VideoFrameSourceLimits;
   signal?: AbortSignal;
 }
+/** @deprecated The media runtime no longer emits subprocess command events. */
 export interface VideoToolEvent {
   command: readonly string[];
   exitStatus: number | null;
@@ -57,6 +59,7 @@ export interface VideoToolEvent {
 export interface VideoFrameSourceDependencies {
   mediaRunner?: MediaRunner;
   mediaSessionFactory?: MediaSessionFactory;
+  /** @deprecated Ignored; the media runtime does not emit command events. */
   onCommand?: (event: VideoToolEvent) => void;
 }
 export interface DecodedVideoFrame {
@@ -198,38 +201,7 @@ export async function openVideoFrameSource(
     throw new Error(
       "video.invalid_probe: selected video stream and PTS index required",
     );
-  const color = video.colorSpace;
-  const transfer =
-    color?.transfer === "pq"
-      ? "smpte2084"
-      : color?.transfer === "hlg"
-        ? "arib-std-b67"
-        : (color?.transfer ?? "unknown");
-  const metadata = buildVideoPtsIndex(
-    {
-      streams: [
-        {
-          codec_name: video.codec === "avc" ? "h264" : video.codec,
-          width: video.codedWidth,
-          height: video.codedHeight,
-          pix_fmt: "rgba",
-          time_base: `${video.timeBase.numerator}/${video.timeBase.denominator}`,
-          tags: { rotate: -video.rotation },
-          color_transfer: transfer,
-          color_primaries: video.colorSpace?.primaries,
-          color_space:
-            color?.matrix === "bt2020-ncl" ? "bt2020nc" : color?.matrix,
-          color_range: video.colorSpace?.fullRange ? "pc" : "tv",
-        },
-      ],
-      frames: video.frames.map((frame) => ({
-        pts: frame.pts,
-        key_frame: frame.keyframe ? 1 : 0,
-        duration: frame.duration,
-      })),
-    },
-    limits,
-  );
+  const metadata = buildVideoPtsIndex(video, limits);
   await checkSource();
   const cacheBudget = limit(
     limits.maxCacheBytes,

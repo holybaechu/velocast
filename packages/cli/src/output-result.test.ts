@@ -37,6 +37,10 @@ it("accepts correlated metadata and rejects another session or requested frame",
   };
   writeFileSync(path, JSON.stringify(body));
   expect(readOutputResult(path, job).request.frame).toBe(12);
+  for (const status of [["success"], ["failure"], { toString: null }]) {
+    writeFileSync(path, JSON.stringify({ ...body, status }));
+    expect(() => readOutputResult(path, job)).toThrow("output.result_mismatch");
+  }
   writeFileSync(
     path,
     JSON.stringify({

@@ -12,9 +12,16 @@ export { startVelocast } from "@velocast/core";
 
 export type GsapTimeline = {
   duration(): number;
-  /** Includes repeats and repeat delays; may be infinite for an unbounded repeat. */
+  /** Includes repeats and repeat delays. */
   totalDuration?(): number;
   totalTime(timeSeconds: number, suppressEvents?: boolean): unknown;
+  repeat?(): number;
+  timeScale?(): number;
+  getChildren?(
+    nested?: boolean,
+    tweens?: boolean,
+    timelines?: boolean,
+  ): GsapTimeline[];
   paused?(): boolean;
   pause(): unknown;
   revert?(): unknown;
@@ -24,6 +31,7 @@ export type GsapTimeline = {
 export interface GsapAdapterOptions {
   compositionId: string;
   fps: number;
+  /** Required when the timeline or an active child repeats indefinitely. */
   durationFrames?: number;
 }
 
@@ -35,6 +43,7 @@ export interface GsapTimelineRegistrationOptions extends FrameAdapterRegistratio
 export interface GsapCompositionOptions<Props = unknown> {
   id: string;
   video: CompositionDefinition;
+  /** Return real GSAP timelines directly: an async factory awaits their playback completion. */
   createTimeline(
     context: FrameSourceContext<Props>,
   ): GsapTimeline | Promise<GsapTimeline>;
@@ -68,6 +77,12 @@ function assertTimeline(value: unknown): asserts value is GsapTimeline {
     (candidate.totalDuration !== undefined &&
       typeof candidate.totalDuration !== "function") ||
     typeof candidate.totalTime !== "function" ||
+    (candidate.repeat !== undefined &&
+      typeof candidate.repeat !== "function") ||
+    (candidate.timeScale !== undefined &&
+      typeof candidate.timeScale !== "function") ||
+    (candidate.getChildren !== undefined &&
+      typeof candidate.getChildren !== "function") ||
     typeof candidate.pause !== "function" ||
     (candidate.paused !== undefined &&
       typeof candidate.paused !== "function") ||
@@ -76,7 +91,7 @@ function assertTimeline(value: unknown): asserts value is GsapTimeline {
   ) {
     throw error(
       "VELOCAST_GSAP_INVALID_TIMELINE",
-      "registered value must expose duration(), totalTime(), pause(), and optional paused(), revert(), kill()",
+      "registered value must expose duration(), totalTime(), pause(), and optional repeat(), timeScale(), getChildren(), paused(), revert(), kill()",
     );
   }
 }
@@ -146,6 +161,7 @@ function resolveDurationFrames(
   // timeline, including repeatDelay, when that method is available.
   const durationSeconds = timeline.totalDuration?.() ?? timeline.duration();
   if (
+    repeatsInfinitely(timeline) ||
     typeof durationSeconds !== "number" ||
     !Number.isFinite(durationSeconds) ||
     durationSeconds <= 0
@@ -165,6 +181,20 @@ function resolveDurationFrames(
   }
 
   return durationFrames;
+}
+
+function repeatsInfinitely(timeline: GsapTimeline): boolean {
+  // GSAP uses a large finite totalDuration() sentinel for repeat: -1.
+  // Paused or zero-speed children do not contribute to their parent's duration.
+  return (
+    (timeline.repeat?.() ?? 0) < 0 ||
+    (timeline.getChildren?.(false, true, true) ?? []).some(
+      (child) =>
+        child.paused?.() !== true &&
+        child.timeScale?.() !== 0 &&
+        repeatsInfinitely(child),
+    )
+  );
 }
 
 function ensurePaused(timeline: GsapTimeline): void {
@@ -329,7 +359,12 @@ export function defineGsapComposition<Props = unknown>(
     source: {
       async open(context) {
         throwIfAborted(context.signal);
-        const timeline = await createTimeline(context);
+        const created = createTimeline(context);
+        // GSAP's then() waits for playback completion, not timeline creation.
+        const timeline =
+          typeof (created as GsapTimeline)?.totalTime === "function"
+            ? (created as GsapTimeline)
+            : await created;
         assertTimeline(timeline);
         if (context.signal.aborted) {
           restoreTimeline(timeline);

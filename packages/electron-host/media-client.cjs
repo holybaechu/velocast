@@ -74,6 +74,7 @@ async function createMediaSession(options = {}) {
     killPromise,
     closed = false,
     tail = Promise.resolve(),
+    shutdownPromise,
     closePromise;
   let joined = Promise.resolve();
   let transportJoined = Promise.resolve();
@@ -91,7 +92,8 @@ async function createMediaSession(options = {}) {
   };
   const kill = () => {
     if (killPromise) return killPromise;
-    if (!child?.pid || exited) return Promise.resolve();
+    if (!child?.pid || (process.platform === "win32" && exited))
+      return Promise.resolve();
     killPromise = (async () => {
       if (process.platform === "win32") {
         await new Promise((resolve, reject) => {
@@ -157,11 +159,11 @@ async function createMediaSession(options = {}) {
     void killPromise.catch(() => {});
     return killPromise;
   };
-  const close = (force = false) => {
+  const shutdownHost = (force = false) => {
     if (force) void kill();
-    if (closePromise) return closePromise;
+    if (shutdownPromise) return shutdownPromise;
     closed = true;
-    closePromise = (async () => {
+    shutdownPromise = (async () => {
       child?.stdin.end();
       try {
         if (!killPromise) {
@@ -171,7 +173,8 @@ async function createMediaSession(options = {}) {
             await kill();
           }
         }
-        if (killPromise) await killPromise;
+        // A detached POSIX leader can exit before its owned descendants.
+        if (killPromise || process.platform !== "win32") await kill();
         await waitBounded(joined, 10000, "media.process_join_timeout");
         await closeTransport();
       } catch (error) {
@@ -189,8 +192,17 @@ async function createMediaSession(options = {}) {
       } finally {
         options.signal?.removeEventListener("abort", sessionAbort);
       }
-      // Parent and forced tree termination are complete before asynchronous,
-      // bounded retries remove this invocation-owned OS temporary directory.
+    })();
+    return shutdownPromise;
+  };
+  const close = (force = false) => {
+    const shutdown = shutdownHost(force);
+    if (closePromise) return closePromise;
+    closePromise = (async () => {
+      // Request failures also await host shutdown. Join their settled work
+      // separately so publication and rollback finish before removing scratch.
+      const [host] = await Promise.allSettled([shutdown, tail]);
+      if (host.status === "rejected") throw host.reason;
       await removeOwnedDirectory(directory);
     })();
     return closePromise;
@@ -287,7 +299,12 @@ async function createMediaSession(options = {}) {
   options.signal?.addEventListener("abort", sessionAbort, { once: true });
   const execute = async (operation, callOptions = {}) => {
     if (closed || exited) throw new Error("media.session_closed");
-    const signal = callOptions.signal ?? options.signal;
+    const signal =
+      options.signal &&
+      callOptions.signal &&
+      options.signal !== callOptions.signal
+        ? AbortSignal.any([options.signal, callOptions.signal])
+        : (callOptions.signal ?? options.signal);
     const id = ++sequence,
       request = path.join(directory, `${id}.request.json`),
       response = path.join(directory, `${id}.response.json`);
@@ -325,12 +342,10 @@ async function createMediaSession(options = {}) {
         const destination = await fs.promises.open(outputPath, "wx", 0o600);
         try {
           destinationIdentity = await destination.stat();
+          signal?.throwIfAborted();
           await pipeline(
             fs.createReadStream(stagedOutput),
-            fs.createWriteStream(outputPath, {
-              fd: destination.fd,
-              autoClose: false,
-            }),
+            destination.createWriteStream(),
             { signal },
           );
         } finally {
@@ -342,7 +357,7 @@ async function createMediaSession(options = {}) {
       return result.result;
     } catch (error) {
       try {
-        await close(true);
+        await shutdownHost(true);
       } catch (cleanup) {
         error = cleanupFailure(error, cleanup);
       }
@@ -377,7 +392,15 @@ async function createMediaSession(options = {}) {
       .then(() => execute(operation, callOptions))
       .finally(() => queued--);
     tail = result.catch(() => {});
-    return result;
+    return result.catch(async (error) => {
+      // Keep failure cleanup outside the request tail that close must join.
+      try {
+        await close(true);
+      } catch (cleanup) {
+        error = cleanupFailure(error, cleanup);
+      }
+      throw error;
+    });
   };
   return { runMediaOperation: run, run, close };
 }

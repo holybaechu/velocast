@@ -44,10 +44,18 @@ export function useCurrentFrame(): number {
 export function useVideoConfig(): VideoConfig {
   const context = useCompatibilityContext();
   const { durationFrames, ...config } = useNativeConfig();
+  const sequences = useContext(RemotionSequenceContext);
   const props = useInputProps();
   return {
     ...config,
-    durationInFrames: durationFrames,
+    durationInFrames: sequences.reduce(
+      (duration, sequence) =>
+        Math.max(
+          0,
+          Math.min(duration - sequence.from, sequence.durationFrames),
+        ),
+      durationFrames,
+    ),
     id: context.id,
     defaultProps: context.defaultProps,
     props: { ...props },
@@ -182,9 +190,9 @@ export const Sequence = forwardRef<HTMLDivElement, SequenceProps>(
       throw new RangeError(
         "VELOCAST_REMOTION_SEQUENCE_INVALID: from must be a safe integer",
       );
-    const config = useNativeConfig();
+    const config = useVideoConfig();
     const duration =
-      durationInFrames ?? Math.max(0, config.durationFrames - from);
+      durationInFrames ?? Math.max(0, config.durationInFrames - from);
     if (!Number.isSafeInteger(duration) || duration < 0)
       throw new RangeError(
         "VELOCAST_REMOTION_SEQUENCE_INVALID: durationInFrames must be a nonnegative safe integer",

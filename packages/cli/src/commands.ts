@@ -17,7 +17,7 @@ import {
   probeAvailableRuntimeForDoctor,
   type probeHostForDoctor,
 } from "./doctor-host.js";
-import { runRenderer } from "./renderer-process.js";
+import { RendererCancelledError, runRenderer } from "./renderer-process.js";
 import { withServeCommand } from "./serve-command.js";
 import { resolveCliOutputPath, type InvocationPathOptions } from "./paths.js";
 import { resolveCompositionRenderSource } from "./render-source.js";
@@ -393,22 +393,41 @@ export async function executeRendererJob(
   request: RenderRequest,
   dependencies: RendererRunDependencies = {},
 ): Promise<void> {
-  const env = dependencies.pathOptions?.env
-    ? { ...process.env, ...dependencies.pathOptions.env }
-    : { ...process.env };
-  return withMediaRuntimeContext(
-    {
-      configuredBinary: request.config.renderer?.binary,
-      cwd: getInvocationCwd(dependencies.pathOptions),
-      env,
-    },
-    () => executeRendererJobInContext(request, dependencies),
-  );
+  const controller = new AbortController();
+  const signal = dependencies.signal ?? controller.signal;
+  const interrupt = () =>
+    controller.abort(
+      request.config.source
+        ? new Error("source.cancelled: output interrupted")
+        : new RendererCancelledError(),
+    );
+  if (!dependencies.signal) {
+    process.on("SIGINT", interrupt);
+    process.on("SIGTERM", interrupt);
+  }
+  try {
+    const env = dependencies.pathOptions?.env
+      ? { ...process.env, ...dependencies.pathOptions.env }
+      : { ...process.env };
+    await withMediaRuntimeContext(
+      {
+        configuredBinary: request.config.renderer?.binary,
+        cwd: getInvocationCwd(dependencies.pathOptions),
+        env,
+      },
+      () => executeRendererJobInContext(request, { ...dependencies, signal }),
+    );
+  } finally {
+    if (!dependencies.signal) {
+      process.removeListener("SIGINT", interrupt);
+      process.removeListener("SIGTERM", interrupt);
+    }
+  }
 }
 
 async function executeRendererJobInContext(
   request: RenderRequest,
-  dependencies: RendererRunDependencies,
+  dependencies: RendererRunDependencies & { signal: AbortSignal },
 ): Promise<void> {
   if (request.config.source !== undefined)
     return executeSourceJob(request, dependencies, executeRendererJob);
@@ -512,7 +531,10 @@ async function executeRendererJobInContext(
         runtimeResolver: dependencies.runtimeResolver,
         resolveRendererBinary: dependencies.resolveRendererBinary,
       });
-    const runtime = await acquisition.acquire(prepared.config.renderer?.binary);
+    const runtime = await acquisition.acquire(
+      prepared.config.renderer?.binary,
+      dependencies.signal,
+    );
     dependencies.signal?.throwIfAborted();
     if (snapshot)
       media = (dependencies.createMediaService ?? createVideoFrameHttp)({
@@ -539,7 +561,9 @@ async function executeRendererJobInContext(
     const runJob = () => run(runtime.binary, job, runtime);
 
     if (prepared.sourceKind === "serve") {
-      await withServeCommand(prepared.config.serve, runJob);
+      await withServeCommand(prepared.config.serve, runJob, {
+        signal: dependencies.signal,
+      });
     } else await runJob();
     if (wantsResult) {
       const result = readOutputResult(job.result_path!, job);

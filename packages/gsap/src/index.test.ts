@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearFrameAdaptersForTest } from "@velocast/core/testing";
+import { gsap } from "gsap";
 import {
   createGsapFrameAdapter,
   defineGsapComposition,
@@ -8,7 +9,6 @@ import {
 
 type FakeTimeline = {
   duration: ReturnType<typeof vi.fn<() => number>>;
-  totalDuration?: ReturnType<typeof vi.fn<() => number>>;
   totalTime: ReturnType<
     typeof vi.fn<(time: number, suppressEvents?: boolean) => void>
   >;
@@ -50,35 +50,73 @@ describe("createGsapFrameAdapter", () => {
   });
 
   it("includes finite repeats and repeat delays in inferred duration", () => {
-    const timeline = fakeTimeline(2);
-    timeline.totalDuration = vi.fn(() => 6.5);
-    const adapter = createGsapFrameAdapter(timeline, {
-      compositionId: "hero",
-      fps: 30,
-    });
-
-    expect(adapter.getDurationFrames()).toBe(195);
-    expect(timeline.totalDuration).toHaveBeenCalledOnce();
+    const timeline = gsap
+      .timeline({ paused: true, repeat: 2, repeatDelay: 0.5 })
+      .to({ x: 0 }, { x: 1, duration: 2 });
+    try {
+      const adapter = createGsapFrameAdapter(timeline, {
+        compositionId: "hero",
+        fps: 30,
+      });
+      expect(adapter.getDurationFrames()).toBe(210);
+    } finally {
+      timeline.revert();
+      gsap.ticker.sleep();
+    }
   });
 
-  it("requires a duration override for an infinite repeat", () => {
-    const timeline = fakeTimeline(2);
-    timeline.totalDuration = vi.fn(() => Infinity);
+  it.each(["timeline", "child"])(
+    "requires a duration override for an infinite %s repeat",
+    (repeating) => {
+      const timeline = gsap
+        .timeline({ paused: true, repeat: repeating === "timeline" ? -1 : 0 })
+        .to(
+          { x: 0 },
+          { x: 1, duration: 2, repeat: repeating === "child" ? -1 : 0 },
+        );
+      try {
+        expect(() =>
+          createGsapFrameAdapter(timeline, {
+            compositionId: "hero",
+            fps: 30,
+          }),
+        ).toThrow("provide durationFrames for an infinite timeline");
+        expect(
+          createGsapFrameAdapter(timeline, {
+            compositionId: "hero",
+            fps: 30,
+            durationFrames: 120,
+          }).getDurationFrames(),
+        ).toBe(120);
+      } finally {
+        timeline.revert();
+        gsap.ticker.sleep();
+      }
+    },
+  );
 
-    expect(() =>
-      createGsapFrameAdapter(timeline, {
-        compositionId: "hero",
-        fps: 30,
-      }),
-    ).toThrow("provide durationFrames for an infinite timeline");
-
-    expect(
-      createGsapFrameAdapter(timeline, {
-        compositionId: "hero",
-        fps: 30,
-        durationFrames: 120,
-      }).getDurationFrames(),
-    ).toBe(120);
+  it("does not count inactive infinite branches toward parent duration", () => {
+    const branch = gsap
+      .timeline({ paused: true })
+      .to({ x: 0 }, { x: 1, duration: 1, repeat: -1 });
+    const timeline = gsap
+      .timeline({ paused: true })
+      .to({ x: 0 }, { x: 1, duration: 2 })
+      .add(branch, 0);
+    try {
+      for (const paused of [true, false]) {
+        branch.paused(paused).timeScale(paused ? 1 : 0);
+        expect(
+          createGsapFrameAdapter(timeline, {
+            compositionId: "hero",
+            fps: 30,
+          }).getDurationFrames(),
+        ).toBe(60);
+      }
+    } finally {
+      timeline.revert();
+      gsap.ticker.sleep();
+    }
   });
 
   it("rejects explicit zero duration frame overrides", () => {
@@ -383,6 +421,52 @@ describe("defineGsapComposition", () => {
     ).toThrow("video.durationFrames is required");
   });
 
+  it("opens a real paused timeline without waiting for completion and seeks in either direction", async () => {
+    const target = { x: 0 };
+    const onUpdate = vi.fn();
+    const timeline = gsap
+      .timeline({ paused: true, repeat: 1, repeatDelay: 0.25, yoyo: true })
+      .to(target, { x: 100, duration: 1, ease: "none", onUpdate });
+    const composition = defineGsapComposition({
+      id: "hero",
+      video,
+      createTimeline: () => timeline,
+    });
+    const context = {
+      compositionId: "hero",
+      ...video,
+      inputProps: undefined,
+      signal: new AbortController().signal,
+    };
+    // GSAP timelines are thenables. Unblock the old completion wait so a
+    // regression fails on the advanced playhead and still releases its work.
+    const unblock = setTimeout(() => timeline.totalProgress(1), 100);
+    try {
+      const session = await composition.source.open(context);
+      clearTimeout(unblock);
+      expect(timeline.totalTime()).toBe(0);
+      for (const [frame, x] of [
+        [15, 50],
+        [45, 75],
+        [30, 100],
+        [0, 0],
+        [75, 0],
+        [15, 50],
+      ] as const) {
+        await session.seekFrame(frame, context);
+        expect(target.x).toBe(x);
+      }
+      expect(onUpdate).not.toHaveBeenCalled();
+      await session.dispose?.();
+      expect(target.x).toBe(0);
+      expect(timeline.parent).toBeNull();
+    } finally {
+      clearTimeout(unblock);
+      timeline.revert();
+      gsap.ticker.sleep();
+    }
+  });
+
   it("honors cancellation before opening and seeking", async () => {
     const timeline = fakeTimeline(3);
     const createTimeline = vi.fn(() => timeline);
@@ -414,7 +498,8 @@ describe("defineGsapComposition", () => {
     const composition = defineGsapComposition({
       id: "hero",
       video,
-      createTimeline: () => {
+      createTimeline: async () => {
+        await Promise.resolve();
         controller.abort(new Error("cancelled during open"));
         return timeline;
       },

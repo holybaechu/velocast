@@ -6,6 +6,7 @@ import {
 import { lstat, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { RendererAudioCodec, RendererContainer } from "@velocast/core";
+import type { CompositionManifest } from "./generated/renderer-contracts.js";
 
 export interface SourceOutputOptions {
   /** Final supported-container path. Existing bytes are replaced only after validation. */
@@ -14,6 +15,8 @@ export interface SourceOutputOptions {
   container?: RendererContainer;
   /** Selected mux audio codec, forwarded when separate audio is added. */
   audioCodec?: RendererAudioCodec;
+  /** Expected full composition, covering source frames [0, durationFrames). */
+  composition?: CompositionManifest;
   /** Render the requested container to the owned staging path; it may already contain audio. */
   renderVideo: (videoPath: string, signal: AbortSignal) => Promise<void>;
   /** Render finished audio after video evaluation, or return null to retain existing audio or silence. */
@@ -23,25 +26,6 @@ export interface SourceOutputOptions {
   ) => Promise<string | null>;
   signal?: AbortSignal;
   mediaRunner?: MediaRunner;
-}
-
-interface ProbeStream {
-  codec_type?: string;
-  codec_name?: string;
-  width?: number;
-  height?: number;
-  nb_frames?: string;
-  start_time?: string;
-  duration?: string;
-  avg_frame_rate?: string;
-  r_frame_rate?: string;
-}
-
-interface ProbeResult {
-  videoTrackCount?: number;
-  audioTrackCount?: number;
-  streams?: ProbeStream[];
-  format?: { duration?: string };
 }
 
 /**
@@ -54,7 +38,8 @@ export async function renderSourceOutput(
 ): Promise<string> {
   const media = options.mediaRunner ?? runMediaOperation;
   const output = resolve(options.output);
-  const extension = `.${options.container ?? extname(output).slice(1).toLowerCase()}`;
+  const container = options.container ?? extname(output).slice(1).toLowerCase();
+  const extension = `.${container}`;
   if (![".mp4", ".mov", ".webm", ".mkv"].includes(extension))
     throw new Error("Source output must use .mp4, .mov, .webm, or .mkv");
   const signal = options.signal ?? new AbortController().signal;
@@ -73,14 +58,15 @@ export async function renderSourceOutput(
     signal.throwIfAborted();
     await assertRegularFile(video, "Video renderer");
     const videoProbe = await probe(video, media, signal);
-    const sourceHasAudio =
-      videoProbe.streams?.some((stream) => stream.codec_type === "audio") ??
-      false;
+    const sourceHasAudio = videoProbe.audio !== undefined;
     assertStreams(
       videoProbe,
       { video: true, audio: sourceHasAudio },
       "Video renderer",
     );
+    assertContainer(videoProbe, container, "Video renderer");
+    if (options.composition)
+      assertComposition(videoProbe, options.composition, "Video renderer");
 
     const audioSource = await options.renderAudio(audio, signal);
     signal.throwIfAborted();
@@ -104,6 +90,7 @@ export async function renderSourceOutput(
           videoPath: video,
           audioPath: audioSource,
           outputPath: muxed,
+          ...(options.composition ? { fps: options.composition.fps } : {}),
           ...(options.audioCodec ? { audioCodec: options.audioCodec } : {}),
         },
         { signal },
@@ -118,7 +105,10 @@ export async function renderSourceOutput(
       { video: true, audio: sourceHasAudio || audioSource !== null },
       "Final media",
     );
+    assertContainer(finalProbe, container, "Final media");
     assertVideoCopy(videoProbe, finalProbe);
+    if (options.composition)
+      assertComposition(finalProbe, options.composition, "Final media");
     signal.throwIfAborted();
     await rename(candidate, output);
     return output;
@@ -143,55 +133,18 @@ async function probe(
   path: string,
   media: MediaRunner,
   signal: AbortSignal,
-): Promise<ProbeResult> {
-  const result = await media<MediaProbe>(
-    { kind: "probe", path, frames: true },
-    { signal },
-  );
-  return {
-    videoTrackCount: result.videoTrackCount,
-    audioTrackCount: result.audioTrackCount,
-    format: { duration: String(result.duration) },
-    streams: [
-      ...(result.video
-        ? [
-            {
-              codec_type: "video",
-              codec_name: result.video.codec,
-              width: result.video.width,
-              height: result.video.height,
-              nb_frames: result.video.frames
-                ? String(result.video.frames.length)
-                : undefined,
-              duration: String(result.video.duration ?? result.duration),
-              start_time: result.video.frames?.length
-                ? String(
-                    (result.video.frames[0]!.pts *
-                      result.video.timeBase.numerator) /
-                      result.video.timeBase.denominator,
-                  )
-                : undefined,
-            },
-          ]
-        : []),
-      ...(result.audio
-        ? [{ codec_type: "audio", duration: String(result.audio.duration) }]
-        : []),
-    ],
-  };
+): Promise<MediaProbe> {
+  return media<MediaProbe>({ kind: "probe", path, frames: true }, { signal });
 }
 
 function assertStreams(
-  result: ProbeResult,
+  result: MediaProbe,
   expected: { video: boolean; audio: boolean },
   producer: string,
 ): void {
-  const types = result.streams?.map((stream) => stream.codec_type) ?? [];
-  const videoCount =
-    result.videoTrackCount ?? types.filter((type) => type === "video").length;
-  const audioCount =
-    result.audioTrackCount ?? types.filter((type) => type === "audio").length;
-  const duration = mediaDuration(result);
+  const videoCount = result.videoTrackCount ?? Number(!!result.video);
+  const audioCount = result.audioTrackCount ?? Number(!!result.audio);
+  const duration = result.duration;
   if (
     videoCount !== Number(expected.video) ||
     audioCount !== Number(expected.audio) ||
@@ -202,79 +155,113 @@ function assertStreams(
   }
 }
 
-function mediaDuration(result: ProbeResult): number {
-  return Number(result.format?.duration);
+function assertComposition(
+  result: MediaProbe,
+  composition: CompositionManifest,
+  producer: string,
+): void {
+  const video = result.video;
+  if (
+    !video ||
+    video.width !== composition.width ||
+    video.height !== composition.height
+  )
+    throw new Error(`${producer} dimensions differ from the composition`);
+  if (video.frames?.length !== composition.durationFrames)
+    throw new Error(`${producer} frame count differs from the composition`);
+  const tick = video.timeBase.numerator / video.timeBase.denominator;
+  if (!Number.isFinite(tick) || tick <= 0)
+    throw new Error(`${producer} returned an invalid video time base`);
+  // Container timestamps round to ticks, after WebCodecs rounds to microseconds.
+  // Do not tolerate an entire frame when the time base equals the frame rate.
+  const tolerance = tick / 2 + 1e-6;
+  if (
+    video.frames.some(
+      (frame, index) =>
+        !Number.isFinite(frame.pts) ||
+        Math.abs(frame.pts * tick - index / composition.fps) > tolerance,
+    )
+  )
+    throw new Error(`${producer} frame timing differs from the composition`);
+  const duration = video.duration ?? result.duration;
+  if (
+    !Number.isFinite(duration) ||
+    Math.abs(duration - composition.durationFrames / composition.fps) >
+      tolerance
+  )
+    throw new Error(`${producer} duration differs from the composition`);
 }
 
-function assertVideoCopy(source: ProbeResult, final: ProbeResult): void {
-  const original = source.streams?.find(
-    (stream) => stream.codec_type === "video",
-  );
-  const published = final.streams?.find(
-    (stream) => stream.codec_type === "video",
-  );
+function assertContainer(
+  result: MediaProbe,
+  container: string,
+  producer: string,
+): void {
+  if (result.container !== container)
+    throw new Error(
+      `${producer} container differs from requested ${container}: ${result.container ?? "unknown"}`,
+    );
+}
+
+function assertVideoCopy(source: MediaProbe, final: MediaProbe): void {
+  const original = source.video;
+  const published = final.video;
   if (!original || !published) {
     throw new Error("Final media is missing the rendered video stream");
   }
   for (const field of ["width", "height"] as const) {
-    if (original[field] !== undefined && original[field] !== published[field]) {
+    if (original[field] !== published[field]) {
       throw new Error(
         `Final media video ${field} differs from the rendered video`,
       );
     }
   }
-  const originalFrames = positiveNumber(original.nb_frames);
+  const originalFrames = original.frames;
+  const publishedFrames = published.frames;
   if (
-    originalFrames !== null &&
-    originalFrames !== positiveNumber(published.nb_frames)
+    !originalFrames?.length ||
+    originalFrames.length !== publishedFrames?.length
   ) {
     throw new Error("Final media frame count differs from the rendered video");
   }
-
-  const frameDuration = frameDurationSeconds(original);
-  const tolerance = Math.max(
-    frameDuration === null ? 0 : frameDuration * 2,
-    0.05,
-  );
-  for (const field of ["start_time", "duration"] as const) {
-    const before = finiteNumber(original[field]);
-    if (before === null) continue;
-    const after = finiteNumber(published[field]);
-    if (after === null || Math.abs(after - before) > tolerance) {
-      throw new Error(
-        `Final media video ${field} differs from the rendered video`,
-      );
-    }
-  }
+  const originalTick =
+    original.timeBase.numerator / original.timeBase.denominator;
+  const publishedTick =
+    published.timeBase.numerator / published.timeBase.denominator;
   if (
-    Math.abs(mediaDuration(final) - mediaDuration(source)) >
-    tolerance + 0.05
-  ) {
+    !Number.isFinite(originalTick) ||
+    originalTick <= 0 ||
+    !Number.isFinite(publishedTick) ||
+    publishedTick <= 0
+  )
+    throw new Error("Final media returned an invalid video time base");
+  // Remuxing may round the original PTS to the final container's time base.
+  // Do not permit a whole frame when one tick equals the frame interval.
+  const tolerance = publishedTick / 2 + 2e-6;
+  for (let index = 0; index < originalFrames.length; index++) {
+    const before = originalFrames[index]!.pts * originalTick;
+    const after = publishedFrames[index]!.pts * publishedTick;
+    if (
+      !Number.isFinite(before) ||
+      !Number.isFinite(after) ||
+      Math.abs(after - before) > tolerance
+    )
+      throw new Error(
+        "Final media frame timing differs from the rendered video",
+      );
+  }
+  const originalDuration = original.duration ?? source.duration;
+  const publishedDuration = published.duration ?? final.duration;
+  if (
+    !Number.isFinite(originalDuration) ||
+    !Number.isFinite(publishedDuration) ||
+    Math.abs(publishedDuration - originalDuration) > tolerance
+  )
+    throw new Error(
+      "Final media video duration differs from the rendered video",
+    );
+  // Encoded audio packet padding can extend the container beyond the video.
+  if (Math.abs(final.duration - source.duration) > tolerance + 0.05) {
     throw new Error("Final media duration differs from the rendered video");
   }
-}
-
-function finiteNumber(value: string | undefined): number | null {
-  if (value === undefined || value.trim() === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function positiveNumber(value: string | undefined): number | null {
-  const parsed = finiteNumber(value);
-  return parsed !== null && parsed > 0 ? parsed : null;
-}
-
-function frameDurationSeconds(stream: ProbeStream): number | null {
-  for (const rate of [stream.avg_frame_rate, stream.r_frame_rate]) {
-    if (!rate) continue;
-    const [numerator, denominator = "1"] = rate.split("/");
-    const framesPerSecond = Number(numerator) / Number(denominator);
-    if (Number.isFinite(framesPerSecond) && framesPerSecond > 0) {
-      return 1 / framesPerSecond;
-    }
-  }
-  const duration = positiveNumber(stream.duration);
-  const frames = positiveNumber(stream.nb_frames);
-  return duration !== null && frames !== null ? duration / frames : null;
 }

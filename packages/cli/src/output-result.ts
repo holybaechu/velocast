@@ -90,7 +90,7 @@ export function readOutputResult(
   if (
     !isObjectRecord(value) ||
     value.apiVersion !== OUTPUT_API_VERSION ||
-    !["success", "failure"].includes(String(value.status)) ||
+    (value.status !== "success" && value.status !== "failure") ||
     value.operation !== (job.operation ?? "render") ||
     !isObjectRecord(value.request) ||
     !Array.isArray(value.compositions) ||

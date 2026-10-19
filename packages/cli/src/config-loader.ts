@@ -79,11 +79,13 @@ export async function loadConfigFromPath(
 
 async function importConfigModule(configPath: string): Promise<ConfigModule> {
   const href = pathToFileURL(configPath).href;
-  try {
-    return (await import(href)) as ConfigModule;
-  } catch (error) {
-    if (!shouldFallbackToTsImport(error)) {
-      throw error;
+  if (!/\.(?:ts|tsx|mts|cts)$/.test(configPath)) {
+    try {
+      return (await import(href)) as ConfigModule;
+    } catch (error) {
+      if (!shouldFallbackToTsImport(error)) {
+        throw error;
+      }
     }
   }
 

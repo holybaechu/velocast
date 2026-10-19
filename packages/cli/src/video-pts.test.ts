@@ -3,26 +3,22 @@ import {
   buildVideoPtsIndex,
   findVideoFrame,
   findVideoFrameOffset,
-  videoSeekTimestamp,
 } from "./video-pts.js";
 
 function probe() {
   return {
-    streams: [
-      {
-        codec_name: "vp8",
-        width: 320,
-        height: 180,
-        pix_fmt: "yuv420p",
-        time_base: "1/1000",
-        start_pts: 0,
-      },
-    ],
+    codec: "vp8",
+    width: 320,
+    height: 180,
+    codedWidth: 320,
+    codedHeight: 180,
+    rotation: 0,
+    timeBase: { numerator: 1, denominator: 1000 },
     frames: [
-      { best_effort_timestamp: 0, key_frame: 1, duration: 40 },
-      { best_effort_timestamp: 80, key_frame: 0, duration: 40 },
-      { best_effort_timestamp: 280, key_frame: 1, duration: 40 },
-      { best_effort_timestamp: 320, key_frame: 0, duration: 120 },
+      { pts: 0, keyframe: true, duration: 40 },
+      { pts: 80, keyframe: false, duration: 40 },
+      { pts: 280, keyframe: true, duration: 40 },
+      { pts: 320, keyframe: false, duration: 120 },
     ],
   };
 }
@@ -45,28 +41,20 @@ it("maps VFR half-open source PTS intervals and reuses low-FPS frames", () => {
   );
 });
 
-it("preserves nonzero original timestamps and floors seek arguments to microseconds", () => {
+it("preserves nonzero original timestamps", () => {
   const data = probe();
-  data.streams[0]!.start_pts = 2000;
-  for (const frame of data.frames) frame.best_effort_timestamp += 2000;
+  for (const frame of data.frames) frame.pts += 2000;
   const index = buildVideoPtsIndex(data);
   expect(index.startSeconds).toBe(2);
   expect(findVideoFrame(index, 2.28).pts).toBe(2280);
   expect(() => findVideoFrame(index, 0)).toThrow("video.time_out_of_range");
-  expect(videoSeekTimestamp(1, { numerator: 1, denominator: 3 })).toBe(
-    "0.333333",
-  );
-  expect(videoSeekTimestamp(-1, { numerator: 1, denominator: 3 })).toBe(
-    "-0.333334",
-  );
 });
 
 it("maps zero-based clip time without rounding it before a nonzero-origin PTS boundary", () => {
   const data = probe();
-  data.streams[0]!.start_pts = 2300;
   data.frames = [2300, 2400, 2600, 2700].map((pts, index) => ({
-    best_effort_timestamp: pts,
-    key_frame: index === 0 ? 1 : 0,
+    pts,
+    keyframe: index === 0,
     duration: 100,
   }));
   const index = buildVideoPtsIndex(data);
@@ -83,7 +71,7 @@ it("maps zero-based clip time without rounding it before a nonzero-origin PTS bo
 
 it("rejects unknown/ambiguous PTS, unsupported formats and resource-limit violations", () => {
   const duplicate = probe();
-  duplicate.frames[1]!.best_effort_timestamp = 0;
+  duplicate.frames[1]!.pts = 0;
   expect(() => buildVideoPtsIndex(duplicate)).toThrow("video.invalid_pts");
   const missingEnd = probe();
   missingEnd.frames.at(-1)!.duration = 0;
@@ -94,47 +82,65 @@ it("rejects unknown/ambiguous PTS, unsupported formats and resource-limit violat
   expect(() => buildVideoPtsIndex(probe(), { maxFrameBytes: 1024 })).toThrow(
     "video.frame_limit",
   );
-  const tenBit = probe();
-  tenBit.streams[0]!.codec_name = "hevc";
-  tenBit.streams[0]!.pix_fmt = "yuv420p10le";
-  expect(buildVideoPtsIndex(tenBit)).toMatchObject({
-    codec: "hevc",
-    pixelFormat: "yuv420p10le",
-    normalization: "none",
-  });
-  const ambiguousHdr = probe();
-  ambiguousHdr.streams[0]!.pix_fmt = "yuv420p10le";
-  Object.assign(ambiguousHdr.streams[0]!, {
-    color_transfer: "smpte2084",
-  });
-  expect(() => buildVideoPtsIndex(ambiguousHdr)).toThrow(
-    "video.unsupported_color",
+  const unsupported = probe();
+  unsupported.codec = "unknown";
+  expect(() => buildVideoPtsIndex(unsupported)).toThrow(
+    "video.unsupported_format",
   );
-  const mirrored = probe();
-  Object.assign(mirrored.streams[0]!, {
-    side_data_list: [
-      {
-        side_data_type: "Display Matrix",
-        rotation: 0,
-        displaymatrix:
-          "\n00000000:       -65536           0           0\n00000001:            0       65536           0\n00000002:            0           0  1073741824\n",
-      },
-    ],
-  });
-  expect(() => buildVideoPtsIndex(mirrored)).toThrow(
-    "mirrored or scaled display matrices",
+  const missingKeyframe = probe();
+  missingKeyframe.frames[0]!.keyframe = false;
+  expect(() => buildVideoPtsIndex(missingKeyframe)).toThrow(
+    "video.invalid_pts",
   );
   const unsafe = probe();
-  unsafe.frames[0]!.best_effort_timestamp = Number.MAX_SAFE_INTEGER + 1;
+  unsafe.frames[0]!.pts = Number.MAX_SAFE_INTEGER + 1;
   expect(() => buildVideoPtsIndex(unsafe)).toThrow("video.invalid_pts");
 });
 
 it("rejects distinct integer PTS that collapse to the same source-second value", () => {
   const data = probe();
-  data.streams[0]!.time_base = "1/3";
+  data.timeBase.denominator = 3;
   data.frames = [
-    { best_effort_timestamp: 9007199254740973, key_frame: 1, duration: 1 },
-    { best_effort_timestamp: 9007199254740974, key_frame: 0, duration: 3 },
+    { pts: 9007199254740973, keyframe: true, duration: 1 },
+    { pts: 9007199254740974, keyframe: false, duration: 3 },
   ];
   expect(() => buildVideoPtsIndex(data)).toThrow("video.invalid_pts");
+});
+
+it("uses the displayed raster for RGBA geometry and frame byte limits", () => {
+  const data = { ...probe(), codedWidth: 160, width: 320 };
+  expect(buildVideoPtsIndex(data)).toMatchObject({
+    encodedWidth: 160,
+    width: 320,
+    frameBytes: 320 * 180 * 4,
+    pixelFormat: "rgba",
+  });
+  expect(() =>
+    buildVideoPtsIndex(data, { maxFrameBytes: 160 * 180 * 4 }),
+  ).toThrow("video.frame_limit");
+});
+
+it("normalizes explicit HDR metadata and rejects an unknown source range", () => {
+  const colorSpace = {
+    transfer: "pq",
+    primaries: "bt2020",
+    matrix: "bt2020-ncl",
+  };
+  expect(
+    buildVideoPtsIndex({
+      ...probe(),
+      colorSpace: { ...colorSpace, fullRange: false },
+    }),
+  ).toMatchObject({
+    normalization: "hdr-to-sdr-bt709",
+    inputColor: {
+      transfer: "smpte2084",
+      primaries: "bt2020",
+      matrix: "bt2020nc",
+      range: "tv",
+    },
+  });
+  expect(() => buildVideoPtsIndex({ ...probe(), colorSpace })).toThrow(
+    "video.unsupported_color",
+  );
 });

@@ -292,9 +292,14 @@ function finalizeRenderJob(fields: RenderJobFields): RustRenderJob {
       delete job[key];
     }
   }
-  if (job.verify_segments) {
-    job.verify_segments = true;
-  } else {
+  if (
+    job.verify_segments !== undefined &&
+    typeof job.verify_segments !== "boolean"
+  )
+    throw new Error(
+      "verifySegments must be a boolean; use --verify-segments or --no-verify-segments on the CLI",
+    );
+  if (job.verify_segments === false) {
     delete job.verify_segments;
   }
   validateRenderJob(job);

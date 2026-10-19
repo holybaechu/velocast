@@ -508,9 +508,9 @@ function volumeEnvelope(
       points.pop();
     }
     points.push(next);
-    if (points.length > 9998)
+    if (points.length > 10000)
       throw new RangeError(
-        "VELOCAST_REMOTION_AUDIO_VOLUME_LIMIT: callback exceeds 9998 non-collinear points; split the clip or use a sparse AudioPlan envelope",
+        "VELOCAST_REMOTION_AUDIO_VOLUME_LIMIT: callback exceeds 10000 non-collinear points; split the clip or use a sparse AudioPlan envelope",
       );
   }
   return points;

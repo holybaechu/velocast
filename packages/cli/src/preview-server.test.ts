@@ -222,6 +222,69 @@ it("retains the valid snapshot after a failed source refresh", async () => {
   );
 });
 
+it("joins lazy media acquisition cleanup before closing the preview", async () => {
+  const { cwd, config } = await fixture();
+  let started!: () => void;
+  const acquiring = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let aborted!: () => void;
+  const cancellation = new Promise<void>((resolve) => {
+    aborted = resolve;
+  });
+  let finishCleanup!: () => void;
+  const cleanupFinished = new Promise<void>((resolve) => {
+    finishCleanup = resolve;
+  });
+  let joined = false;
+  const createMediaService = vi.fn();
+  const server = await createPreviewServer(
+    config,
+    { pathOptions: { cwd, env: {} } },
+    {
+      runtimeAcquisition: {
+        acquire: async (_binary, signal) => {
+          started();
+          await new Promise<void>((resolve) => {
+            signal!.addEventListener("abort", () => resolve(), { once: true });
+          });
+          aborted();
+          await cleanupFinished;
+          joined = true;
+          throw signal!.reason;
+        },
+      },
+      createMediaService,
+    },
+  );
+  cleanup.push(server.close);
+  const request = fetch(
+    new URL("/__velocast-media/frame", server.session().snapshotUrl),
+  ).catch(() => undefined);
+  let closed = false;
+  let closing: Promise<void> | undefined;
+  try {
+    await acquiring;
+    const closePreview = server.close();
+    expect(server.close()).toBe(closePreview);
+    closing = closePreview.then(() => {
+      closed = true;
+    });
+    await cancellation;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(closed).toBe(false);
+    expect(joined).toBe(false);
+    finishCleanup();
+    await closing;
+    expect(joined).toBe(true);
+    expect(createMediaService).not.toHaveBeenCalled();
+  } finally {
+    finishCleanup();
+    await closing;
+    await request;
+  }
+});
+
 it("stages a new source for browser validation and only replaces the active source on commit", async () => {
   const { cwd, config } = await fixture();
   const server = await createPreviewServer(config, {

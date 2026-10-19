@@ -1,4 +1,10 @@
-import { Component, Suspense, type ComponentType, type ReactNode } from "react";
+import {
+  Component,
+  Suspense,
+  useEffect,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import {
@@ -32,6 +38,13 @@ export interface ReactAudioContext<Props extends object> {
   readonly config: VideoConfig;
 }
 
+export interface ReactFrameReadinessContext<
+  Props extends object,
+> extends ReactPreloadContext<Props> {
+  /** Await a React commit, including effects, before inspecting newly mounted resources. */
+  commit(): Promise<void>;
+}
+
 export interface ReactCompositionOptions<
   Props extends object,
 > extends VideoConfig {
@@ -47,6 +60,10 @@ export interface ReactCompositionOptions<
   /** Runs before every frame commit, including same-frame props updates. */
   readonly preload?: (
     context: ReactPreloadContext<Props>,
+  ) => void | Promise<void>;
+  /** Settle delayed React state after mounting, before media resources are sealed and prepared. */
+  readonly settleFrame?: (
+    context: ReactFrameReadinessContext<Props>,
   ) => void | Promise<void>;
   /** One composition-wide sample plan, independent of the requested output range. */
   readonly audio?:
@@ -95,6 +112,11 @@ class FrameBoundary extends Component<
   render() {
     return this.state.failed ? null : this.props.children;
   }
+}
+
+function CommitAcknowledgement({ onReady }: { onReady: () => void }) {
+  useEffect(onReady, [onReady]);
+  return null;
 }
 
 let nextRoot = 0;
@@ -180,6 +202,7 @@ function createReactFrameAdapter<Props extends object>(
   let revision = 0;
   let committedRevision = -1;
   let renderError: Error | undefined;
+  let rejectCommit: ((error: unknown) => void) | undefined;
   let poisoned = false;
   let store: FrameStore | undefined;
   const onCommit = (value: number) => {
@@ -187,6 +210,7 @@ function createReactFrameAdapter<Props extends object>(
   };
   const onError = (error: Error) => {
     renderError = error;
+    rejectCommit?.(error);
   };
   const resolveInputProps = (supplied: unknown): Readonly<Props> => {
     if (
@@ -335,6 +359,74 @@ function createReactFrameAdapter<Props extends object>(
         );
       const nextRevision = ++revision;
       const resources = new FrameResourceScope(signal);
+      let commitInFlight: Promise<void> | undefined;
+      const renderFrame = (committed = onCommit, ready?: () => void) => (
+        <FrameBoundary onError={onError}>
+          <Suspense fallback={null}>
+            <FrameResourceContext.Provider value={resources}>
+              <FrameView
+                store={store!}
+                component={options.component}
+                onCommit={committed}
+              />
+            </FrameResourceContext.Provider>
+          </Suspense>
+          {ready && <CommitAcknowledgement onReady={ready} />}
+        </FrameBoundary>
+      );
+      const checkFrame = () => {
+        signal.throwIfAborted();
+        if (generation !== epoch)
+          throw new Error(
+            "VELOCAST_REACT_STALE_FRAME: frame belongs to a destroyed mount",
+          );
+        if (renderError) throw renderError;
+      };
+      const commit = (): Promise<void> => {
+        if (commitInFlight) return commitInFlight;
+        checkFrame();
+        commitInFlight = new Promise<void>((resolve, reject) => {
+          let committed = false;
+          let settled = false;
+          const finish = (error?: unknown) => {
+            if (settled) return;
+            settled = true;
+            signal.removeEventListener("abort", abort);
+            rejectCommit = undefined;
+            if (error === undefined) resolve();
+            else reject(error);
+          };
+          const abort = () => finish(signal.reason);
+          signal.addEventListener("abort", abort, { once: true });
+          rejectCommit = finish;
+          // A normal-priority commit includes previously queued state updates.
+          // The acknowledgement follows descendant passive effects, which may
+          // declare another readiness handle before media preparation begins.
+          reactRoot!.render(
+            renderFrame(
+              (value) => {
+                onCommit(value);
+                committed = true;
+              },
+              () => {
+                try {
+                  checkFrame();
+                  if (!committed)
+                    throw new Error(
+                      "VELOCAST_REACT_FRAME_NOT_COMMITTED: delayed React state did not commit",
+                    );
+                  finish();
+                } catch (error) {
+                  finish(error);
+                }
+              },
+            ),
+          );
+        }).finally(() => {
+          commitInFlight = undefined;
+        });
+        return commitInFlight;
+      };
       try {
         flushSync(() => {
           store!.update({
@@ -343,29 +435,23 @@ function createReactFrameAdapter<Props extends object>(
             inputProps,
             config,
           });
-          reactRoot!.render(
-            <FrameBoundary onError={onError}>
-              <Suspense fallback={null}>
-                <FrameResourceContext.Provider value={resources}>
-                  <FrameView
-                    store={store!}
-                    component={options.component}
-                    onCommit={onCommit}
-                  />
-                </FrameResourceContext.Provider>
-              </Suspense>
-            </FrameBoundary>,
-          );
+          reactRoot!.render(renderFrame());
         });
         if (renderError) throw renderError;
         if (committedRevision !== nextRevision)
           throw new Error(
             "VELOCAST_REACT_FRAME_NOT_COMMITTED: preload asynchronous resources before rendering",
           );
+        if (options.settleFrame) {
+          await options.settleFrame({ frame, inputProps, signal, commit });
+          await commitInFlight;
+        }
+        checkFrame();
         await resources.wait();
         if (renderError) throw renderError;
         signal.throwIfAborted();
       } catch (cause) {
+        if (commitInFlight) await commitInFlight.catch(() => {});
         resources.cancel(cause);
         try {
           await resources.wait();

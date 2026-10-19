@@ -246,6 +246,7 @@ export class HttpPreviewApi implements PreviewApi {
     try {
       return (await response.json()) as unknown;
     } catch (cause) {
+      signal?.throwIfAborted();
       throw new Error("preview.api_invalid: response is not valid JSON", {
         cause,
       });

@@ -137,31 +137,29 @@ pub(crate) async fn write_optional(
     result.map_err(Into::into)
 }
 
-fn destination_key(path: &Path) -> anyhow::Result<String> {
+pub(crate) fn destination_key(path: &Path) -> anyhow::Result<String> {
     let absolute = if path.is_absolute() {
         path.to_owned()
     } else {
         std::env::current_dir()?.join(path)
     };
-    let mut normalized = std::path::PathBuf::new();
+    let mut resolved = std::path::PathBuf::new();
     for component in absolute.components() {
         match component {
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
-                normalized.pop();
+                resolved.pop();
             }
-            component => normalized.push(component.as_os_str()),
+            std::path::Component::Normal(name) => {
+                resolved.push(name);
+                // Resolve existing symlinks before consuming a later parent component.
+                if let Ok(canonical) = std::fs::canonicalize(&resolved) {
+                    resolved = canonical;
+                }
+            }
+            component => resolved.push(component.as_os_str()),
         }
     }
-    let resolved = std::fs::canonicalize(&normalized)
-        .or_else(|_| {
-            normalized
-                .parent()
-                .zip(normalized.file_name())
-                .map(|(parent, name)| std::fs::canonicalize(parent).map(|parent| parent.join(name)))
-                .unwrap_or_else(|| Ok(normalized.clone()))
-        })
-        .unwrap_or(normalized);
     let text = resolved.to_string_lossy().into_owned();
     Ok(if cfg!(windows) {
         text.to_lowercase()

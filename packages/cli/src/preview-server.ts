@@ -269,7 +269,7 @@ export async function createPreviewServer(
         },
       },
       handleMediaRequest: async (request, response, identity) => {
-        runtime ??= acquisition.acquire(config.renderer?.binary);
+        runtime ??= acquisition.acquire(config.renderer?.binary, owner.signal);
         const acquired = await runtime;
         owner.signal.throwIfAborted();
         media ??= (dependencies.createMediaService ?? createVideoFrameHttp)({
@@ -709,6 +709,7 @@ export async function createPreviewServer(
         server.close(() => done());
         server.closeAllConnections();
       });
+      await Promise.allSettled([runtime]);
       await Promise.allSettled([...pending]);
       await release(active);
       await release(prepared);

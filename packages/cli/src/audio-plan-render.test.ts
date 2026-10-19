@@ -111,7 +111,7 @@ it("cancels pending media work and removes private partial bytes", async () => {
   expect(await readFile(f.outputPath, "utf8")).toBe("original");
   await expect(access(stage)).rejects.toThrow();
 });
-it("protects source aliases and validates channel maps before rendering", async () => {
+it("protects source aliases before rendering", async () => {
   const f = await fixture();
   const source = join(f.root, "source.wav");
   await link(f.outputPath, source);
@@ -130,18 +130,4 @@ it("protects source aliases and validates channel maps before rendering", async 
   await expect(
     renderAudioPlanPcm(input, { outputPath: f.outputPath, channelCount: 1 }),
   ).rejects.toThrow(/source file alias/);
-  await expect(
-    renderAudioPlanPcm(input, {
-      outputPath: f.outputPath,
-      channelCount: 1,
-      sourceChannelCounts: new Map(),
-    }),
-  ).rejects.toThrow(/missing/);
-  await expect(
-    renderAudioPlanPcm(input, {
-      outputPath: f.outputPath,
-      channelCount: 1,
-      sourceChannelCounts: new Map([[source, 3 as 1]]),
-    }),
-  ).rejects.toThrow(/1 or 2/);
 });

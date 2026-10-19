@@ -54,6 +54,7 @@ async fn run() -> anyhow::Result<()> {
 }
 
 async fn run_coordinator(job: RenderJob) -> anyhow::Result<()> {
+    validate_diagnostic_paths(&job)?;
     let mut output_context = output_result::OutputContext::default();
     let mut telemetry = coordinator_telemetry_for(&job);
     let started_at = Instant::now();
@@ -408,7 +409,48 @@ async fn write_optional_report(
     }
     Ok(())
 }
+
+fn validate_diagnostic_paths(job: &RenderJob) -> anyhow::Result<()> {
+    for (field, code, diagnostic) in [
+        (
+            "report_path",
+            "output.report_conflict",
+            job.report_path.as_deref(),
+        ),
+        (
+            "event_log_path",
+            "output.event_log_conflict",
+            job.event_log_path.as_deref(),
+        ),
+    ] {
+        let Some(diagnostic) = diagnostic else {
+            continue;
+        };
+        let diagnostic = output_result::destination_key(Path::new(diagnostic))?;
+        for (name, path) in [
+            ("output", Some(job.output.as_str())),
+            ("result_path", job.result_path.as_deref()),
+            ("event_log_path", job.event_log_path.as_deref()),
+            ("input_props_path", job.input_props_path.as_deref()),
+            ("chunk_output", job.chunk_output.as_deref()),
+            ("report_path", job.report_path.as_deref()),
+        ] {
+            if name == field {
+                continue;
+            }
+            if let Some(path) = path {
+                anyhow::ensure!(
+                    diagnostic != output_result::destination_key(Path::new(path))?,
+                    "{code}: {field} must differ from {name}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn run_worker(mut job: RenderJob) -> anyhow::Result<()> {
+    validate_diagnostic_paths(&job)?;
     webcodecs::validate_job(&job)?;
     let worker = match job.kind().map_err(anyhow::Error::msg)? {
         RenderJobKind::CompositionWorker(value) => value,
@@ -475,6 +517,115 @@ async fn run_worker(mut job: RenderJob) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn diagnostic_conflicts_preserve_job_artifacts_before_coordinator_startup() {
+        let root = std::env::temp_dir().join(format!(
+            "velocast-report-conflicts-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("alias")).unwrap();
+        let artifacts = ["movie.mp4", "result.json", "events.jsonl", "props.json"];
+        for artifact in artifacts {
+            std::fs::write(root.join(artifact), artifact.as_bytes()).unwrap();
+        }
+        let mut job: RenderJob = serde_json::from_value(serde_json::json!({
+            "mode": "composition", "serve_url": "http://localhost",
+            "output": root.join(artifacts[0]), "codec": "unsupported",
+            "result_path": root.join(artifacts[1]),
+            "event_log_path": root.join(artifacts[2]),
+            "input_props_path": root.join(artifacts[3]),
+        }))
+        .unwrap();
+        for artifact in artifacts {
+            job.report_path = Some(
+                root.join("alias")
+                    .join("..")
+                    .join(artifact)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+            let error = run_coordinator(job.clone()).await.unwrap_err();
+            assert!(error.to_string().starts_with("output.report_conflict"));
+            for artifact in artifacts {
+                assert_eq!(
+                    std::fs::read(root.join(artifact)).unwrap(),
+                    artifact.as_bytes()
+                );
+            }
+        }
+        #[cfg(unix)]
+        {
+            std::fs::create_dir_all(root.join("physical/nested")).unwrap();
+            std::os::unix::fs::symlink(root.join("physical/nested"), root.join("link")).unwrap();
+            for report in ["link/../../movie.mp4", "link/missing/../../../movie.mp4"] {
+                job.report_path = Some(root.join(report).to_string_lossy().into_owned());
+                let error = run_coordinator(job.clone()).await.unwrap_err();
+                assert!(error.to_string().starts_with("output.report_conflict"));
+                assert_eq!(std::fs::read(root.join("movie.mp4")).unwrap(), b"movie.mp4");
+            }
+            assert_eq!(
+                output_result::destination_key(&root.join("link/../new/deep/report.json")).unwrap(),
+                output_result::destination_key(&root.join("physical/new/deep/report.json"))
+                    .unwrap(),
+            );
+        }
+        job.report_path = None;
+        for artifact in ["movie.mp4", "result.json", "props.json"] {
+            job.event_log_path = Some(
+                root.join("alias/../")
+                    .join(artifact)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+            let error = run_coordinator(job.clone()).await.unwrap_err();
+            assert!(error.to_string().starts_with("output.event_log_conflict"));
+            for artifact in artifacts {
+                assert_eq!(
+                    std::fs::read(root.join(artifact)).unwrap(),
+                    artifact.as_bytes()
+                );
+            }
+        }
+        job.event_log_path = Some(root.join("events.jsonl").to_string_lossy().into_owned());
+        job.report_path = Some(root.join("report.json").to_string_lossy().into_owned());
+        validate_diagnostic_paths(&job).unwrap();
+        write_optional_report(&job, &coordinator_telemetry_for(&job))
+            .await
+            .unwrap();
+        let report: telemetry::RenderTelemetry =
+            serde_json::from_slice(&std::fs::read(root.join("report.json")).unwrap()).unwrap();
+        assert_eq!(report.mode, telemetry::RenderModeLabel::ReferenceWebCodecs);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn worker_diagnostics_cannot_replace_their_segment() {
+        let mut job: RenderJob = serde_json::from_value(serde_json::json!({
+            "mode": "composition_worker", "serve_url": "http://localhost",
+            "output": "movie.mp4", "codec": "unsupported",
+            "frame_start": 0, "frame_end": 1,
+            "chunk_output": "segment.mp4", "report_path": "./segment.mp4",
+        }))
+        .unwrap();
+        let error = run_worker(job.clone()).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "output.report_conflict: report_path must differ from chunk_output"
+        );
+        job.report_path = None;
+        job.event_log_path = Some("./segment.mp4".to_owned());
+        let error = run_worker(job).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "output.event_log_conflict: event_log_path must differ from chunk_output"
+        );
+    }
+
     #[tokio::test]
     async fn terminal_event_failure_preserves_a_published_success() {
         let root = std::env::temp_dir().join(format!(

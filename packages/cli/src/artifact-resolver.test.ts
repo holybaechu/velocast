@@ -7,12 +7,13 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { create } from "tar";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ArtifactResolver,
   detectReleaseTarget,
@@ -251,6 +252,134 @@ describe("native artifact verification", () => {
 });
 
 describe("artifact setup", () => {
+  it.each(["headers", "body"])(
+    "joins cancellation while waiting for download %s and removes only its owned work",
+    async (phase) => {
+      const fixture = await releaseFixture();
+      const cache = tempDir();
+      const controller = new AbortController();
+      const failure = new Error("render interrupted during acquisition");
+      let started!: () => void;
+      const downloading = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      let joined = false;
+      const fetch = (async (_url, options) => {
+        expect(options?.signal).toBe(controller.signal);
+        if (phase === "headers") {
+          return new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              "abort",
+              () => {
+                setImmediate(() => {
+                  joined = true;
+                  reject(options.signal?.reason);
+                });
+              },
+              { once: true },
+            );
+            started();
+          });
+        }
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.enqueue(readFileSync(fixture.archive).subarray(0, 100));
+              started();
+            },
+            cancel() {
+              return new Promise<void>((resolve) => {
+                setImmediate(() => {
+                  joined = true;
+                  resolve();
+                });
+              });
+            },
+          }),
+        );
+      }) as typeof globalThis.fetch;
+      const resolver = new ArtifactResolver({
+        platform: "win32",
+        arch: "x64",
+        manifest: fixture.manifest,
+        env: { VELOCAST_CACHE_DIR: cache },
+        fetch,
+      });
+      const acquisition = new RendererRuntimeAcquisition({
+        env: {},
+        resolveRendererBinary: () => undefined,
+        artifactResolver: resolver,
+      });
+      const acquiring = acquisition.acquire(undefined, controller.signal);
+      await downloading;
+      controller.abort(failure);
+      await expect(acquiring).rejects.toBe(failure);
+      expect(joined).toBe(true);
+      expect(findNames(cache, ".partial-")).toEqual([]);
+      expect(findNames(cache, ".staging-")).toEqual([]);
+      expect(findNames(cache, ".lock")).toEqual([]);
+      expect(resolver.inspect()).toBeUndefined();
+    },
+  );
+
+  it("preserves an aged active owner's lock and staging when a waiter is cancelled", async () => {
+    const fixture = await releaseFixture();
+    const cache = tempDir();
+    const holder = new AbortController();
+    const waiter = new AbortController();
+    let downloading!: () => void;
+    const downloadStarted = new Promise<void>((resolve) => {
+      downloading = resolve;
+    });
+    const fetch = vi.fn(
+      (async (_url, options) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+          downloading();
+        })) as typeof globalThis.fetch,
+    );
+    const resolver = new ArtifactResolver({
+      platform: "win32",
+      arch: "x64",
+      manifest: fixture.manifest,
+      env: { VELOCAST_CACHE_DIR: cache },
+      fetch,
+    });
+    const owningSetup = resolver.setup(holder.signal);
+    let waitingSetup: ReturnType<ArtifactResolver["setup"]> | undefined;
+    const failure = new Error("waiting render interrupted");
+    try {
+      await downloadStarted;
+      const lock = join(cache, findNames(cache, ".lock")[0]!);
+      const staging = join(cache, findNames(cache, ".staging-")[0]!);
+      const sentinel = join(staging, "in-progress.txt");
+      writeFileSync(sentinel, "active download");
+      const old = new Date(Date.now() - 11 * 60_000);
+      utimesSync(lock, old, old);
+      const work = [findNames(cache, ".lock"), findNames(cache, ".staging-")];
+      waitingSetup = resolver.setup(waiter.signal);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      waiter.abort(failure);
+      await expect(waitingSetup).rejects.toBe(failure);
+      expect([
+        findNames(cache, ".lock"),
+        findNames(cache, ".staging-"),
+      ]).toEqual(work);
+      expect(readFileSync(sentinel, "utf8")).toBe("active download");
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      waiter.abort(failure);
+      holder.abort(failure);
+      await Promise.allSettled([owningSetup, waitingSetup]);
+    }
+    expect(findNames(cache, ".lock")).toEqual([]);
+    expect(findNames(cache, ".staging-")).toEqual([]);
+  });
+
   it("inspects verified Linux overrides without changing permissions, then prepares on setup", async () => {
     const fixture = await releaseFixture("linux-x64-gnu");
     const binary = join(fixture.runtimeDir, fixture.artifact.renderer);
@@ -341,7 +470,7 @@ describe("artifact setup", () => {
     expect((await offline.setup()).source).toBe("cache");
   });
 
-  it("retries when a competing setup releases the lock before it is inspected", async () => {
+  it("times out without removing an occupied lock and supports confirmed manual recovery", async () => {
     const fixture = await releaseFixture();
     const cache = tempDir();
     const artifact = fixture.manifest.targets["win32-x64"].artifact;
@@ -354,27 +483,38 @@ describe("artifact setup", () => {
       `${artifact.sha256}.lock`,
     );
     mkdirSync(lock, { recursive: true });
-    let released = false;
+    const sentinel = join(lock, "owner.txt");
+    writeFileSync(sentinel, "preserve until the owner is confirmed stopped");
+    const old = new Date(Date.now() - 11 * 60_000);
+    utimesSync(lock, old, old);
+    let now = Date.now();
+    const fetch = vi.fn(
+      async () => new Response(readFileSync(fixture.archive)),
+    );
     const resolver = new ArtifactResolver({
       platform: "win32",
       arch: "x64",
       manifest: fixture.manifest,
       env: { VELOCAST_CACHE_DIR: cache },
-      fetch: (async () =>
-        new Response(readFileSync(fixture.archive))) as typeof globalThis.fetch,
-      lockStat: (() => {
-        released = true;
-        rmSync(lock, { recursive: true, force: true });
-        throw Object.assign(new Error("competing setup released lock"), {
-          code: "ENOENT",
-        });
-      }) as typeof statSync,
+      fetch,
+      now: () => now,
     });
 
+    const waiting = resolver.setup();
+    now += 30_000;
+    await expect(waiting).rejects.toThrow(
+      `artifact.setup_locked: another setup may still be using ${lock}; wait for it to finish, or remove this lock only after confirming no setup is running, then rerun velocast setup`,
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(readFileSync(sentinel, "utf8")).toBe(
+      "preserve until the owner is confirmed stopped",
+    );
+
+    rmSync(lock, { recursive: true, force: true });
     const result = await resolver.setup();
-    expect(released).toBe(true);
+    expect(fetch).toHaveBeenCalledOnce();
     expect(result.source).toBe("download");
-    expect(result.artifactDir).not.toContain(".lock");
+    expect(findNames(cache, ".lock")).toEqual([]);
   });
 
   it("removes interrupted downloads and never promotes them", async () => {

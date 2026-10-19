@@ -387,15 +387,6 @@ export function resolveRendererAssemblyMode(
   throw new Error("renderer.assembly must be auto, reference, or segments");
 }
 
-function isHardwareCompatiblePixelFormat(pixelFormat: string): boolean {
-  const normalized = pixelFormat.toLowerCase();
-  return normalized === "nv12" || normalized === "yuv420p";
-}
-
-function normalizeHardwarePixelFormat(pixelFormat: string): string {
-  return pixelFormat.toLowerCase();
-}
-
 export function resolveRendererPixelFormat(
   config: Config,
   cliValue: string | undefined,
@@ -415,13 +406,5 @@ export function resolveRendererPixelFormat(
     throw new Error("renderer.pixelFormat must be a non-empty string");
   }
 
-  if (acceleration === "required" && !isHardwareCompatiblePixelFormat(value)) {
-    throw new Error(
-      `accelerated rendering currently supports nv12/yuv420p output, but ${value} was requested.\nUse --pixel-format nv12, or use --acceleration off for the software BGRA path.`,
-    );
-  }
-
-  return acceleration === "required"
-    ? normalizeHardwarePixelFormat(value)
-    : value;
+  return value;
 }

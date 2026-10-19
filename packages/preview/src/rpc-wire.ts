@@ -77,6 +77,7 @@ export function isRpcEnvelope(
     Number.isSafeInteger(message.requestId) &&
     Number(message.requestId) > 0 &&
     isRpcSession(message.session) &&
+    typeof message.method === "string" &&
     [
       "connect",
       "initialize",
@@ -85,7 +86,7 @@ export function isRpcEnvelope(
       "inspect",
       "cancel",
       "destroy",
-    ].includes(String(message.method))
+    ].includes(message.method)
   );
 }
 export function loopbackOrigin(value: string): string {

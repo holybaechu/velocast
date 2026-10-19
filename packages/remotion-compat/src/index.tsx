@@ -11,7 +11,11 @@ import {
 } from "@velocast/react";
 import type { ComponentType } from "react";
 import { RemotionCompatibilityContext } from "./context.js";
-import { waitForDelayHandles } from "./delay-handles.js";
+import {
+  delayHandleRevision,
+  hasPendingDelayHandles,
+  waitForDelayHandles,
+} from "./delay-handles.js";
 import { assertRegisteredRoot } from "./root-declaration.js";
 import {
   AudioDeclarationRuntime,
@@ -31,7 +35,7 @@ export * from "./remotion.js";
 export { startVelocast } from "@velocast/react";
 export interface RemotionCompositionOptions<Props extends object> extends Omit<
   ReactCompositionOptions<Props>,
-  "durationFrames" | "audio"
+  "durationFrames" | "audio" | "settleFrame"
 > {
   readonly durationInFrames: number;
   /** Optional identity check binding this explicit manifest to unchanged registerRoot(). */
@@ -77,6 +81,7 @@ export function defineRemotionComposition<Props extends object>(
     target: reactOptions.target,
     fonts: reactOptions.fonts,
     preload: reactOptions.preload,
+    settleFrame: reactOptions.settleFrame,
     audio: reactOptions.audio,
   });
 }
@@ -167,6 +172,14 @@ function createReactOptions<Props extends object>(
       });
       audioRuntime.prepare(preloadContext.frame, declaration);
       await preload?.(preloadContext);
+    },
+    settleFrame: async ({ signal, commit }) => {
+      let revision: number;
+      do {
+        await waitForDelayHandles(signal);
+        revision = delayHandleRevision();
+        await commit();
+      } while (hasPendingDelayHandles() || delayHandleRevision() !== revision);
     },
     audio: async (audioContext) => (await resolveAudio(audioContext)).plan,
     defaultProps,

@@ -22,19 +22,6 @@ impl FrameRange {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StridedFrameAssignment {
-    pub start: u32,
-    pub end: u32,
-    pub step: NonZeroU32,
-}
-
-impl StridedFrameAssignment {
-    pub fn frames(self) -> impl Iterator<Item = u32> {
-        (self.start..self.end).step_by(self.step.get() as usize)
-    }
-}
-
 pub fn available_parallelism() -> u32 {
     std::thread::available_parallelism()
         .map(|workers| workers.get() as u32)
@@ -62,7 +49,6 @@ pub fn resolve_effective_concurrency(
     capped_by_manifest.max(1).min(duration_frames.max(1))
 }
 
-#[allow(dead_code)]
 pub fn chunk_frame_ranges(duration_frames: u32, concurrency: u32) -> Vec<FrameRange> {
     if duration_frames == 0 {
         return Vec::new();
@@ -84,75 +70,12 @@ pub fn chunk_frame_ranges(duration_frames: u32, concurrency: u32) -> Vec<FrameRa
     ranges
 }
 
-pub fn strided_frame_assignments(
-    duration_frames: u32,
-    concurrency: u32,
-) -> Vec<StridedFrameAssignment> {
-    if duration_frames == 0 {
-        return Vec::new();
-    }
-
-    let worker_count = concurrency.max(1).min(duration_frames);
-    let step = NonZeroU32::new(worker_count).expect("worker count is at least one");
-
-    (0..worker_count)
-        .map(|start| StridedFrameAssignment {
-            start,
-            end: duration_frames,
-            step,
-        })
-        .collect()
-}
-
-#[derive(Debug, Clone)]
-pub struct FrameSchedule {
-    next: u32,
-    end: u32,
-}
-
-impl FrameSchedule {
-    pub fn new(duration_frames: u32) -> Self {
-        Self {
-            next: 0,
-            end: duration_frames,
-        }
-    }
-}
-
-impl Iterator for FrameSchedule {
-    type Item = u32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.next >= self.end {
-            return None;
-        }
-
-        let frame = self.next;
-        self.next += 1;
-        Some(frame)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU32;
 
     use super::*;
     use velocast_protocol::RendererConcurrency;
-
-    #[test]
-    fn schedules_frames_from_zero_to_duration_exclusive() {
-        let frames: Vec<u32> = FrameSchedule::new(4).collect();
-
-        assert_eq!(frames, vec![0, 1, 2, 3]);
-    }
-
-    #[test]
-    fn schedules_no_frames_for_zero_duration() {
-        let frames: Vec<u32> = FrameSchedule::new(0).collect();
-
-        assert!(frames.is_empty());
-    }
 
     #[test]
     fn frame_range_reports_length_and_frames() {
@@ -224,61 +147,6 @@ mod tests {
             assert!(pair[0].start < pair[0].end);
         }
         assert!(ranges.last().is_some_and(|range| range.start < range.end));
-    }
-
-    #[test]
-    fn builds_strided_assignments_for_streaming_workers() {
-        let assignments = strided_frame_assignments(5, 2);
-
-        assert_eq!(
-            assignments,
-            vec![
-                StridedFrameAssignment {
-                    start: 0,
-                    end: 5,
-                    step: NonZeroU32::new(2).unwrap(),
-                },
-                StridedFrameAssignment {
-                    start: 1,
-                    end: 5,
-                    step: NonZeroU32::new(2).unwrap(),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn strided_assignments_do_not_create_empty_workers() {
-        let assignments = strided_frame_assignments(2, 4);
-
-        assert_eq!(
-            assignments,
-            vec![
-                StridedFrameAssignment {
-                    start: 0,
-                    end: 2,
-                    step: NonZeroU32::new(2).unwrap(),
-                },
-                StridedFrameAssignment {
-                    start: 1,
-                    end: 2,
-                    step: NonZeroU32::new(2).unwrap(),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn strided_assignment_iterates_assigned_absolute_frames() {
-        let frames: Vec<_> = StridedFrameAssignment {
-            start: 1,
-            end: 7,
-            step: NonZeroU32::new(3).unwrap(),
-        }
-        .frames()
-        .collect();
-
-        assert_eq!(frames, vec![1, 4]);
     }
 
     #[test]

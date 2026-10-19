@@ -16,7 +16,7 @@ export class FrameResourceScope {
   register(key: object, load: FrameResourceLoader): void {
     if (this.sealed)
       throw new Error(
-        "VELOCAST_REACT_RESOURCE_LATE: frame resources must be declared during the frame commit, not an asynchronous React update",
+        "VELOCAST_REACT_RESOURCE_LATE: frame resources must be declared before media preparation starts",
       );
     this.loaders.set(key, load);
   }
@@ -61,8 +61,8 @@ export const FrameResourceContext = createContext<FrameResourceScope | null>(
 /**
  * Prepare imperative per-frame media (for example canvas pixels) after React
  * commits and before capture. Honor the signal before every asynchronous paint.
- * The callback must not schedule another asynchronous React render; preload
- * React state/data with composition options.preload instead.
+ * The callback must not schedule another asynchronous React render; prepare
+ * React state/data with composition options.preload or options.settleFrame first.
  */
 export function useFrameResource(load: FrameResourceLoader): void {
   const scope = useContext(FrameResourceContext);

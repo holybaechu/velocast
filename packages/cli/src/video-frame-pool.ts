@@ -164,8 +164,7 @@ export async function createVideoFramePool(
       timeoutMs,
     );
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined,
-      file: Awaited<ReturnType<typeof open>> | undefined,
-      source: VideoFrameSource | undefined;
+      file: Awaited<ReturnType<typeof open>> | undefined;
     try {
       checkAbort(signal);
       const response = await (dependencies.fetch ?? fetch)(url, {
@@ -258,7 +257,7 @@ export async function createVideoFramePool(
       await chmod(entry.path, 0o400);
       checkAbort(signal);
       clearTimeout(timer);
-      source = await (dependencies.openSource ?? openVideoFrameSource)({
+      entry.source = await (dependencies.openSource ?? openVideoFrameSource)({
         path: entry.path,
         sourceHash: actual,
         env: options.env,
@@ -272,11 +271,11 @@ export async function createVideoFramePool(
         signal: lifetime,
       });
       checkAbort(lifetime);
-      entry.source = source;
-      return source;
+      return entry.source;
     } catch (error) {
       transfer.abort(error);
-      await source?.close();
+      await entry.source?.close();
+      entry.source = undefined;
       if (file) await file.close();
       await rm(entry.path, { force: true });
       reserved -= entry.reserved;
@@ -363,7 +362,9 @@ export async function createVideoFramePool(
               let source: VideoFrameSource;
               try {
                 source = await entry.promise;
-              } catch {
+              } catch (error) {
+                // A late-open source remains owned if its shutdown failed.
+                if (entry.source) throw error;
                 return;
               }
               await source.close();

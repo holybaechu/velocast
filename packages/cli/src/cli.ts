@@ -380,7 +380,7 @@ export async function runCli(
   cli
     .command(
       "probe-capture <compositionId>",
-      "Probe native accelerated browser capture",
+      "Legacy capture probe (unsupported); use render --report",
     )
     .option("--config <path>", "Config path", { default: "velocast.config.ts" })
     .option("--report <path>", "Write a renderer telemetry report to this path")
@@ -464,7 +464,7 @@ function addCommonRenderOptions(command: Command): Command {
     .option("--bitrate <value>", "Target video bitrate, e.g. 60M or 12000k")
     .option(
       "--acceleration <mode>",
-      "Renderer acceleration mode: required, auto, or off",
+      "Encoding preference: auto or off; required is unsupported",
     )
     .option(
       "--assembly <mode>",
@@ -478,6 +478,6 @@ function addCommonRenderOptions(command: Command): Command {
     )
     .option(
       "--verify-segments",
-      "Probe segment streams and final frame count after remux",
+      "Compatibility flag; output metadata checks always run",
     );
 }

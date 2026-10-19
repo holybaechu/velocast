@@ -1,8 +1,12 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
   browserClose: vi.fn(),
   snapshotClose: vi.fn(),
+  inputPropsPath: undefined as string | undefined,
 }));
 vi.mock("./browser-cdp.js", async (original) => ({
   ...(await original<typeof import("./browser-cdp.js")>()),
@@ -24,11 +28,30 @@ vi.mock("./input-snapshot.js", () => ({
   createInputSnapshot: async () => ({
     url: "http://fixture/",
     session: { sessionId: "session", sourceVersion: "version" },
+    inputPropsPath: mocks.inputPropsPath,
     close: mocks.snapshotClose,
   }),
 }));
 import { auditComposition } from "./agent-audit.js";
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.inputPropsPath = undefined;
+});
+it("closes the snapshot when frozen input props cannot be parsed", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "velocast-audit-props-test-"));
+  try {
+    mocks.inputPropsPath = join(directory, "props.json");
+    await writeFile(mocks.inputPropsPath, "invalid JSON");
+    await expect(auditComposition({}, "fixture")).rejects.toBeInstanceOf(
+      SyntaxError,
+    );
+    expect(mocks.snapshotClose).toHaveBeenCalledOnce();
+    expect(mocks.call).not.toHaveBeenCalled();
+    expect(mocks.browserClose).not.toHaveBeenCalled();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 it("preserves the page error and attempts remaining cleanup when browser shutdown also fails", async () => {
   const pageError = new Error("original page failure"),
     closeError = new Error("owned browser termination failed"),

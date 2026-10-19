@@ -56,7 +56,16 @@ async function fixture(mode = "normal") {
             codedHeight: 2,
             codec: "vp8",
             rotation: 0,
-            colorSpace: mode === "hdr" ? { transfer: "pq" } : undefined,
+            colorSpace:
+              mode === "hdr"
+                ? { transfer: "pq" }
+                : mode === "hdr-missing-range"
+                  ? {
+                      transfer: "pq",
+                      primaries: "bt2020",
+                      matrix: "bt2020-ncl",
+                    }
+                  : undefined,
             timeBase: { numerator: 1, denominator: 1000 },
             frames,
           },
@@ -232,7 +241,10 @@ it("bounds actual tool children across multiple source handles", async () => {
   expect(f.sessions()).toBe(0);
 });
 
-it("rejects HDR without explicit source color metadata", async () => {
-  const f = await fixture("hdr");
-  await expect(f.open()).rejects.toThrow("video.unsupported_color");
-});
+it.each(["hdr", "hdr-missing-range"])(
+  "rejects %s without explicit source color metadata",
+  async (mode) => {
+    const f = await fixture(mode);
+    await expect(f.open()).rejects.toThrow("video.unsupported_color");
+  },
+);

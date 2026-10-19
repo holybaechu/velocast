@@ -164,8 +164,8 @@ describe("composition projects", () => {
     expect(await protocol.getDurationFrames("intro")).toBe(120);
   });
 
-  it("reopens for per-request props and uses their resolved duration", async () => {
-    const frames: number[] = [];
+  it("resolves each request's props and duration without replacing session defaults", async () => {
+    const requests: unknown[] = [];
     const protocol = new VelocastRuntime().startProject([
       defineFrameComposition({
         id: "intro",
@@ -173,21 +173,47 @@ describe("composition projects", () => {
         defaultProps: { frames: 90 },
         resolveVideo: (props) => ({ ...video, durationFrames: props.frames }),
         source: {
-          open: () => ({
-            seekFrame(frame) {
-              frames.push(frame);
+          open: (context) => ({
+            seekFrame(frame, frameContext) {
+              requests.push({
+                frame,
+                props: context.inputProps,
+                duration: frameContext.durationFrames,
+              });
+            },
+            getAudioPlan(audioContext) {
+              requests.push({
+                props: context.inputProps,
+                duration: audioContext.durationFrames,
+              });
+              return null;
             },
           }),
         },
       }),
     ]);
+    await protocol.setInputProps({ frames: 60 });
     await protocol.seekFrame("intro", 100, {
       compositionId: "intro",
       ...video,
       inputProps: { frames: 10 },
     });
-    expect(frames).toEqual([9]);
     expect(await protocol.getDurationFrames("intro")).toBe(10);
+    await protocol.seekFrame("intro", 100);
+    expect(await protocol.getDurationFrames("intro")).toBe(60);
+    await protocol.getAudioPlan!("intro", {
+      compositionId: "intro",
+      ...video,
+      inputProps: { frames: 20 },
+    });
+    await protocol.getAudioPlan!("intro");
+    expect(requests).toEqual([
+      { frame: 9, props: { frames: 10 }, duration: 10 },
+      { frame: 59, props: { frames: 60 }, duration: 60 },
+      { props: { frames: 20 }, duration: 20 },
+      { props: { frames: 60 }, duration: 60 },
+    ]);
+    await protocol.destroy();
   });
 
   it("accepts required external props before resolving the catalog", async () => {
@@ -270,6 +296,38 @@ describe("composition projects", () => {
       inputProps: { title: undefined },
     });
     expect(values).toEqual(["Default", undefined]);
+  });
+
+  it("resolves metadata and reopens sources when sparse input arrays change length", async () => {
+    const opens: number[] = [];
+    const resolveVideo = vi.fn((props: { slots: unknown[] }) => ({
+      ...video,
+      durationFrames: props.slots.length,
+    }));
+    const protocol = new VelocastRuntime().startProject([
+      defineFrameComposition({
+        id: "intro",
+        video,
+        defaultProps: { slots: [] as unknown[] },
+        resolveVideo,
+        source: {
+          open(context) {
+            opens.push(context.inputProps.slots.length);
+            return { seekFrame() {} };
+          },
+        },
+      }),
+    ]);
+    await protocol.setInputProps({ slots: Array<unknown>(1) });
+    await protocol.seekFrame("intro", 0);
+    await protocol.setInputProps({ slots: Array<unknown>(3) });
+    await protocol.seekFrame("intro", 2);
+    expect(await protocol.getDurationFrames("intro")).toBe(3);
+    await protocol.setInputProps({ slots: Array<unknown>(3) });
+    await protocol.seekFrame("intro", 2);
+    expect(opens).toEqual([1, 3]);
+    expect(resolveVideo).toHaveBeenCalledTimes(2);
+    await protocol.destroy();
   });
 
   it("requires successful cleanup before opening another source after disposal fails", async () => {

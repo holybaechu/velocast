@@ -225,14 +225,25 @@ test("rejects publication, missing video roles, and escaping negative roots", ()
   assert.throws(() => validateManifest(unsafeId, true), /step_id_invalid/);
 });
 
-test("bounds and joins a real Node child process tree", async () => {
+test("bounds and joins a real Node child process tree", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "velocast-private-rc-timeout-"));
   roots.push(root);
   const script = join(root, "parent.mjs");
   const grandchildPid = join(root, "grandchild.pid");
+  const heartbeat = join(root, "grandchild.heartbeat");
+  t.after(() => {
+    if (existsSync(grandchildPid)) {
+      try {
+        process.kill(Number(readFileSync(grandchildPid, "utf8")), "SIGKILL");
+      } catch {
+        // The runner normally terminates the owned descendant first.
+      }
+    }
+  });
+  const descendant = `const{writeFileSync,appendFileSync}=require("node:fs");process.on("SIGTERM",()=>{});writeFileSync(${JSON.stringify(heartbeat)},".");setInterval(()=>appendFileSync(${JSON.stringify(heartbeat)},"."),10);`;
   writeFileSync(
     script,
-    `import{spawn}from"node:child_process";import{writeFileSync}from"node:fs";const child=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});writeFileSync(${JSON.stringify(grandchildPid)},String(child.pid));setInterval(()=>{},1000);`,
+    `import{spawn}from"node:child_process";import{writeFileSync}from"node:fs";const child=spawn(process.execPath,["-e",${JSON.stringify(descendant)}],{stdio:"ignore"});writeFileSync(${JSON.stringify(grandchildPid)},String(child.pid));setInterval(()=>{},1000);`,
   );
   const result = await runCommandForTest({
     argv: [process.execPath, script],
@@ -242,6 +253,14 @@ test("bounds and joins a real Node child process tree", async () => {
   });
   assert.equal(result.exitCode, 124);
   assert.equal(result.timedOut, true);
+  assert.match(result.stderr, /private_rc\.terminated: timeout after 1000ms/);
+  const stopped = readFileSync(heartbeat, "utf8");
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  assert.equal(
+    readFileSync(heartbeat, "utf8"),
+    stopped,
+    "descendant continued running after the command settled",
+  );
   const pid = Number(readFileSync(grandchildPid, "utf8"));
   await expectProcessExit(pid);
 });

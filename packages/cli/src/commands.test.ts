@@ -714,6 +714,46 @@ describe("executeRendererJob", () => {
     });
   });
 
+  it("forwards the render cancellation signal into runtime acquisition", async () => {
+    const controller = new AbortController();
+    const failure = new Error("acquisition interrupted");
+    let received: AbortSignal | undefined;
+    const acquiring = new Promise<never>((_resolve, reject) => {
+      controller.signal.addEventListener(
+        "abort",
+        () => reject(controller.signal.reason),
+        { once: true },
+      );
+    });
+    await expect(
+      executeRendererJob(
+        {
+          kind: "url",
+          config: {},
+          url: "http://127.0.0.1:4545",
+          selector: "#main",
+          output: "unused.mp4",
+        },
+        {
+          signal: controller.signal,
+          runtimeAcquisition: {
+            acquire: (_binary, signal) => {
+              received = signal;
+              controller.abort(failure);
+              return acquiring;
+            },
+          },
+          runRenderer: async () => {
+            throw new Error(
+              "cancelled acquisition must not launch native work",
+            );
+          },
+        },
+      ),
+    ).rejects.toBe(failure);
+    expect(received).toBe(controller.signal);
+  });
+
   it("routes composition, probe, and URL requests through one renderer pipeline", async () => {
     const cwd = mkTempDir("velocast-execute-renderer-job-");
     const calls: Array<{ binary: string; job: Record<string, unknown> }> = [];

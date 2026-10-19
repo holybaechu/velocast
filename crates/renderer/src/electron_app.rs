@@ -4,8 +4,6 @@ use crate::browser_surface::BrowserSurfaceMode;
 use crate::cancellation::RenderCancellation;
 use crate::frame_loop::{seek_frame_script, SelectorMeasurement};
 use anyhow::{ensure, Context};
-#[cfg(test)]
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -28,8 +26,6 @@ use windows_sys::Win32::System::JobObjects::*;
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_MESSAGE_BYTES: u64 = 4 * 1024 * 1024;
-#[cfg(test)]
-const MAX_FRAME_BYTES: u64 = 256 * 1024 * 1024;
 
 pub struct ElectronRenderer {
     surface_mode: BrowserSurfaceMode,
@@ -191,50 +187,6 @@ impl Drop for ElectronRenderer {
         self.host.get_mut().take();
     }
 }
-#[cfg(test)]
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SoftwarePaintResponse {
-    generation: u64,
-    width: u32,
-    height: u32,
-    pixel_format: String,
-    byte_length: u64,
-    software_frame_id: String,
-}
-
-#[cfg(test)]
-impl SoftwarePaintResponse {
-    fn validate(&self, generation: u64) -> anyhow::Result<()> {
-        ensure!(
-            self.generation == generation,
-            "electron.stale_paint: software generation mismatch"
-        );
-        let expected = u64::from(self.width)
-            .checked_mul(u64::from(self.height))
-            .and_then(|pixels| pixels.checked_mul(4))
-            .context("electron.invalid_geometry: software BGRA length overflow")?;
-        ensure!(
-            self.width > 0
-                && self.height > 0
-                && self.width <= 16384
-                && self.height <= 16384
-                && expected <= MAX_FRAME_BYTES
-                && self.byte_length == expected,
-            "electron.invalid_geometry: software BGRA size is invalid or exceeds 256 MiB"
-        );
-        ensure!(
-            self.pixel_format == "bgra",
-            "electron.unsupported_format: expected software BGRA"
-        );
-        ensure!(
-            !self.software_frame_id.is_empty() && self.software_frame_id.len() <= 64,
-            "electron.invalid_lease: software frame lease is missing or oversized"
-        );
-        Ok(())
-    }
-}
-
 struct HostDirectory {
     root: PathBuf,
     canonical_root: PathBuf,
@@ -281,29 +233,6 @@ impl HostDirectory {
 
     fn profile_path(&self) -> PathBuf {
         self.root.join("profile")
-    }
-
-    #[cfg(test)]
-    fn read_frame(&self, expected: u64) -> anyhow::Result<Vec<u8>> {
-        ensure!(
-            expected > 0 && expected <= MAX_FRAME_BYTES,
-            "electron.invalid_frame_size"
-        );
-        let path = self.root.join("frame.bgra");
-        let metadata =
-            std::fs::symlink_metadata(&path).context("electron.software_frame_missing")?;
-        ensure!(
-            metadata.is_file() && metadata.len() == expected,
-            "electron.invalid_frame_size: expected regular file of exact BGRA length"
-        );
-        let file = std::fs::File::open(&path)?;
-        let mut pixels = Vec::with_capacity(expected as usize);
-        file.take(expected + 1).read_to_end(&mut pixels)?;
-        ensure!(
-            pixels.len() as u64 == expected,
-            "electron.invalid_frame_size: software frame changed while reading"
-        );
-        Ok(pixels)
     }
 }
 
@@ -749,46 +678,6 @@ fn validate_response(response: &Value, id: u64) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn software_metadata_rejects_stale_oversized_and_inconsistent_frames() {
-        let mut paint = SoftwarePaintResponse {
-            generation: 5,
-            width: 2,
-            height: 1,
-            pixel_format: "bgra".into(),
-            byte_length: 8,
-            software_frame_id: "5:1".into(),
-        };
-        assert!(paint.validate(5).is_ok());
-        assert!(paint.validate(4).is_err());
-        paint.byte_length = 9;
-        assert!(paint.validate(5).is_err());
-        paint.width = 16384;
-        paint.height = 16384;
-        paint.byte_length = 16384 * 16384 * 4;
-        assert!(paint.validate(5).is_err());
-        paint.width = u32::MAX;
-        paint.height = u32::MAX;
-        assert!(paint.validate(5).is_err());
-        paint.width = 0;
-        paint.byte_length = 0;
-        assert!(paint.validate(5).is_err());
-    }
-
-    #[test]
-    fn software_transfer_reads_exact_bytes_and_cleans_abandoned_frame() {
-        let directory = HostDirectory::create().unwrap();
-        let path = directory.root.clone();
-        let pixels = [0, 0, 0, 0, 9, 8, 7, 255];
-        std::fs::write(path.join("frame.bgra"), pixels).unwrap();
-        assert_eq!(directory.read_frame(8).unwrap(), pixels);
-        assert!(directory.read_frame(4).is_err());
-        assert!(directory.read_frame(12).is_err());
-        assert!(directory.read_frame(MAX_FRAME_BYTES + 1).is_err());
-        drop(directory);
-        assert!(!path.exists());
-    }
-
     #[test]
     fn host_directories_isolate_profiles_and_remove_nested_cache_files() {
         let first = HostDirectory::create().unwrap();

@@ -236,3 +236,29 @@ it("accepts host-owned sample automation for preroll with a numeric JSX base gai
   });
   await protocol.seekFrame("preroll-envelope", 3);
 });
+
+it("retains the full callback-envelope limit through normalization and clipping", async () => {
+  const { resolveAudioDeclaration } = await import("./audio.js");
+  const { normalizeAudioPlan, sliceAudioPlan, evaluateAudioEnvelope } =
+    await import("@velocast/core");
+  const video = { width: 16, height: 16, fps: 60, durationFrames: 9999 };
+  const volume = (frame: number) => frame % 2;
+  const declaration = {
+    sampleRate: 48000,
+    tracks: [{ src: "/tone.wav", volume }],
+  };
+  const plan = resolveAudioDeclaration(declaration, video).plan!;
+  expect(plan.clips[0]!.volumeEnvelope).toHaveLength(10000);
+  const normalized = normalizeAudioPlan(plan);
+  expect(normalizeAudioPlan(normalized)).toEqual(normalized);
+  const clipped = sliceAudioPlan(plan, 1, plan.durationSamples - 1);
+  const points = clipped.clips[0]!.volumeEnvelope!;
+  expect(points).toHaveLength(10000);
+  for (const sample of [0, 799, 800, clipped.durationSamples])
+    expect(evaluateAudioEnvelope(points, sample)).toBe(
+      evaluateAudioEnvelope(plan.clips[0]!.volumeEnvelope, sample + 1),
+    );
+  expect(() =>
+    resolveAudioDeclaration(declaration, { ...video, durationFrames: 10000 }),
+  ).toThrow("callback exceeds 10000 non-collinear points");
+});

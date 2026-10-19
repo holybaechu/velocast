@@ -9,44 +9,12 @@ import { mediaWorkspace } from "./media-workspace.js";
 export interface RenderAudioPlanPcmOptions {
   readonly outputPath: string;
   readonly channelCount: 1 | 2;
-  readonly sourceChannelCounts?: ReadonlyMap<string, 1 | 2>;
   readonly signal?: AbortSignal;
   readonly mediaRunner?: MediaRunner;
 }
 function normalizedSourceKey(source: string): string {
   const value = path.normalize(source);
   return process.platform === "win32" ? value.toLowerCase() : value;
-}
-
-function snapshotSourceChannelCounts(
-  plan: AudioPlan,
-  supplied: ReadonlyMap<string, 1 | 2> | undefined,
-): ReadonlyMap<string, 1 | 2> | undefined {
-  if (!supplied) return undefined;
-  const canonical = new Map<string, 1 | 2>();
-  for (const [source, channels] of supplied) {
-    if (typeof source !== "string" || !source)
-      throw new TypeError(
-        "audio source channel map keys must be nonempty strings",
-      );
-    if (channels !== 1 && channels !== 2)
-      throw new RangeError("audio source channel counts must be 1 or 2");
-    const key = normalizedSourceKey(source),
-      previous = canonical.get(key);
-    if (previous !== undefined && previous !== channels)
-      throw new Error(
-        "audio source channel map has inconsistent normalized paths",
-      );
-    canonical.set(key, channels);
-  }
-  const snapshot = new Map<string, 1 | 2>();
-  for (const clip of plan.clips) {
-    const channels = canonical.get(normalizedSourceKey(clip.source));
-    if (channels === undefined)
-      throw new Error(`audio source channel map is missing ${clip.source}`);
-    snapshot.set(clip.source, channels);
-  }
-  return snapshot;
 }
 
 function abortIfRequested(signal?: AbortSignal): void {
@@ -91,7 +59,6 @@ export async function renderAudioPlanPcm(
   const outputPath = options.outputPath,
     channelCount = options.channelCount,
     mediaRunner = options.mediaRunner ?? runMediaOperation;
-  snapshotSourceChannelCounts(snapshot, options.sourceChannelCounts);
   if (channelCount !== 1 && channelCount !== 2)
     throw new RangeError("channelCount must be 1 or 2");
   if (!path.isAbsolute(outputPath) || /[\0\r\n]/.test(outputPath))

@@ -10,13 +10,15 @@ import { createMediaSession, type MediaSession } from "velocast/source-media";
 export async function serveRemotionBundle(
   root: string,
   workspace: string,
-  signal: AbortSignal,
+  parentSignal: AbortSignal,
   limits: {
     maxSources?: number;
     maxSourceBytes?: number;
     maxTotalBytes?: number;
   } = {},
 ) {
+  const owner = new AbortController();
+  const signal = AbortSignal.any([owner.signal, parentSignal]);
   const cache = new Map<string, Promise<string>>();
   const rootPath = await realpath(root);
   const maxSources = limits.maxSources ?? 64,
@@ -42,6 +44,7 @@ export async function serveRemotionBundle(
     return canonical;
   };
   const freeze = (source: string): Promise<string> => {
+    if (signal.aborted) return Promise.reject(signal.reason);
     const url = new URL(source, origin);
     if (!["http:", "https:", "data:"].includes(url.protocol))
       return Promise.reject(
@@ -163,6 +166,7 @@ export async function serveRemotionBundle(
           if (!source || !Number.isFinite(timestamp))
             throw new Error("remotion.invalid_video_request");
           const file = await freeze(source);
+          signal.throwIfAborted();
           const outputPath = join(assets, `${randomUUID()}.png`);
           session ??= createMediaSession({ signal });
           try {
@@ -234,9 +238,7 @@ export async function serveRemotionBundle(
       });
       if (request.method === "HEAD" || !details.size) response.end();
       else
-        createReadStream(file, { start, end })
-          .on("error", () => response.destroy())
-          .pipe(response);
+        await pipeline(createReadStream(file, { start, end }), response);
     })().catch((error) => {
       if (!response.headersSent)
         response.writeHead(422, { "Content-Type": "text/plain" });
@@ -253,17 +255,25 @@ export async function serveRemotionBundle(
   if (!address || typeof address === "string")
     throw new Error("remotion.server_address");
   origin = `http://127.0.0.1:${address.port}`;
+  let closePromise: Promise<void> | undefined;
   return {
     url: origin,
     port: address.port,
     freeze,
-    async close() {
-      await (await session)?.close();
-      server.closeAllConnections();
-      await new Promise<void>((done, reject) =>
-        server.close((error) => (error ? reject(error) : done())),
-      );
-      await Promise.allSettled(active);
+    close() {
+      return (closePromise ??= (async () => {
+        owner.abort();
+        const stopped = new Promise<void>((done, reject) =>
+          server.close((error) => (error ? reject(error) : done())),
+        );
+        server.closeAllConnections();
+        try {
+          await (await session)?.close();
+        } finally {
+          await stopped;
+          await Promise.allSettled([...active, ...cache.values()]);
+        }
+      })());
     },
   };
 }

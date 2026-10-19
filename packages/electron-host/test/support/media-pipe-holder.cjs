@@ -9,5 +9,7 @@ function finish() {
 }
 setInterval(() => {
   if (fs.existsSync(path.join(root, "stop"))) finish();
+  if (process.env.PIPE_TEST_OWNED_GROUP === "1")
+    fs.appendFileSync(path.join(root, "heartbeat"), "x");
 }, 10);
 setTimeout(finish, 10000);

@@ -15,7 +15,8 @@ it("decodes real generated audio and reports measured energy plus uncertain onse
   const root = await mkdtemp(join(tmpdir(), "velocast-music-analysis-"));
   roots.push(root);
   const source = join(root, "pulses.wav");
-  await writeTestWav(source);  const report = await analyzeMusic(source, { maxDurationSeconds: 5 });
+  await writeTestWav(source);
+  const report = await analyzeMusic(source, { maxDurationSeconds: 5 });
   expect(report.decoded).toMatchObject({
     sampleRate: 11025,
     channels: 1,
@@ -24,9 +25,28 @@ it("decodes real generated audio and reports measured energy plus uncertain onse
   expect(report.decoded.analyzedSeconds).toBeCloseTo(2, 1);
   expect(report.energy.length).toBeGreaterThan(4);
   expect(
+    report.energy.every(
+      (item) =>
+        Number.isFinite(item.normalized) &&
+        item.normalized >= 0 &&
+        item.normalized <= 1 &&
+        Number.isFinite(item.rms) &&
+        item.rms >= 0,
+    ),
+  ).toBe(true);
+  expect(
     Math.max(...report.energy.map((item) => item.normalized)),
   ).toBeGreaterThan(0.4);
   expect(report.beatCandidates.length).toBeGreaterThanOrEqual(2);
+  expect(
+    report.beatCandidates.every(
+      (item) =>
+        Number.isFinite(item.strength) &&
+        item.strength >= 0 &&
+        item.strength <= 1,
+    ),
+  ).toBe(true);
+  expect(Math.max(...report.beatCandidates.map((item) => item.strength))).toBe(1);
   expect(report.beatCandidates.every((item) => item.confidence < 1)).toBe(true);
   expect(report.method.limits.join(" ")).toContain("not tempo");
 }, 120_000);

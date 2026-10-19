@@ -115,6 +115,7 @@ export interface Config {
     assembly?: RendererAssemblyMode;
     reportPath?: string;
     eventLogPath?: string;
+    /** @deprecated Ignored; output metadata checks always run. */
     verifySegments?: boolean;
   };
 }

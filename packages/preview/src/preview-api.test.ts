@@ -110,3 +110,37 @@ it("preserves structured server codes so a stale preview can resynchronize", asy
     "snapshot.version_mismatch",
   );
 });
+
+it("preserves cancellation while reading the response body", async () => {
+  const controller = new AbortController();
+  let body!: ReadableStreamDefaultController<Uint8Array>;
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      start(value) {
+        body = value;
+        body.enqueue(new TextEncoder().encode('{"snapshotUrl":'));
+      },
+    }),
+  );
+  const api = new HttpPreviewApi({
+    fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(response),
+  });
+  const result = api.getSession(controller.signal);
+  await vi.waitFor(() => expect(response.bodyUsed).toBe(true));
+
+  controller.abort();
+  body.error(controller.signal.reason);
+
+  await expect(result).rejects.toBe(controller.signal.reason);
+});
+
+it("still reports malformed response JSON", async () => {
+  const api = new HttpPreviewApi({
+    fetch: vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(new Response("{")),
+  });
+  await expect(api.getSession()).rejects.toThrow(
+    "preview.api_invalid: response is not valid JSON",
+  );
+});

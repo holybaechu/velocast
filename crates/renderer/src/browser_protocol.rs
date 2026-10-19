@@ -92,12 +92,6 @@ pub(crate) fn session_binding_script(
     ))
 }
 
-#[cfg(test)]
-pub(crate) fn cancel_request_script(token: &str) -> String {
-    let token = serde_json::to_string(token).expect("request token should serialize");
-    format!("window.__velocastRenderer.cancel({token});")
-}
-
 pub(crate) fn protocol_missing_sentinel_script() -> String {
     "window.__velocastRenderer.installMissingProtocol();".to_string()
 }
@@ -161,10 +155,6 @@ mod tests {
         assert_eq!(
             protocol_compatibility_script("protocol-check"),
             r#"window.__velocastRenderer.report("protocol-check", "velocast-script-result:", () => window.__velocastRenderer.assertProtocol(4));"#,
-        );
-        assert_eq!(
-            cancel_request_script("cancel-\"token"),
-            r#"window.__velocastRenderer.cancel("cancel-\"token");"#,
         );
         assert_eq!(
             readiness_script("ready-token"),

@@ -39,6 +39,35 @@ afterEach(async () => {
 });
 
 describe("official React composition commit boundary", () => {
+  it.each(["error", "suspense"] as const)(
+    "rejects a readiness commit that produces %s and releases its mount",
+    async (failure) => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const unresolved = new Promise<never>(() => {});
+      let fail!: () => void;
+      function Scene() {
+        const [failed, setFailed] = useState(false);
+        fail = () => setFailed(true);
+        if (failed)
+          throw failure === "error" ? new Error("delayed failure") : unresolved;
+        return <span>initial</span>;
+      }
+      const protocol = registerReactComposition("readiness-failure", {
+        ...config,
+        component: Scene,
+        async settleFrame({ commit }) {
+          fail();
+          await commit();
+        },
+      });
+      await expect(protocol.seekFrame("readiness-failure", 0)).rejects.toThrow(
+        failure === "error" ? "delayed failure" : "FRAME_NOT_COMMITTED",
+      );
+      await protocol.destroy();
+      expect(document.body.children).toHaveLength(0);
+    },
+  );
+
   it("defines a React composition without mounting, then opens its owned root through one project runtime", async () => {
     const definition = defineReactComposition({
       id: "declarative",

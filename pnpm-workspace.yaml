@@ -2,6 +2,8 @@ packages:
   - "apps/*"
   - "packages/*"
   - "crates/renderer"
+patchedDependencies:
+  mediabunny@1.60.0: patches/mediabunny@1.60.0.patch
 # TypeScript 7 provides the `tsc` binary through the @typescript/native alias.
 # The `typescript` alias retains the TypeScript 6 compiler API for typescript-eslint only.
 allowBuilds:

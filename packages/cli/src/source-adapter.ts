@@ -39,17 +39,10 @@ type NativeExecutor = (
 /** Own source preparation, capture, finalization and publication for every public entrypoint. */
 export async function executeSourceJob(
   request: RenderRequest,
-  dependencies: RendererRunDependencies,
+  dependencies: RendererRunDependencies & { signal: AbortSignal },
   executeNative: NativeExecutor,
 ): Promise<void> {
-  const controller = new AbortController();
-  const signal = dependencies.signal ?? controller.signal;
-  const interrupt = () =>
-    controller.abort(new Error("source.cancelled: output interrupted"));
-  if (!dependencies.signal) {
-    process.once("SIGINT", interrupt);
-    process.once("SIGTERM", interrupt);
-  }
+  const signal = dependencies.signal;
   const json =
     "json" in (request.options ?? {}) &&
     (request.options as { json?: boolean }).json === true;
@@ -157,6 +150,15 @@ export async function executeSourceJob(
     const ids = new Set<string>();
     for (const composition of source.compositions) {
       validateCompositionManifest(composition);
+      if (
+        composition.width === 0 ||
+        composition.height === 0 ||
+        composition.fps === 0 ||
+        composition.durationFrames === 0
+      )
+        throw new Error(
+          "source.invalid_compositions: composition dimensions, fps and duration must be positive",
+        );
       if (!composition.id.trim() || ids.has(composition.id))
         throw new Error(
           "source.invalid_compositions: composition IDs must be nonempty and unique",
@@ -266,6 +268,7 @@ export async function executeSourceJob(
     if (request.kind === "composition") {
       await (dependencies.renderSourceOutput ?? renderSourceOutput)({
         output: result.outputPath!,
+        composition,
         container: resolveRendererContainer(
           request.config,
           request.options?.container,
@@ -325,10 +328,6 @@ export async function executeSourceJob(
       await close();
     } finally {
       if (temporary) await rm(temporary, { recursive: true, force: true });
-      if (!dependencies.signal) {
-        process.removeListener("SIGINT", interrupt);
-        process.removeListener("SIGTERM", interrupt);
-      }
     }
   }
 }

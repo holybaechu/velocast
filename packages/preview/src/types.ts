@@ -10,8 +10,13 @@ export interface AudioPlanClock {
   readonly sampleRate: number;
   readonly durationSamples: number;
   currentSample(): number;
-  play(sample?: number): Promise<void>;
+  /**
+   * Bound sound and currentSample to the exclusive end independently of visual callbacks.
+   * Omitting endSample restores the full-plan end.
+   */
+  play(sample?: number, endSample?: number): Promise<void>;
   pause(): void;
+  /** Active seeks retain the selected playback end; seeking to or past it stops playback. */
   seek(sample: number): void;
   dispose(): Promise<void>;
 }
