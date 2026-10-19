@@ -310,6 +310,19 @@ Prerequisites: a supported Node.js version from [package.json](package.json),
 the package's pnpm version, Rust stable, and Git. Native Windows builds
 additionally need the MSVC C++ toolchain.
 
+With [mise](https://mise.jdx.dev/), install the repository's development tools
+from [mise.toml](mise.toml):
+
+```sh
+mise trust mise.toml
+mise install
+```
+
+The configuration pins Node.js and pnpm and selects Rust stable with rustfmt
+and Clippy. Git, platform build tools, and Electron's Linux system libraries
+must be installed separately. If mise is not activated in your shell, prefix
+the commands below with `mise exec --`.
+
 ```sh
 pnpm install
 pnpm check:fast
