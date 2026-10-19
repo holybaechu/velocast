@@ -268,20 +268,24 @@ export class PreviewApp {
       "click",
       () => void this.requestOutput("range"),
     );
-    this.view.addEventListener("keydown", (event) => {
-      if (
-        event.code !== "Space" ||
-        event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.target instanceof HTMLInputElement ||
-        event.target instanceof HTMLSelectElement ||
-        event.target instanceof HTMLButtonElement
-      )
-        return;
-      event.preventDefault();
-      this.play.click();
-    });
+    this.view.addEventListener(
+      "keydown",
+      (event) => {
+        if (
+          event.code !== "Space" ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.target instanceof HTMLInputElement ||
+          event.target instanceof HTMLSelectElement ||
+          event.target instanceof HTMLButtonElement
+        )
+          return;
+        event.preventDefault();
+        this.play.click();
+      },
+      { signal: this.lifetime.signal },
+    );
   }
 
   private load(refresh: boolean, automatic = false): Promise<boolean> {
