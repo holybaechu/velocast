@@ -40,7 +40,7 @@ async fn run() -> anyhow::Result<()> {
         return Ok(());
     }
     tracing_subscriber::fmt()
-        .with_env_filter("info")
+        .with_max_level(tracing::Level::INFO)
         .with_writer(std::io::stderr)
         .init();
     let mut job = args.parse_job()?;
