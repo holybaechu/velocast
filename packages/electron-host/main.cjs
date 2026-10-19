@@ -54,6 +54,9 @@ const softwareFrames = software
   : null;
 app.commandLine.appendSwitch("force-device-scale-factor", "1");
 app.commandLine.appendSwitch("disable-background-timer-throttling");
+// Complete compositor stages before copying shared textures for frame capture.
+if (webcodecs)
+  app.commandLine.appendSwitch("run-all-compositor-stages-before-draw");
 
 let window = null;
 let closed = false;
