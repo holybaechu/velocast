@@ -51,7 +51,7 @@ impl ElectronRenderer {
         };
         self.request(request, timeout)
     }
-    pub async fn load(&self, job: &RenderJob) -> anyhow::Result<()> {
+    pub async fn load(&self, job: &RenderJob, props: Option<&Value>) -> anyhow::Result<()> {
         let cancellation = RenderCancellation::from_event_log_path(job.event_log_path.as_deref());
         *self.host.borrow_mut() = Some(HostProcess::spawn(cancellation, self.surface_mode)?);
         self.request(
@@ -68,9 +68,8 @@ impl ElectronRenderer {
         self.report(|token| browser_protocol::session_binding_script(&session, token))?;
         *self.session.borrow_mut() = Some(session);
         self.execute(&browser_protocol::protocol_missing_sentinel_script())?;
-        if let Some(props) = crate::input_props::read_input_props(job.input_props_path.as_deref())?
-        {
-            self.report(|token| browser_protocol::input_props_script(&props, token))?;
+        if let Some(props) = props {
+            self.report(|token| browser_protocol::input_props_script(props, token))?;
         }
         self.report(|token| Ok(browser_protocol::readiness_script(token)))?;
         tracing::info!(surface_mode = ?self.surface_mode, "Electron browser ready");

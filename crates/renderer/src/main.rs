@@ -210,7 +210,7 @@ async fn run_coordinator_render_with_mode(
     let props = input_props::read_input_props(job.input_props_path.as_deref())?;
     let renderer = NativeBrowser::new(mode)?;
     let started = Instant::now();
-    renderer.load(job).await?;
+    renderer.load(job, props.as_ref()).await?;
     telemetry.page_load_ms += started.elapsed().as_millis();
     let started = Instant::now();
     let compositions = renderer.discover_compositions()?;
@@ -485,7 +485,7 @@ async fn run_worker(mut job: RenderJob) -> anyhow::Result<()> {
         let mode = initial_surface_for_job(&job);
         let renderer = NativeBrowser::new(mode)?;
         let load_started = Instant::now();
-        renderer.load(&job).await?;
+        renderer.load(&job, props.as_ref()).await?;
         report.page_load_ms += load_started.elapsed().as_millis();
         let composition = match &job.composition {
             Some(value) => value.clone(),
