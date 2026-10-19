@@ -262,6 +262,7 @@ export async function openVideoFrameSource(
     if (!session) {
       const release = await acquireMediaProcess(signal);
       try {
+        checkAbort(signal);
         session = await createSession({
           signal: lifetime,
           timeoutMs,
