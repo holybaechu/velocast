@@ -37,7 +37,7 @@
         "$TURBO_ROOT$/LICENSE",
         "$TURBO_ROOT$/THIRD_PARTY_NOTICES"
       ],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+      "outputs": ["dist/**"]
     },
     "lint": {
       "dependsOn": ["^lint"],
@@ -52,10 +52,6 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tsconfig.base.json"],
       "env": ["CHROME_PATH", "VELOCAST_BROWSER_BINARY"],
       "outputs": []
-    },
-    "dev": {
-      "cache": false,
-      "persistent": true
     }
   }
 }
