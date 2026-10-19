@@ -711,9 +711,20 @@ export async function createPreviewServer(
       });
       await Promise.allSettled([runtime]);
       await Promise.allSettled([...pending]);
-      await release(active);
-      await release(prepared);
-      await stopped;
+      const cleanup = await Promise.allSettled([
+        release(active),
+        release(prepared),
+        stopped,
+      ]);
+      const errors = cleanup.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1)
+        throw new AggregateError(
+          errors,
+          `preview.cleanup_failed: ${errors.map((error) => (error instanceof Error ? error.message : String(error))).join("; ")}`,
+        );
     })());
   const stop = () => {
     void close();
