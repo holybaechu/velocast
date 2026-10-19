@@ -63,23 +63,9 @@ describe("native artifact verification", () => {
 
   it("detects corrupt runtime files", async () => {
     const fixture = await releaseFixture();
-    verifyRuntimeDirectory(
-      fixture.runtimeDir,
-      "win32-x64",
-      fixture.manifest.targets["win32-x64"],
-      fixture.artifact,
-      fixture.manifest,
-    );
+    fixture.verify();
     writeFileSync(join(fixture.runtimeDir, "velocast-renderer.exe"), "corrupt");
-    expect(() =>
-      verifyRuntimeDirectory(
-        fixture.runtimeDir,
-        "win32-x64",
-        fixture.manifest.targets["win32-x64"],
-        fixture.artifact,
-        fixture.manifest,
-      ),
-    ).toThrow("artifact.runtime_corrupt");
+    expect(fixture.verify).toThrow("artifact.runtime_corrupt");
   });
 
   it.each(["helper.dll", "resources.pak", "locales/en-US.pak"])(
@@ -87,15 +73,7 @@ describe("native artifact verification", () => {
     async (missing) => {
       const fixture = await releaseFixture();
       rmSync(join(fixture.runtimeDir, missing), { force: true });
-      expect(() =>
-        verifyRuntimeDirectory(
-          fixture.runtimeDir,
-          "win32-x64",
-          fixture.manifest.targets["win32-x64"],
-          fixture.artifact,
-          fixture.manifest,
-        ),
-      ).toThrow(`artifact.runtime_missing: ${missing}`);
+      expect(fixture.verify).toThrow(`artifact.runtime_missing: ${missing}`);
     },
   );
 
@@ -105,15 +83,7 @@ describe("native artifact verification", () => {
     const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
     inventory.protocolVersion = 2;
     writeFileSync(inventoryPath, JSON.stringify(inventory));
-    expect(() =>
-      verifyRuntimeDirectory(
-        fixture.runtimeDir,
-        "win32-x64",
-        fixture.manifest.targets["win32-x64"],
-        fixture.artifact,
-        fixture.manifest,
-      ),
-    ).toThrow("artifact.compatibility_mismatch");
+    expect(fixture.verify).toThrow("artifact.compatibility_mismatch");
 
     const nativeFixture = await releaseFixture();
     const nativeInventoryPath = join(
@@ -125,15 +95,7 @@ describe("native artifact verification", () => {
     );
     nativeInventory.nativeRendererVersion = "0.2.0";
     writeFileSync(nativeInventoryPath, JSON.stringify(nativeInventory));
-    expect(() =>
-      verifyRuntimeDirectory(
-        nativeFixture.runtimeDir,
-        "win32-x64",
-        nativeFixture.manifest.targets["win32-x64"],
-        nativeFixture.artifact,
-        nativeFixture.manifest,
-      ),
-    ).toThrow("artifact.compatibility_mismatch");
+    expect(nativeFixture.verify).toThrow("artifact.compatibility_mismatch");
   });
 
   it("checks architecture for native helpers as well as the renderer", async () => {
@@ -149,15 +111,7 @@ describe("native artifact verification", () => {
     record.size = helper.length;
     record.sha256 = sha256(helper);
     writeFileSync(inventoryPath, JSON.stringify(inventory));
-    expect(() =>
-      verifyRuntimeDirectory(
-        fixture.runtimeDir,
-        "win32-x64",
-        fixture.manifest.targets["win32-x64"],
-        fixture.artifact,
-        fixture.manifest,
-      ),
-    ).toThrow("artifact.wrong_architecture");
+    expect(fixture.verify).toThrow("artifact.wrong_architecture");
   });
 
   it("verifies optional files declared by the complete runtime inventory", async () => {
@@ -172,27 +126,13 @@ describe("native artifact verification", () => {
       sha256: sha256(optional),
     });
     writeFileSync(inventoryPath, JSON.stringify(inventory));
-    verifyRuntimeDirectory(
-      fixture.runtimeDir,
-      "win32-x64",
-      fixture.manifest.targets["win32-x64"],
-      fixture.artifact,
-      fixture.manifest,
-    );
+    fixture.verify();
 
     writeFileSync(
       join(fixture.runtimeDir, "optional-dependency.js"),
       "changed",
     );
-    expect(() =>
-      verifyRuntimeDirectory(
-        fixture.runtimeDir,
-        "win32-x64",
-        fixture.manifest.targets["win32-x64"],
-        fixture.artifact,
-        fixture.manifest,
-      ),
-    ).toThrow(
+    expect(fixture.verify).toThrow(
       "artifact.runtime_corrupt: optional-dependency.js failed verification",
     );
   });
@@ -215,15 +155,7 @@ describe("native artifact verification", () => {
         : inventory.files[0];
       inventory.files.push(duplicate ? { ...record } : { ...record, path });
       writeFileSync(inventoryPath, JSON.stringify(inventory));
-      expect(() =>
-        verifyRuntimeDirectory(
-          fixture.runtimeDir,
-          "win32-x64",
-          fixture.manifest.targets["win32-x64"],
-          fixture.artifact,
-          fixture.manifest,
-        ),
-      ).toThrow(reason);
+      expect(fixture.verify).toThrow(reason);
     },
   );
 
@@ -239,15 +171,7 @@ describe("native artifact verification", () => {
       sha256: sha256(addon),
     });
     writeFileSync(inventoryPath, JSON.stringify(inventory));
-    expect(() =>
-      verifyRuntimeDirectory(
-        fixture.runtimeDir,
-        "win32-x64",
-        fixture.manifest.targets["win32-x64"],
-        fixture.artifact,
-        fixture.manifest,
-      ),
-    ).toThrow("artifact.wrong_architecture");
+    expect(fixture.verify).toThrow("artifact.wrong_architecture");
   });
 });
 
@@ -697,6 +621,7 @@ async function releaseFixture(
   artifact: ReleaseArtifact;
   manifest: VelocastReleaseManifest;
   runtimeDir: string;
+  verify(): void;
 }> {
   const root = tempDir();
   const runtimeDir = join(root, "velocast");
@@ -771,11 +696,20 @@ async function releaseFixture(
     renderer: rendererName,
     root: "velocast",
   };
+  const manifest = fakeManifest(artifact, targetId);
   return {
     archive,
     artifact,
     runtimeDir,
-    manifest: fakeManifest(artifact, targetId),
+    manifest,
+    verify: () =>
+      verifyRuntimeDirectory(
+        runtimeDir,
+        targetId,
+        manifest.targets[targetId],
+        artifact,
+        manifest,
+      ),
   };
 }
 
@@ -880,9 +814,6 @@ function tempDir(): string {
 }
 
 function findNames(root: string, substring: string): string[] {
-  if (!readdirSync(root, { recursive: true }).length) {
-    return [];
-  }
   return readdirSync(root, { recursive: true })
     .map(String)
     .filter((name) => name.includes(substring));
