@@ -114,13 +114,17 @@ it("terminates a persistent watch child and closes the server on cancellation", 
   ]).toEqual(before);
 });
 
-it("closes the server and reports a watch process that exits unexpectedly", async () => {
-  const cwd = await tempDir("velocast-preview-watch-exit-");
-  const script = join(cwd, "watch-exit.mjs");
-  await writeFile(script, "setTimeout(()=>process.exit(7),50);");
-  const close = vi.fn(async () => {});
-  await expect(
-    previewCommand(
+it.each([false, true])(
+  "reports an unexpected watch exit when server close fails: %s",
+  async (closeFails) => {
+    const cwd = await tempDir("velocast-preview-watch-exit-");
+    const script = join(cwd, "watch-exit.mjs");
+    await writeFile(script, "setTimeout(()=>process.exit(7),50);");
+    const closeFailure = new Error("close failed");
+    const close = vi.fn(async () => {
+      if (closeFails) throw closeFailure;
+    });
+    const command = previewCommand(
       {},
       { watchCommand: quoteCommand(process.execPath, script) },
       {
@@ -134,10 +138,23 @@ it("closes the server and reports a watch process that exits unexpectedly", asyn
         }),
         write: () => {},
       },
-    ),
-  ).rejects.toThrow("preview.watch_exited: build watcher exited 7");
-  expect(close).toHaveBeenCalledTimes(1);
-});
+    );
+    await expect(command).rejects.toThrow(
+      "preview.watch_exited: build watcher exited 7",
+    );
+    if (closeFails) {
+      const error = (await command.catch(
+        (error: unknown) => error,
+      )) as AggregateError;
+      expect(error).toBeInstanceOf(AggregateError);
+      expect(error.errors).toHaveLength(2);
+      expect(error.errors[0]).toBe(error.cause);
+      expect(error.errors[1]).toBe(closeFailure);
+      expect(error.message).toContain(closeFailure.message);
+    }
+    expect(close).toHaveBeenCalledTimes(1);
+  },
+);
 
 async function projectFixture(): Promise<string> {
   const cwd = await tempDir("velocast-preview-wire-job-");
