@@ -90,4 +90,27 @@ test("runnable template binds repository helpers and leaves only final inputs pe
   const end = lyrics.argv.indexOf("--end-frame");
   assert.equal(lyrics.argv[start + 1], "820");
   assert.equal(lyrics.argv[end + 1], "1060");
+  const software = run.steps.find((step) => step.id === "software-preference");
+  const media = run.steps.find((step) => step.id === "pnpm-clip-caption-music");
+  const planned = plan.commands.find(
+    (command) => command.id === "software-preference",
+  );
+  assert.equal(software.scope, "pnpm");
+  assert.equal(software.cwd, media.cwd);
+  for (const flag of [
+    "--config",
+    "--acceleration",
+    "--concurrency",
+    "--assembly",
+  ])
+    assert.equal(
+      software.argv[software.argv.indexOf(flag) + 1],
+      flag === "--config"
+        ? "<MEDIA_CONFIG>"
+        : planned.argv[planned.argv.indexOf(flag) + 1],
+    );
+  for (const flag of ["--output", "--report", "--events"])
+    assert.ok(
+      software.outputs.includes(software.argv[software.argv.indexOf(flag) + 1]),
+    );
 });
