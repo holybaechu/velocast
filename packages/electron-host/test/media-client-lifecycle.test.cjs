@@ -243,6 +243,26 @@ test("Electron utility callers no longer require a stock Node video worker", asy
   }
 });
 
+test("startup cancellation after readiness joins the host before rejecting", async () => {
+  const f = fixture(),
+    controller = new AbortController(),
+    interruption = new Error("startup interrupted");
+  let session;
+  try {
+    const starting = f.client.createMediaSession({
+      electronBinary: "fake-electron",
+      signal: controller.signal,
+    }).then((result) => (session = result));
+    controller.abort(interruption);
+    await assert.rejects(starting, (error) => error === interruption);
+    assert.ok(f.events.indexOf("remove") > f.events.indexOf("taskkill-exit"));
+    assert.equal(fs.existsSync(f.directories[0]), false);
+  } finally {
+    await session?.close();
+    await f.cleanup();
+  }
+});
+
 test("cleanup awaits the delayed tree killer and asynchronously retries transient profile locks", async () => {
   const f = fixture({ transientLocks: 2 });
   try {
