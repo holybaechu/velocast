@@ -57,9 +57,25 @@ export async function withServeCommand(
     await waitForServeUrl(serve.url, serve.command, dependencies, process);
     dependencies.signal?.throwIfAborted();
     await render();
-  } finally {
-    await process.stop();
+  } catch (primary) {
+    const errors = [primary];
+    try {
+      await process.stop();
+    } catch (secondary) {
+      errors.push(secondary);
+    }
+    if (errors.length > 1) {
+      const message = (error: unknown) =>
+        error instanceof Error ? error.message : String(error);
+      throw new AggregateError(
+        errors,
+        `${message(primary)}\nFailed to stop serve.command: ${message(errors[1])}`,
+        { cause: primary },
+      );
+    }
+    throw primary;
   }
+  await process.stop();
 }
 
 async function waitForServeUrl(
@@ -265,28 +281,6 @@ function spawnServeCommand(command: string): ServeProcess {
 }
 
 async function stopServeProcess(child: ChildProcess): Promise<void> {
-  if (process.platform === "win32" && child.pid !== undefined) {
-    if (child.exitCode !== null || child.signalCode !== null || child.killed) {
-      return;
-    }
-    await new Promise<void>((resolve) => {
-      const killer = spawn(
-        "taskkill",
-        ["/pid", String(child.pid), "/t", "/f"],
-        {
-          stdio: "ignore",
-          windowsHide: true,
-        },
-      );
-      killer.once("exit", () => resolve());
-      killer.once("error", () => {
-        child.kill();
-        resolve();
-      });
-    });
-    return;
-  }
-
   if (child.pid === undefined) return;
   const pid = child.pid;
   let onExit: (() => void) | undefined;
@@ -298,6 +292,45 @@ async function stopServeProcess(child: ChildProcess): Promise<void> {
           child.once("exit", onExit);
         });
   try {
+    if (process.platform === "win32") {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      await new Promise<void>((resolve, reject) => {
+        const killer = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
+          stdio: "ignore",
+          windowsHide: true,
+        });
+        let failure: Error | undefined;
+        killer.once("error", (error) => {
+          failure = error;
+        });
+        killer.once("close", (code) => {
+          if (
+            child.exitCode !== null ||
+            child.signalCode !== null ||
+            (code === 0 && !failure)
+          ) {
+            resolve();
+            return;
+          }
+          try {
+            process.kill(pid, 0);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+              resolve();
+              return;
+            }
+          }
+          reject(
+            new Error(
+              `serve.command cleanup failed: taskkill for owned PID ${pid} ${failure ? `could not start (${failure.message})` : `exited with code ${code ?? -1}`}; stop the process tree manually before retrying`,
+              { cause: failure },
+            ),
+          );
+        });
+      });
+      await exited;
+      return;
+    }
     // The shell can exit before the actual server. Own and stop its whole group,
     // even when the group leader has already exited or accepted SIGTERM.
     if (signalServeProcessGroup(pid, "SIGTERM")) {

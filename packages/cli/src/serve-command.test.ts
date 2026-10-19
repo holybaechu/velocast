@@ -31,10 +31,13 @@ fs.writeFileSync(process.argv[3], ".");
 setInterval(() => fs.appendFileSync(process.argv[3], "."), 10);
 `,
   );
-  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  const quote = (value: string) =>
+    process.platform === "win32"
+      ? `"${value}"`
+      : `'${value.replaceAll("'", "'\\''")}'`;
   return {
     heartbeatPath,
-    command: `${[process.execPath, script, pidPath, heartbeatPath].map(quote).join(" ")}; wait`,
+    command: `${[process.execPath, script, pidPath, heartbeatPath].map(quote).join(" ")}${process.platform === "win32" ? "" : "; wait"}`,
     close() {
       if (existsSync(pidPath)) {
         try {
@@ -112,33 +115,30 @@ describe("isServeUrlReady", () => {
 });
 
 describe("withServeCommand", () => {
-  it.skipIf(process.platform === "win32")(
-    "stops a server descendant that ignores SIGTERM after its shell exits",
-    async () => {
-      const fixture = createServeFixture();
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => ({
-          ok: existsSync(fixture.heartbeatPath),
-          status: existsSync(fixture.heartbeatPath) ? 200 : 503,
-        })),
+  it("stops the owned server process tree before completing", async () => {
+    const fixture = createServeFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: existsSync(fixture.heartbeatPath),
+        status: existsSync(fixture.heartbeatPath) ? 200 : 503,
+      })),
+    );
+    try {
+      await withServeCommand(
+        {
+          command: fixture.command,
+          url: "http://127.0.0.1:4545",
+        },
+        async () => {},
       );
-      try {
-        await withServeCommand(
-          {
-            command: fixture.command,
-            url: "http://127.0.0.1:4545",
-          },
-          async () => {},
-        );
-        const heartbeat = readFileSync(fixture.heartbeatPath, "utf8");
-        await delay(100);
-        expect(readFileSync(fixture.heartbeatPath, "utf8")).toBe(heartbeat);
-      } finally {
-        fixture.close();
-      }
-    },
-  );
+      const heartbeat = readFileSync(fixture.heartbeatPath, "utf8");
+      await delay(100);
+      expect(readFileSync(fixture.heartbeatPath, "utf8")).toBe(heartbeat);
+    } finally {
+      fixture.close();
+    }
+  });
 
   it.skipIf(process.platform === "win32").each([false, true])(
     "cleans up on SIGINT and preserves an existing once handler: %s",
@@ -332,6 +332,42 @@ await withServeCommand(${JSON.stringify({ command: fixture.command, url: "http:/
       "stop",
     ]);
   });
+
+  it.each([
+    ["readiness", new Error("readiness primary")],
+    ["render", new Error("render primary")],
+    ["render", undefined],
+  ] as const)(
+    "preserves %s failure %s when shutdown also fails",
+    async (source, primary) => {
+      const secondary = new Error("stop secondary");
+      let readinessChecks = 0;
+      const stop = vi.fn(async () => {
+        throw secondary;
+      });
+      const result = withServeCommand(
+        { command: "owned-server", url: "http://127.0.0.1:4545" },
+        async () => {
+          throw primary;
+        },
+        {
+          isUrlReady: async () => {
+            if (++readinessChecks === 1) return false;
+            if (source === "readiness") throw primary;
+            return true;
+          },
+          spawnServeCommand: () => ({ stop }),
+        },
+      );
+
+      await expect(result).rejects.toMatchObject({
+        message: `${primary?.message ?? "undefined"}\nFailed to stop serve.command: stop secondary`,
+        cause: primary,
+        errors: [primary, secondary],
+      });
+      expect(stop).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("fails early when the serve command exits before the URL is ready", async () => {
     const events: string[] = [];
