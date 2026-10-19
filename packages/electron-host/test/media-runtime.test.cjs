@@ -13,6 +13,7 @@ const {
   runMediaOperation,
 } = require("../media-client.cjs");
 const { wavHeader } = require("../media-runtime.cjs");
+const solidBitmap = require("./support/solid-bitmap.cjs");
 
 test("media utility JSONL preserves Unicode paths across pipe chunks", async () => {
   const temporary = fs.realpathSync(os.tmpdir()),
@@ -218,19 +219,8 @@ test(
     );
     let session;
     try {
-      const framePath = path.join(directory, "frame.bmp"),
-        bmp = Buffer.alloc(54 + 64 * 64 * 3);
-      bmp.write("BM");
-      bmp.writeUInt32LE(bmp.length, 2);
-      bmp.writeUInt32LE(54, 10);
-      bmp.writeUInt32LE(40, 14);
-      bmp.writeInt32LE(64, 18);
-      bmp.writeInt32LE(64, 22);
-      bmp.writeUInt16LE(1, 26);
-      bmp.writeUInt16LE(24, 28);
-      for (let index = 54; index < bmp.length; index += 3)
-        bmp[index + 2] = 255;
-      fs.writeFileSync(framePath, bmp);
+      const framePath = path.join(directory, "frame.bmp");
+      fs.writeFileSync(framePath, solidBitmap(64, 64, "red"));
       const audioPath = path.join(directory, "audio.wav");
       fs.writeFileSync(
         audioPath,

@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { createMediaSession } = require("../media-client.cjs");
 const { wavHeader } = require("../media-runtime.cjs");
+const solidBitmap = require("./support/solid-bitmap.cjs");
 
 test(
   "audio codec priming preserves stereo impulse positions",
@@ -100,18 +101,7 @@ test(
     try {
       const framePaths = ["red", "blue", "blue"].map((color, i) => {
         const file = path.join(directory, `${i}.bmp`);
-        const bmp = Buffer.alloc(54 + 160 * 100 * 3);
-        bmp.write("BM");
-        bmp.writeUInt32LE(bmp.length, 2);
-        bmp.writeUInt32LE(54, 10);
-        bmp.writeUInt32LE(40, 14);
-        bmp.writeInt32LE(160, 18);
-        bmp.writeInt32LE(100, 22);
-        bmp.writeUInt16LE(1, 26);
-        bmp.writeUInt16LE(24, 28);
-        for (let p = 54; p < bmp.length; p += 3)
-          bmp[p + (color === "red" ? 2 : 0)] = 255;
-        fs.writeFileSync(file, bmp);
+        fs.writeFileSync(file, solidBitmap(160, 100, color));
         return file;
       });
       const source = path.join(directory, "source.wav");
