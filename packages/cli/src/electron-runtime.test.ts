@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { createElectronRuntimeFixture as fixture } from "../test-fixtures/electron-runtime.js";
 import {
   electronRuntimeEnvironment,
   inspectElectronRuntime,
@@ -9,43 +9,6 @@ import {
 } from "./electron-runtime.js";
 import { resolveRendererProcessEnv } from "./renderer-binary.js";
 
-const directories: string[] = [];
-afterEach(() => {
-  for (const path of directories.splice(0))
-    rmSync(path, { recursive: true, force: true });
-});
-function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "velocast-electron-runtime-"));
-  directories.push(root);
-  const manifest = {
-    schema: "velocast-electron-runtime-v1",
-    browserHost: "electron",
-    platform: "win32",
-    arch: "x64",
-    renderer: "velocast-renderer.exe",
-    electron: "electron/electron.exe",
-    hostScript: "electron-host/main.cjs",
-    mediaClient: "media-client.cjs",
-    mediaBundle: "media-runtime.cjs",
-  };
-  for (const path of [
-    manifest.renderer,
-    manifest.electron,
-    manifest.hostScript,
-    manifest.mediaClient,
-    manifest.mediaBundle,
-  ]) {
-    mkdirSync(dirname(join(root, path)), { recursive: true });
-    writeFileSync(join(root, path), "fixture");
-  }
-  const save = () =>
-    writeFileSync(
-      join(root, "electron-runtime.json"),
-      JSON.stringify(manifest),
-    );
-  save();
-  return { root, manifest, save, binary: join(root, manifest.renderer) };
-}
 describe("Electron runtime acquisition", () => {
   it("uses bundled paths without importing a workspace CEF environment", () => {
     const f = fixture();
