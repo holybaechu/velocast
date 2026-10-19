@@ -1,0 +1,12 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "$TURBO_ROOT$/crates/renderer/browser/runtime.js",
+        "$TURBO_ROOT$/contracts/renderer-protocol.json"
+      ]
+    }
+  }
+}
