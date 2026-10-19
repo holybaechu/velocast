@@ -334,33 +334,37 @@ describe("reduceRendererLifecycle", () => {
     },
   );
 
-  it("preserves termination and cleanup failures as secondary diagnostics", () => {
-    const abortError = new Error("abort");
-    const terminationError = new Error("termination failed");
-    const cleanupError = new Error("cleanup failed");
-    let state = apply(createRendererLifecycleState(), {
-      type: "abort",
-      error: abortError,
-    }).state;
-    state = apply(state, {
-      type: "termination-complete",
-      error: terminationError,
-    }).state;
-    const completed = reduceRendererLifecycle(state, {
-      type: "cleanup-complete",
-      error: cleanupError,
-    });
-
-    expect(completed.effects).toContainEqual({
-      type: "finalize",
-      outcome: {
-        status: "rejected",
-        source: "abort",
+  it.each([
+    [new Error("termination failed"), new Error("cleanup failed")],
+    [undefined, undefined],
+  ])(
+    "preserves termination %s and cleanup %s failures as secondary diagnostics",
+    (terminationError, cleanupError) => {
+      const abortError = new Error("abort");
+      let state = apply(createRendererLifecycleState(), {
+        type: "abort",
         error: abortError,
-        diagnostics: [terminationError, cleanupError],
-      },
-    });
-  });
+      }).state;
+      state = apply(state, {
+        type: "termination-complete",
+        error: terminationError,
+      }).state;
+      const completed = reduceRendererLifecycle(state, {
+        type: "cleanup-complete",
+        error: cleanupError,
+      });
+
+      expect(completed.effects).toContainEqual({
+        type: "finalize",
+        outcome: {
+          status: "rejected",
+          source: "abort",
+          error: abortError,
+          diagnostics: [terminationError, cleanupError],
+        },
+      });
+    },
+  );
 
   it.each(["timeout", "escalation"] as const)(
     "preserves %s as primary when cleanup fails",
