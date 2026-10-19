@@ -62,10 +62,14 @@ app
         active = null;
       }
     });
-    input = fs.createReadStream(null, { fd: 0, autoClose: true });
+    input = fs.createReadStream(null, {
+      fd: 0,
+      autoClose: true,
+      encoding: "utf8",
+    });
     let buffer = "";
-    input.on("data", (bytes) => {
-      buffer += bytes.toString("utf8");
+    input.on("data", (chunk) => {
+      buffer += chunk;
       if (buffer.length > 16384) return exit(1);
       let newline;
       while ((newline = buffer.indexOf("\n")) !== -1) {
