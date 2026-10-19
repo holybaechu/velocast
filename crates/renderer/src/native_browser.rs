@@ -14,8 +14,8 @@ impl NativeBrowser {
     pub(crate) fn media_operation(&self, operation: Value) -> anyhow::Result<Value> {
         self.host_request(json!({"method":"media-operation","operation":operation}))
     }
-    pub async fn load(&self, job: &RenderJob) -> anyhow::Result<()> {
-        self.0.load(job).await
+    pub async fn load(&self, job: &RenderJob, props: Option<&Value>) -> anyhow::Result<()> {
+        self.0.load(job, props).await
     }
 
     pub fn discover_compositions(&self) -> anyhow::Result<Vec<CompositionManifest>> {
