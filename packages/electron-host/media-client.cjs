@@ -363,7 +363,7 @@ async function createMediaSession(options = {}) {
       }
       if (destinationIdentity) {
         try {
-          const current = fs.statSync(outputPath, { throwIfNoEntry: false });
+          const current = fs.lstatSync(outputPath, { throwIfNoEntry: false });
           if (
             current?.dev === destinationIdentity.dev &&
             current?.ino === destinationIdentity.ino &&
