@@ -92,6 +92,12 @@ it("one media descriptor supplies matching trimmed sound and deterministic video
     startSample: 5513,
     sourceStartSample: 12863,
     durationSamples: 22050,
+    volumeEnvelope: [
+      { sample: 0, gain: 0 },
+      { sample: 3675, gain: 1 },
+      { sample: 16537, gain: 1 },
+      { sample: 22050, gain: 0 },
+    ],
   });
   for (const frame of [3, 14, 7, 3]) {
     await protocol.seekFrame("scene", frame);
