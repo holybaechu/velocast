@@ -31,16 +31,22 @@ ipcRenderer.on(
       else if (method === "open" && session)
         result = await session.open(settings);
       else if (method === "frame" && session) {
-        const bitmap = await createImageBitmap(
-          new Blob([settings.png], { type: "image/png" }),
-        );
-        result = await session.encode(
-          {
-            getVideoFrame: () => new VideoFrame(bitmap, { timestamp: 0 }),
-            release: () => bitmap.close(),
-          },
-          settings.index,
-        );
+        const decoder = new ImageDecoder({
+          data: settings.png,
+          type: "image/png",
+        });
+        try {
+          const { image } = await decoder.decode({ frameIndex: 0 });
+          result = await session.encode(
+            {
+              getVideoFrame: () => image.clone(),
+              release: () => image.close(),
+            },
+            settings.index,
+          );
+        } finally {
+          decoder.close();
+        }
         result = { ...result, frame: settings.frame, token: settings.token };
       } else if (method === "finish" && session)
         result = await session.finish();
