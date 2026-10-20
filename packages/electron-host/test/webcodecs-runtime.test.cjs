@@ -78,6 +78,13 @@ test(
       height: 2160,
     });
     await request({ method: "resize", width: 160, height: 100 });
+    // Draw once before opening the encoder; later no-op seeks must retain the
+    // initialized Canvas2D content as well as continuously changing scenes.
+    await request({
+      method: "execute",
+      script:
+        "const canvas=document.createElement('canvas');canvas.id='once';canvas.width=160;canvas.height=100;document.body.append(canvas);const ctx=canvas.getContext('2d');ctx.fillStyle='rgb(32,64,192)';ctx.fillRect(0,0,160,100)",
+    });
     const audioRate = 44100;
     const audioSamples = audioRate / 5;
     const opened = await request({
@@ -107,6 +114,8 @@ test(
       ),
     );
     const colors = [
+      [32, 64, 192],
+      [32, 64, 192],
       [0, 255, 0],
       [255, 0, 0],
       [0, 0, 255],
@@ -121,7 +130,7 @@ test(
         index,
         frame: index,
         token,
-        script: `document.documentElement.style.background = document.body.style.background = 'rgb(${color.join(",")})';document.title = 'velocast-script-result:${token}:ok:'`,
+        script: `${index < 2 ? "" : `document.getElementById('once')?.remove();document.documentElement.style.background = document.body.style.background = 'rgb(${color.join(",")})';`}document.title = 'velocast-script-result:${token}:ok:'`,
       });
       assert.equal(frame.frame, index);
       assert.equal(frame.token, token);
