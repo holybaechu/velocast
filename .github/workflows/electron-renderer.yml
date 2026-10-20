@@ -60,9 +60,9 @@ jobs:
           "VELOCAST_WEBCODECS_TEST_BINARY=$electron" >> $env:GITHUB_ENV
           "VELOCAST_TEST_RENDERER=$(Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe')" >> $env:GITHUB_ENV
       - name: Verify the Electron capture host
-        run: ${{ matrix.display }} node --test packages/electron-host/test/software-runtime.test.cjs packages/electron-host/test/shared-capability-runtime.test.cjs
+        run: ${{ matrix.display }} node --test packages/electron-host/test/software-runtime.test.cjs packages/electron-host/test/compositor-capability-runtime.test.cjs
       # Hosted Linux and Windows lack the required GPU compositor. Successful
-      # shared-texture video remains mandatory on macOS and native release hosts.
+      # compositor snapshot video remains mandatory on macOS and native release hosts.
       - name: Verify capture capability and frame output (Unix)
         if: runner.os != 'Windows'
         run: ${{ matrix.display }} node scripts/verify/verify-electron-portable.mjs --renderer "$VELOCAST_TEST_RENDERER" --output "$RUNNER_TEMP/electron-portable" --capture ${{ matrix.capture }} --frames 24 --repeats 2
@@ -75,9 +75,9 @@ jobs:
       - name: Verify media formats and audio (macOS)
         if: runner.os == 'macOS'
         run: node scripts/verify/verify-media-formats.mjs --renderer "$VELOCAST_TEST_RENDERER" --output "$RUNNER_TEMP/media-formats"
-      - name: Verify shared-texture 4K capture (macOS)
+      - name: Verify parallel 4K frame synchronization (macOS)
         if: runner.os == 'macOS'
-        run: node scripts/verify/verify-shared-texture-capture.mjs --renderer "$VELOCAST_TEST_RENDERER" --output "$RUNNER_TEMP/native-capture" --frames 24 --repeats 3 --mode both --all-frames true
+        run: node scripts/verify/verify-frame-synchronization.mjs --renderer "$VELOCAST_TEST_RENDERER" --output "$RUNNER_TEMP/native-capture" --frames 480 --repeats 3 --mode segments --all-frames true
       - name: Verify authored footage and audio (macOS)
         if: runner.os == 'macOS'
         run: node scripts/verify/verify-footage-native.mjs "$VELOCAST_TEST_RENDERER" "$RUNNER_TEMP/footage-native"
