@@ -3,8 +3,8 @@ const { mb, outputFile, probe } = require("./media-io.cjs");
 const { resolveMediaSettings } = require("./media-settings.cjs");
 const { frameTiming, MAX_PACKET_BYTES } = require("./webcodecs-codec.cjs");
 
-// This module must run in a dedicated renderer with no custom/native encoders
-// registered. VideoSample wraps the GPU VideoFrame without a canvas/readback.
+// Keep video encoders isolated from native media codec registrations.
+// Each input owns an immutable frame until the encoder retains its reference.
 class MediaSession {
   constructor() {
     this.frames = 0;
@@ -47,7 +47,7 @@ class MediaSession {
       await this.cancel();
       throw error;
     }
-    return { ...this.config, cpuReadback: false };
+    return this.config;
   }
   packet(packet, metadata) {
     const timestamp = Math.round(packet.timestamp * 1e6);
@@ -122,6 +122,7 @@ class MediaSession {
       this.frames++;
       return {
         index,
+        pixelFormat: original.format,
         ...timing,
         frames: this.frames,
         encodedFrames: this.packets,

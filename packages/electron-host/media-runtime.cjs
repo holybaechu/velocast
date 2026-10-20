@@ -735,7 +735,7 @@ async function mux(op) {
   }
 }
 // Explicit image-sequence utility, isolated from native decoder registrations.
-// Rendered video never enters this path or converts a shared texture to pixels.
+// Rendered video uses the separate WebCodecs session.
 async function encodeFrames(op) {
   if (!Array.isArray(op.framePaths) || !op.framePaths.length)
     throw new Error("media.no_frames");

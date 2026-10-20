@@ -1,4 +1,4 @@
-// Video capture requires shared textures. Software is reserved for diagnostics.
+// Video snapshots use the GPU compositor; software mode is reserved for diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowserSurfaceMode {
     WebCodecs,

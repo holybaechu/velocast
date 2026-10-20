@@ -93,7 +93,7 @@ describe("runRenderer", () => {
               outputApiVersion: 1,
               browserHosts: ["electron"],
               defaultBrowserHost: "electron",
-              electronHostProtocolVersion: 4,
+              electronHostProtocolVersion: 5,
               supportedMediaBackends: ["webcodecs"],
               videoEncoderBackend: "webcodecs",
               mediaRuntime: "mediabunny",

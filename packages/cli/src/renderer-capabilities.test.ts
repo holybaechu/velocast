@@ -19,7 +19,7 @@ describe("Electron-only capability negotiation", () => {
       outputApiVersion: 1,
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 4,
+      electronHostProtocolVersion: 5,
       videoEncoderBackend: "webcodecs",
       supportedMediaBackends: ["webcodecs"],
       mediaRuntime: "mediabunny",
@@ -41,7 +41,7 @@ describe("Electron-only capability negotiation", () => {
       probe({
         browserHosts: ["cef", "electron"],
         defaultBrowserHost: "cef",
-        electronHostProtocolVersion: 4,
+        electronHostProtocolVersion: 5,
         videoEncoderBackend: "webcodecs",
         supportedMediaBackends: ["webcodecs"],
         mediaRuntime: "mediabunny",
@@ -63,7 +63,7 @@ describe("Electron-only capability negotiation", () => {
           outputApiVersion: 1,
           browserHosts: ["electron"],
           defaultBrowserHost: "electron",
-          electronHostProtocolVersion: 4,
+          electronHostProtocolVersion: 5,
           videoEncoderBackend: "webcodecs",
           supportedMediaBackends: ["webcodecs"],
           mediaRuntime: "mediabunny",
@@ -74,7 +74,7 @@ describe("Electron-only capability negotiation", () => {
     ).toBe(true);
   });
 
-  it.each([0, 1, 2, 3, "3", true, null])(
+  it.each([0, 1, 2, 3, 4, "5", true, null])(
     "rejects unsupported host protocol %s",
     (version) => {
       expect(
@@ -86,12 +86,12 @@ describe("Electron-only capability negotiation", () => {
     },
   );
 
-  it("requires the strict shared-texture video backend", () => {
+  it("requires the WebCodecs video backend", () => {
     const caps = {
       outputApiVersion: 1,
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 4,
+      electronHostProtocolVersion: 5,
       videoEncoderBackend: "webcodecs",
       supportedMediaBackends: ["webcodecs", "native"],
       mediaRuntime: "mediabunny",

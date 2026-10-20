@@ -28,7 +28,7 @@ fn load_uses_the_captured_props_before_discovery_preserving_null_and_omission() 
     let host = root.0.join("host.sh");
     fs::write(&host, r#"
 printf '%s\n' '{"label":"mutated"}' > "$VELOCAST_TEST_SNAPSHOT_PROPS"
-printf '{"event":"ready","version":4,"pid":%s}\n' "$$"
+printf '{"event":"ready","version":5,"pid":%s}\n' "$$"
 while IFS= read -r request; do
     printf '%s\n' "$request" >> "$VELOCAST_TEST_SNAPSHOT_LOG"
     id=${request#*\"id\":}; id=${id%%,*}; id=${id%%\}*}

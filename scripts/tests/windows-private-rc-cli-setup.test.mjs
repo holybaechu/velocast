@@ -132,7 +132,7 @@ async function artifactFixture(root) {
     rendererCapabilities: {
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 4,
+      electronHostProtocolVersion: 5,
       videoEncoderBackend: "webcodecs",
       mediaRuntime: "mediabunny",
       supportedMediaBackends: ["webcodecs"],

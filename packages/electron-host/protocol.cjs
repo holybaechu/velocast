@@ -27,7 +27,6 @@ function parseCommand(line) {
       "load",
       "execute",
       "resize",
-      "invalidate",
       "paint",
       "release",
       "close",
@@ -72,82 +71,10 @@ function parseScriptTitle(title, token) {
   return null;
 }
 
-function positiveDimension(value, name) {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`Electron shared texture has invalid ${name}`);
-  }
-  return value;
-}
-
-function rectangle(value, name) {
-  if (!value || typeof value !== "object") {
-    throw new Error(`Electron shared texture has no ${name}`);
-  }
-  const left = value.x ?? value.left;
-  const top = value.y ?? value.top;
-  if (
-    !Number.isSafeInteger(left) ||
-    left < 0 ||
-    !Number.isSafeInteger(top) ||
-    top < 0
-  ) {
-    throw new Error(`Electron shared texture has invalid ${name} origin`);
-  }
-  return {
-    left,
-    top,
-    width: positiveDimension(value.width, `${name} width`),
-    height: positiveDimension(value.height, `${name} height`),
-  };
-}
-
-function textureMetadata(textureInfo, request, formats = ["bgra", "rgba"]) {
-  if (
-    !textureInfo ||
-    textureInfo.widgetType !== "frame" ||
-    !formats.includes(textureInfo.pixelFormat)
-  ) {
-    throw new Error(
-      "Electron did not produce a BGRA/RGBA frame shared texture",
-    );
-  }
-  const textureWidth = positiveDimension(
-    textureInfo.codedSize?.width,
-    "coded width",
-  );
-  const textureHeight = positiveDimension(
-    textureInfo.codedSize?.height,
-    "coded height",
-  );
-  const sourceRect = rectangle(textureInfo.visibleRect, "visible rectangle");
-  if (
-    sourceRect.left + sourceRect.width > textureWidth ||
-    sourceRect.top + sourceRect.height > textureHeight
-  ) {
-    throw new Error(
-      "Electron shared texture visible rectangle exceeds coded size",
-    );
-  }
-  const metadata = {
-    generation: request.generation,
-    width: sourceRect.width,
-    height: sourceRect.height,
-    textureWidth,
-    textureHeight,
-    sourceRect,
-    pixelFormat: textureInfo.pixelFormat,
-    colorSpace: textureInfo.colorSpace ?? null,
-    contentRect: textureInfo.contentRect ?? null,
-    timestamp: textureInfo.timestamp ?? null,
-  };
-  return metadata;
-}
-
 module.exports = {
   MAX_LINE_BYTES,
   MAX_QUEUED_COMMANDS,
   parseCommand,
   loadUrl,
   parseScriptTitle,
-  textureMetadata,
 };

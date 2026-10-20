@@ -86,10 +86,10 @@ test("rejects a reversed or missing frame and truncated output", () => {
   );
 });
 const telemetry = {
-  capture_backend: "electron_shared_texture",
+  capture_backend: "electron_compositor_snapshot",
   conversion_backend: "chromium_webcodecs",
   encoder_backend: "electron_webcodecs_h264",
-  cpu_readback_frames: 0,
+  cpu_readback_frames: 24,
   fallback_used: false,
   dropped_frames: 0,
   stale_frames: 0,
@@ -176,7 +176,7 @@ test("rejects bitmap video capture even with matching readback facts", () => {
   );
 });
 
-test("rejects readback and fallback telemetry on a shared-texture render", () => {
+test("rejects incorrect readback and fallback telemetry on a compositor snapshot render", () => {
   for (const change of [
     { cpu_readback_frames: 1 },
     { fallback_used: true },

@@ -60,7 +60,7 @@ test("native artifact verifies Electron runtime identity and every staged hash",
     rendererCapabilities: {
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 4,
+      electronHostProtocolVersion: 5,
       videoEncoderBackend: "webcodecs",
       mediaRuntime: "mediabunny",
       supportedMediaBackends: ["webcodecs"],

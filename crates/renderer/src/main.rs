@@ -281,7 +281,7 @@ async fn run_coordinator_render_with_mode(
             effective_concurrency: plan.concurrency,
             probe_tier: "media_metadata".into(),
             segment_count: plan.ranges.len(),
-            capture_mode: "electron_shared_texture".into(),
+            capture_mode: "electron_compositor_snapshot".into(),
             conversion_mode: "chromium_webcodecs".into(),
             encoder_mode: requested_backend.into(),
             planned_encoder_backend: format!(
@@ -663,7 +663,7 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
     #[test]
-    fn video_requires_shared_textures_and_diagnostics_use_software() {
+    fn video_requires_compositor_and_diagnostics_use_software() {
         use browser_surface::BrowserSurfaceMode::{Software, WebCodecs};
         let mut job: RenderJob = serde_json::from_value(serde_json::json!({
             "mode": "composition", "serve_url": "http://localhost",

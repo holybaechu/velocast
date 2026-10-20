@@ -126,7 +126,7 @@ test("candidate stages an Electron-only runtime, hashes files, and refuses overw
     probeCapabilities: () => ({
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 4,
+      electronHostProtocolVersion: 5,
       videoEncoderBackend: "webcodecs",
       mediaRuntime: "mediabunny",
       supportedMediaBackends: ["webcodecs"],

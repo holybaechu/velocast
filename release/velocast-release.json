@@ -23,7 +23,6 @@
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
         "electron-host/audio-resampler.cjs",
-        "electron-host/capture-rate.cjs",
         "electron-host/hdr-color.cjs",
         "electron-host/main.cjs",
         "electron-host/media-client.cjs",
@@ -148,7 +147,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_shared_texture"
+          "electron_compositor_snapshot"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -175,7 +174,6 @@
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
         "electron-host/audio-resampler.cjs",
-        "electron-host/capture-rate.cjs",
         "electron-host/hdr-color.cjs",
         "electron-host/main.cjs",
         "electron-host/media-client.cjs",
@@ -220,7 +218,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_shared_texture"
+          "electron_compositor_snapshot"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -247,7 +245,6 @@
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
         "electron-host/audio-resampler.cjs",
-        "electron-host/capture-rate.cjs",
         "electron-host/hdr-color.cjs",
         "electron-host/main.cjs",
         "electron-host/media-client.cjs",
@@ -292,7 +289,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_shared_texture"
+          "electron_compositor_snapshot"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -319,7 +316,6 @@
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
         "electron-host/audio-resampler.cjs",
-        "electron-host/capture-rate.cjs",
         "electron-host/hdr-color.cjs",
         "electron-host/main.cjs",
         "electron-host/media-client.cjs",
@@ -364,7 +360,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_shared_texture"
+          "electron_compositor_snapshot"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -391,7 +387,6 @@
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
         "electron-host/audio-resampler.cjs",
-        "electron-host/capture-rate.cjs",
         "electron-host/hdr-color.cjs",
         "electron-host/main.cjs",
         "electron-host/media-client.cjs",
@@ -436,7 +431,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_shared_texture"
+          "electron_compositor_snapshot"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -463,7 +458,6 @@
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
         "electron-host/audio-resampler.cjs",
-        "electron-host/capture-rate.cjs",
         "electron-host/hdr-color.cjs",
         "electron-host/main.cjs",
         "electron-host/media-client.cjs",
@@ -508,7 +502,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_shared_texture"
+          "electron_compositor_snapshot"
         ],
         "conversionBackends": [
           "chromium_webcodecs"

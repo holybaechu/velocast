@@ -259,13 +259,13 @@ describe("extractKnownRendererError", () => {
     ).toBe("capture.accelerated_readback_unavailable");
   });
 
-  it("extracts Windows shared-texture capture probe errors from renderer output", () => {
+  it("extracts compositor capture probe errors from renderer output", () => {
     expect(
       extractKnownRendererError(
-        "Error: capture.shared_texture_unavailable: Electron shared texture unavailable\n",
+        "Error: capture.compositor_unavailable: Electron compositor unavailable\n",
       ),
     ).toBe(
-      "capture.shared_texture_unavailable: Electron shared texture unavailable",
+      "capture.compositor_unavailable: Electron compositor unavailable",
     );
   });
 
