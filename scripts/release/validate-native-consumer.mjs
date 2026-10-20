@@ -12,6 +12,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
+import { validReleasePackageSet } from "./release-package-set.mjs";
 
 const exec = promisify(execFile);
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -56,9 +57,15 @@ try {
     repoRoot,
   );
   const tarballs = readdirSync(packs).filter((name) => name.endsWith(".tgz"));
-  const core = only(tarballs, "velocast-core-");
-  const gsapPackage = only(tarballs, "velocast-gsap-");
-  const cli = only(tarballs, "velocast-0");
+  const version = candidate.packageVersion;
+  if (!validReleasePackageSet(tarballs, version))
+    throw new Error(
+      `consumer.pack_invalid: expected complete package set for ${version}, got ${tarballs.join(", ")}`,
+    );
+  const core = `velocast-core-${version}.tgz`;
+  const preview = `velocast-preview-${version}.tgz`;
+  const gsapPackage = `velocast-gsap-${version}.tgz`;
+  const cli = `velocast-${version}.tgz`;
   await run(
     process.execPath,
     [
@@ -77,7 +84,10 @@ try {
 
   for (const manager of ["npm", "pnpm"]) {
     const consumer = join(campaign, manager);
-    cpSync(join(repoRoot, "apps", "playground"), consumer, { recursive: true });
+    cpSync(join(repoRoot, "apps", "playground"), consumer, {
+      recursive: true,
+      filter: (path) => !["node_modules", ".turbo"].includes(basename(path)),
+    });
     const indexPath = join(consumer, "index.html");
     writeFileSync(
       indexPath,
@@ -95,12 +105,13 @@ try {
       packageJson.dependencies = {
         velocast: fileSpec(join(packs, cli)),
         "@velocast/core": fileSpec(join(packs, core)),
+        "@velocast/preview": fileSpec(join(packs, preview)),
         "@velocast/gsap": fileSpec(join(packs, gsapPackage)),
         gsap: "3.15.0",
       };
       writeFileSync(
         join(consumer, "pnpm-workspace.yaml"),
-        `packages:\n  - '.'\noverrides:\n  '@velocast/core': '${fileSpec(join(packs, core))}'\n`,
+        `packages:\n  - '.'\noverrides:\n  '@velocast/core': '${fileSpec(join(packs, core))}'\n  '@velocast/preview': '${fileSpec(join(packs, preview))}'\n`,
       );
     }
     writeFileSync(
@@ -114,6 +125,7 @@ try {
             "--ignore-scripts",
             join(packs, cli),
             join(packs, core),
+            join(packs, preview),
             join(packs, gsapPackage),
             "gsap@3.15.0",
           ]
@@ -123,7 +135,7 @@ try {
       process.execPath,
       [
         "-e",
-        "await Promise.all([import('velocast'), import('@velocast/core'), import('@velocast/core/testing'), import('@velocast/gsap')])",
+        "await Promise.all([import('velocast'), import('@velocast/core'), import('@velocast/core/testing'), import('@velocast/preview'), import('@velocast/gsap')])",
       ],
       consumer,
     );
@@ -252,15 +264,6 @@ async function run(file, args, cwd, env = process.env) {
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-}
-
-function only(names, prefix) {
-  const matches = names.filter((name) => basename(name).startsWith(prefix));
-  if (matches.length !== 1)
-    throw new Error(
-      `consumer.pack_invalid: expected one ${prefix} tarball, got ${matches}`,
-    );
-  return matches[0];
 }
 
 function managerCommand(manager) {

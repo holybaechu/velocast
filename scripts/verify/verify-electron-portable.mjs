@@ -335,7 +335,7 @@ if (captureExpectation === "unavailable") {
   // failure and publication path; never count it as a successful video render.
   const video = join(output, "reference-1.mp4");
   await writeFile(video, "previous completed output", { flag: "wx" });
-  await gate("shared-texture-unavailable-preserves-output", async () => {
+  await gate("compositor-unavailable-preserves-output", async () => {
     const before = sha(await readFile(video));
     const attempts = join(output, "capture-host-attempts.jsonl");
     const wrapper = join(output, "capture-host.cjs");
@@ -365,14 +365,14 @@ if (captureExpectation === "unavailable") {
     if (
       result.code === 0 ||
       result.value.status !== "failure" ||
-      !/^electron\.host_error: capture\.shared_texture_unavailable: (disabled_software|unavailable_software)$/.test(
+      !/^electron\.host_error: capture\.compositor_unavailable: (disabled_software|unavailable_software)$/.test(
         result.value.error?.message ?? "",
       ) ||
       sha(await readFile(video)) !== before ||
       (await readFile(attempts, "utf8")).trim() !== "webcodecs"
     )
       throw new Error(
-        `Expected one failed shared-texture attempt preserving output: ${result.stdout}`,
+        `Expected one failed compositor attempt preserving output: ${result.stdout}`,
       );
     const data = JSON.parse(await readFile(telemetry, "utf8"));
     if (
@@ -445,11 +445,11 @@ if (captureExpectation === "required") {
       data.mode !== "reference_web_codecs" ||
       data.encoder_backend !== "electron_webcodecs_h264" ||
       data.conversion_backend !== "chromium_webcodecs" ||
-      data.capture_backend !== "electron_shared_texture" ||
+      data.capture_backend !== "electron_compositor_snapshot" ||
       data.frames_expected !== frames ||
       data.frames_rendered !== frames ||
       data.frames_encoded !== frames ||
-      data.cpu_readback_frames !== 0 ||
+      data.cpu_readback_frames !== frames ||
       data.dropped_frames !== 0 ||
       data.stale_frames !== 0
     )
@@ -667,8 +667,8 @@ for (const args of [
   });
 }
 for (const failure of [
-  "capture.shared_texture_unavailable: acceptance fixture",
-  "Electron webcodecs paint timed out: acceptance fixture",
+  "capture.compositor_unavailable: acceptance fixture",
+  "Electron compositor snapshot timed out: acceptance fixture",
   "webcodecs.unsupported_config: acceptance fixture",
 ])
   await gate(`strict-failure-${failure.split(":")[0]}`, async () => {
@@ -681,7 +681,7 @@ for (const failure of [
       wrapper,
       `const fs=require("node:fs");
 fs.appendFileSync(${JSON.stringify(attempts)},process.env.VELOCAST_ELECTRON_SURFACE_MODE+"\\n");
-process.stdout.write(JSON.stringify({event:"ready",version:4,pid:process.pid})+"\\n");
+process.stdout.write(JSON.stringify({event:"ready",version:5,pid:process.pid})+"\\n");
 const input=fs.createReadStream(null,{fd:0});let buffer="";input.on("data",data=>{buffer+=data;let end=buffer.indexOf("\\n");if(end<0)return;const request=JSON.parse(buffer.slice(0,end));buffer=buffer.slice(end+1);process.stdout.write(JSON.stringify({id:request.id,ok:false,error:${JSON.stringify(failure)}})+"\\n");});`,
     );
     const result = await command(

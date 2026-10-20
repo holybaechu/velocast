@@ -24,11 +24,7 @@ export type {
 } from "./types.js";
 export type { BrowserProtocolOptions } from "./browser-protocol.js";
 export { defineConfig } from "./config.js";
-export {
-  defineFrameComposition,
-  defineProject,
-  startVelocast,
-} from "./project.js";
+export { defineFrameComposition, defineProject } from "./project.js";
 export type {
   FrameComposition,
   FrameCompositionOptions,
@@ -38,6 +34,7 @@ export type {
   VelocastProject,
 } from "./project.js";
 export {
+  startVelocast,
   installBrowserProtocol,
   registerFrameAdapter,
   getRenderableCompositions,

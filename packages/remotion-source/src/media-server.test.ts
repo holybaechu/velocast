@@ -135,6 +135,77 @@ it.each(["startup", "shutdown"])(
     }
   },
 );
+
+it.each(["owner", "parent", "failed-cleanup"])(
+  "joins cancelled session startup during %s shutdown",
+  async (phase) => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "velocast-remotion-startup-close-test-"),
+    );
+    let server: Awaited<ReturnType<typeof serveRemotionBundle>> | undefined;
+    let request: Promise<unknown> | undefined;
+    let releaseStartup: (() => void) | undefined;
+    let startupError: unknown;
+    const owner = new AbortController();
+    let started!: (signal: AbortSignal) => void;
+    const starting = new Promise<AbortSignal>((resolve) => (started = resolve));
+    vi.mocked(createMediaSession).mockImplementationOnce(async (options) => {
+      const signal = options!.signal!;
+      started(signal);
+      return new Promise((_, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => {
+            startupError =
+              phase === "failed-cleanup"
+                ? new AggregateError(
+                    [signal.reason, new Error("cleanup failed")],
+                    "media startup cleanup failed",
+                    { cause: signal.reason },
+                  )
+                : signal.reason;
+            releaseStartup = () => reject(startupError);
+          },
+          { once: true },
+        );
+      });
+    });
+    try {
+      const root = join(directory, "bundle");
+      await mkdir(root);
+      await writeFile(join(root, "index.html"), "bundle");
+      server = await serveRemotionBundle(root, directory, owner.signal);
+      request = fetch(`${server.url}/proxy?src=/index.html&time=0`)
+        .then((response) => response.text())
+        .catch(() => undefined);
+      const signal = await starting;
+      let settled = false;
+      if (phase === "parent") owner.abort(new Error("source closed"));
+      const closing = server.close();
+      void closing.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      const result =
+        phase === "failed-cleanup"
+          ? expect(closing).rejects.toBe(startupError)
+          : expect(closing).resolves.toBeUndefined();
+      expect(signal.aborted).toBe(true);
+      await expect(fetch(server.url)).rejects.toThrow();
+      expect(settled).toBe(false);
+      releaseStartup!();
+      await result;
+      await request;
+      expect(server.close()).toBe(closing);
+    } finally {
+      releaseStartup?.();
+      await server?.close().catch(() => {});
+      await request;
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 it("cancels and joins owned downloads before closing", async () => {
   const directory = await mkdtemp(
     join(tmpdir(), "velocast-remotion-download-close-test-"),

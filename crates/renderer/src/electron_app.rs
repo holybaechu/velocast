@@ -1,4 +1,4 @@
-//! Isolated Electron control transport. Native never imports GPU textures.
+//! Isolated Electron control transport; image bytes stay inside Electron.
 use crate::browser_protocol::{self, BrowserDriver};
 use crate::browser_surface::BrowserSurfaceMode;
 use crate::cancellation::RenderCancellation;
@@ -51,7 +51,34 @@ impl ElectronRenderer {
         };
         self.request(request, timeout)
     }
-    pub async fn load(&self, job: &RenderJob) -> anyhow::Result<()> {
+    pub(crate) fn capture_video_frame(
+        &self,
+        script: &str,
+        frame: u32,
+        index: usize,
+    ) -> anyhow::Result<Value> {
+        let sequence = self
+            .sequence
+            .get()
+            .checked_add(1)
+            .context("electron.request_overflow")?;
+        self.sequence.set(sequence);
+        let token = format!("electron-{sequence}");
+        // Preserve authoring paint readiness before the compositor snapshot fence.
+        let response = self.host_request(json!({
+            "method":"webcodecs-frame", "index":index, "frame":frame, "token":token,
+            "script":browser_protocol::render_frame_completion_script(script, true, &token)
+        }))?;
+        ensure!(
+            response["frame"].as_u64() == Some(u64::from(frame)) && response["token"] == token,
+            "capture.invalid_frame_acknowledgement"
+        );
+        Ok(response)
+    }
+    pub(crate) fn media_operation(&self, operation: Value) -> anyhow::Result<Value> {
+        self.host_request(json!({"method":"media-operation","operation":operation}))
+    }
+    pub async fn load(&self, job: &RenderJob, props: Option<&Value>) -> anyhow::Result<()> {
         let cancellation = RenderCancellation::from_event_log_path(job.event_log_path.as_deref());
         *self.host.borrow_mut() = Some(HostProcess::spawn(cancellation, self.surface_mode)?);
         self.request(
@@ -68,9 +95,8 @@ impl ElectronRenderer {
         self.report(|token| browser_protocol::session_binding_script(&session, token))?;
         *self.session.borrow_mut() = Some(session);
         self.execute(&browser_protocol::protocol_missing_sentinel_script())?;
-        if let Some(props) = crate::input_props::read_input_props(job.input_props_path.as_deref())?
-        {
-            self.report(|token| browser_protocol::input_props_script(&props, token))?;
+        if let Some(props) = props {
+            self.report(|token| browser_protocol::input_props_script(props, token))?;
         }
         self.report(|token| Ok(browser_protocol::readiness_script(token)))?;
         tracing::info!(surface_mode = ?self.surface_mode, "Electron browser ready");
@@ -173,10 +199,7 @@ impl BrowserDriver for ElectronRenderer {
     fn render_frame(&self, script: &str, _frame: u32) -> anyhow::Result<()> {
         self.report(|token| {
             Ok(browser_protocol::render_frame_completion_script(
-                script,
-                // Diagnostic capture forces a surface redraw itself.
-                self.surface_mode == BrowserSurfaceMode::WebCodecs,
-                token,
+                script, true, token,
             ))
         })
         .map(|_| ())
@@ -472,7 +495,7 @@ impl HostProcess {
         let ready = host.receive(Duration::from_secs(16))?;
         ensure!(
             ready["event"] == "ready"
-                && ready["version"] == 4
+                && ready["version"] == 5
                 && ready["pid"].as_u64() == Some(u64::from(host.child.id())),
             "electron.protocol_error: invalid host handshake"
         );
@@ -582,7 +605,7 @@ impl Drop for HostProcess {
             }
         }
         // The job owns Chromium descendants as well as Electron main. This also
-        // handles cancellation, malformed messages and EOF during a texture lease.
+        // handles cancellation, malformed messages and EOF during a frame capture.
         self.job.terminate();
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -767,7 +790,7 @@ mod tests {
         let child = Command::new("sh")
             .arg("-c")
             .arg(
-                r#"printf '{"event":"ready","version":4,"pid":%s}\n' "$$"; read request; sleep 30"#,
+                r#"printf '{"event":"ready","version":5,"pid":%s}\n' "$$"; read request; sleep 30"#,
             )
             .process_group(0)
             .stdin(Stdio::piped())
@@ -787,7 +810,7 @@ mod tests {
         let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
             .join("System32/WindowsPowerShell/v1.0/powershell.exe");
         let script = format!(
-            r#"[Console]::WriteLine('{{"event":"ready","version":4,"pid":' + $PID + '}}'); {script}"#
+            r#"[Console]::WriteLine('{{"event":"ready","version":5,"pid":' + $PID + '}}'); {script}"#
         );
         let child = Command::new(shell)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])

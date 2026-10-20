@@ -1,6 +1,6 @@
 "use strict";
 
-const { BrowserWindow, ipcMain, sharedTexture } = require("electron/main");
+const { BrowserWindow, ipcMain } = require("electron/main");
 const fs = require("node:fs");
 const path = require("node:path");
 const { absolute } = require("./media-io.cjs");
@@ -23,8 +23,6 @@ class WebCodecsHost {
     this.frames = 0;
     this.bytes = 0;
     this.finished = false;
-    this.leases = new Set();
-    this.peakTextureLeases = 0;
     this.onResult = (event, message) => {
       if (
         event.sender !== this.window?.webContents ||
@@ -64,8 +62,7 @@ class WebCodecsHost {
         additionalArguments: this.utilityOnly
           ? [`--velocast-${this.utilityOnly}-utility`]
           : [],
-        // sharedTexture is unavailable in a sandboxed preload. Only this fixed,
-        // empty local page has a full preload; it never loads authored content.
+        // Only this fixed local page loads media libraries; authored pages stay sandboxed.
         sandbox: false,
         nodeIntegration: false,
         contextIsolation: true,
@@ -115,6 +112,12 @@ class WebCodecsHost {
   async open(settings, audio) {
     if (this.settings) throw new Error("webcodecs.already_open");
     const selected = mediaSettings(settings);
+    if (
+      !Number.isSafeInteger(settings.startFrame) ||
+      settings.startFrame < 0 ||
+      settings.startFrame > 0xffffffff
+    )
+      throw new Error("webcodecs.invalid_start_frame");
     this.settings = settings;
     this.audio = audio;
     this.file = absolute(settings.outputPath);
@@ -127,7 +130,7 @@ class WebCodecsHost {
       outputPath: this.videoFile,
     });
     this.config = config;
-    return config;
+    return { ...config, cpuReadback: true };
   }
 
   command(method, settings) {
@@ -145,78 +148,26 @@ class WebCodecsHost {
     return result;
   }
 
-  async encode(texture, index) {
-    let imported;
-    try {
-      if (!this.config || this.finished || index !== this.frames)
-        throw new Error("webcodecs.invalid_sequence");
-      // Do not await every release: encoders may retain frames until later
-      // submissions or finalization. Backpressure bounds live GPU leases.
-      if (this.leases.size >= 32)
-        await this.deadline(Promise.race(this.leases));
-      const id = ++this.sequence;
-      let releaseDone;
-      const released = new Promise((resolve) => {
-        releaseDone = resolve;
-      });
-      this.leases.add(released);
-      this.peakTextureLeases = Math.max(
-        this.peakTextureLeases,
-        this.leases.size,
-      );
-      try {
-        imported = sharedTexture.importSharedTexture({
-          textureInfo: texture.textureInfo,
-          allReferencesReleased: () => {
-            texture.release();
-            this.leases.delete(released);
-            releaseDone();
-          },
-        });
-      } catch (error) {
-        this.leases.delete(released);
-        throw new Error(`capture.shared_texture_unavailable: ${error.message}`);
-      }
-      const packet = this.wait(id);
-      // Observe transfer and encode errors together; never leave an unhandled
-      // rejected acknowledgement behind if importing/transferring fails.
-      const transferred = Promise.resolve()
-        .then(() =>
-          sharedTexture.sendSharedTexture(
-            {
-              frame: this.window.webContents.mainFrame,
-              importedSharedTexture: imported,
-            },
-            { id, index },
-          ),
-        )
-        .catch((error) => {
-          throw new Error(
-            `capture.shared_texture_unavailable: ${error.message}`,
-          );
-        })
-        .finally(() => imported.release());
-      const [result] = await Promise.all([packet, transferred]);
-      const timing = frameTiming(index, this.settings.fps);
-      this.validateAcknowledgement(result, index, timing);
-      this.frames++;
-      this.colorSpace = result.colorSpace;
-      return result;
-    } catch (error) {
-      this.pending?.reject(error);
-      if (!imported) texture.release();
-      // Once imported, only allReferencesReleased may release the OSR source.
-      // Request failure terminates the contained host and its GPU process.
-      throw error;
-    }
+  async encode(png, index, frame, token) {
+    if (!this.config || this.finished || index !== this.frames)
+      throw new Error("webcodecs.invalid_sequence");
+    const result = await this.command("frame", { png, index, frame, token });
+    this.validateAcknowledgement(
+      result,
+      index,
+      frameTiming(index, this.settings.fps),
+    );
+    if (result.frame !== frame || result.token !== token)
+      throw new Error("capture.invalid_frame_acknowledgement");
+    this.frames++;
+    this.colorSpace = result.colorSpace;
+    return result;
   }
 
   async finish() {
     if (!this.config || this.finished)
       throw new Error("webcodecs.invalid_finish");
     const result = await this.command("finish");
-    // Finalization must happen before waiting for the encoder's last leases.
-    await this.deadline(Promise.all(this.leases));
     if (result.frames !== this.frames || !this.frames)
       throw new Error("webcodecs.frame_count_mismatch");
     this.colorSpace = result.colorSpace ?? this.colorSpace;
@@ -246,22 +197,7 @@ class WebCodecsHost {
       colorSpace: this.colorSpace,
       backend: this.config.backend,
       pixelFormat: this.config.pixelFormat,
-      peakTextureLeases: this.peakTextureLeases,
-      outstandingTextureLeases: this.leases.size,
     };
-  }
-
-  deadline(work) {
-    let timer;
-    return Promise.race([
-      work,
-      new Promise((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("webcodecs.texture_release_timeout")),
-          10000,
-        );
-      }),
-    ]).finally(() => clearTimeout(timer));
   }
 
   async mediaOperation(operation) {

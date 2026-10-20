@@ -1,4 +1,4 @@
-// End-to-end regression for 4K Electron shared-texture captures at segment starts.
+// Exact-frame regression for compositor snapshots across parallel segment boundaries.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -62,7 +62,7 @@ const allFrames = options.get("--all-frames") ?? "false";
 if (
   !Number.isInteger(frames) ||
   frames < 1 ||
-  frames > 240 ||
+  frames > 3600 ||
   !Number.isInteger(repeats) ||
   repeats < 1 ||
   repeats > 20 ||
@@ -75,17 +75,28 @@ if (
   );
 
 // Copy the repository scene and its browser dependencies to a self-contained
-// static snapshot. Only the adapter's duration is shortened: the GSAP scene
-// and its initial frame-72 preview retain the original 240-frame timeline.
+// static snapshot. Extend the timeline for long runs while preserving the scene
+// and its deliberately stale initial frame-72 preview.
 const source = join(output, "source");
 await mkdir(output, { recursive: false });
 const realHost =
   process.env.VELOCAST_ELECTRON_HOST_SCRIPT ??
   join(root, "packages/electron-host/main.cjs");
 await mkdir(join(source, "src"), { recursive: true });
-await cp(
+const scene = await readFile(
   join(root, "apps/playground/src/product-hero.js"),
+  "utf8",
+);
+assert.ok(
+  scene.includes("durationFrames: 240,"),
+  "Playground timeline duration changed",
+);
+await writeFile(
   join(source, "src/product-hero.js"),
+  scene.replace(
+    "durationFrames: 240,",
+    `durationFrames: ${Math.max(240, frames)},`,
+  ),
 );
 const main = await readFile(join(root, "apps/playground/src/main.js"), "utf8");
 const durationDeclaration =
@@ -131,7 +142,7 @@ await writeFile(
     const cells = [];
     const strip = document.createElement('div');
     strip.style.cssText = 'position:absolute;left:32px;top:32px;z-index:99;display:flex;gap:4px;padding:6px;background:#555';
-    for (let bit = 0; bit < 8; bit++) {
+    for (let bit = 0; bit < 16; bit++) {
       const cell = document.createElement('div');
       cell.style.cssText = 'width:56px;height:56px;background:#111';
       strip.append(cell);
@@ -141,7 +152,7 @@ await writeFile(
     return original(gsap, target, (frame) => {
       scene.renderProductHeroFrame(target, frame);
       const number = scene.productHeroFrameMetrics(frame).frame;
-      for (let bit = 0; bit < 8; bit++)
+      for (let bit = 0; bit < 16; bit++)
         cells[bit].style.background = number & (1 << bit) ? '#fff' : '#111';
     });
   };
@@ -235,9 +246,9 @@ async function render(name, assembly, concurrency) {
   );
   assert.equal(JSON.parse(stdout).status, "success", `${name} CLI result`);
   const stats = JSON.parse(await readFile(telemetry, "utf8"));
-  assert.equal(stats.capture_backend, "electron_shared_texture");
+  assert.equal(stats.capture_backend, "electron_compositor_snapshot");
   assert.equal(stats.frames_encoded, frames);
-  assert.equal(stats.cpu_readback_frames, 0);
+  assert.equal(stats.cpu_readback_frames, frames);
   assert.equal(stats.fallback_used, false);
   assert.equal(
     stats.mode,
@@ -265,7 +276,7 @@ function decodeBarcode(pixels, frame) {
     `Frame ${frame}: decoded dimensions`,
   );
   let observed = 0;
-  for (let bit = 0; bit < 8; bit++) {
+  for (let bit = 0; bit < 16; bit++) {
     // The target is captured at 3840x2160, with the barcode at its top left.
     const x = 32 + 6 + bit * 60 + 28;
     const y = 32 + 6 + 28;

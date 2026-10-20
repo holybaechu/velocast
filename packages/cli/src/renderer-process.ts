@@ -284,6 +284,7 @@ class RendererOutputBuffer {
   ) {}
 
   append(chunk: Buffer | string): void {
+    if (!this.scanMessages && !this.includeOutputTailOnError) return;
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     this.chunks.push(buffer);
     this.byteLength += buffer.byteLength;
@@ -393,6 +394,8 @@ export async function runRenderer(
   let signalCancellation: (() => void) | undefined;
   let terminationPending: Promise<void> | undefined;
   const cleanupProtocol = async () => {
+    if (signalCancellation)
+      options.signal?.removeEventListener("abort", signalCancellation);
     // The lifecycle may request protocol cleanup while termination is pending.
     // Keep the fence (and its containing private directory) until the tree settles.
     if (terminationPending) {
@@ -402,8 +405,6 @@ export async function runRenderer(
         if (!rendererProcessHasExited(child)) throw error;
       }
     }
-    if (signalCancellation)
-      options.signal?.removeEventListener("abort", signalCancellation);
     try {
       await (
         options.cleanupEventProtocol ?? cleanupTemporaryRendererEventProtocol
@@ -507,26 +508,28 @@ export async function runRenderer(
     }
     return evidence;
   };
-  const terminate =
-    options.terminateProcess ??
-    ((
-      rendererProcess: RendererProcess,
-      context: RendererTerminationContext,
-    ) => {
-      terminationPending = (async () => {
-        if (publishCancellation())
-          await waitForCooperativeExit(
-            rendererProcess,
-            options.terminationGraceMs,
-          );
-        await terminateRendererProcess(
+  const customTerminate = options.terminateProcess;
+  const terminate = function (
+    this: unknown,
+    rendererProcess: RendererProcess,
+    context: RendererTerminationContext,
+  ) {
+    terminationPending = (async () => {
+      if (customTerminate)
+        return customTerminate.call(this, rendererProcess, context);
+      if (publishCancellation())
+        await waitForCooperativeExit(
           rendererProcess,
-          context,
           options.terminationGraceMs,
         );
-      })();
-      return terminationPending;
-    });
+      await terminateRendererProcess(
+        rendererProcess,
+        context,
+        options.terminationGraceMs,
+      );
+    })();
+    return terminationPending;
+  };
 
   const owner = new RendererLifecycleOwner({
     child,

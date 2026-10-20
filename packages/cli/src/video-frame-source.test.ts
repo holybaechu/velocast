@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import * as admission from "./video-frame-decoder.js";
 import {
   openVideoFrameSource,
   videoPixelChecksum,
@@ -194,6 +195,35 @@ it("cancellation kills and joins the active child; closing is idempotent", async
   await Promise.all([source.close(), source.close()]);
   expect(source.stats()).toMatchObject({ closed: true, cachedFrames: 0 });
   await expect(source.frameAt(0)).rejects.toThrow("video.closed");
+});
+
+it("releases admission without starting a decoder when the request is cancelled", async () => {
+  const f = await fixture(),
+    source = await f.open();
+  const controller = new AbortController();
+  const reason = new Error("cancel during admission");
+  const acquire = admission.acquireMediaProcess;
+  const release = vi.fn<() => void>();
+  const spy = vi
+    .spyOn(admission, "acquireMediaProcess")
+    .mockImplementationOnce(async (signal) => {
+      release.mockImplementation(await acquire(signal));
+      controller.abort(reason);
+      return release;
+    });
+  try {
+    await expect(source.frameAt(0.28, controller.signal)).rejects.toMatchObject(
+      {
+        message: "video.cancelled: video frame work was cancelled",
+        cause: reason,
+      },
+    );
+    expect(f.createdSessions()).toBe(0);
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(f.active()).toBe(0);
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 it("close cancels queued work and a bounded queue refuses excess requests", async () => {

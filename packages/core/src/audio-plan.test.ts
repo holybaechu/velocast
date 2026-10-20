@@ -165,6 +165,11 @@ describe("sample-based audio plans", () => {
       gain: 1,
     };
     const plan = { sampleRate: 48000, durationSamples: 10, clips: [clip] };
+    const sparseClips = [clip, clip, clip];
+    delete sparseClips[1];
+    expect(() => validateAudioPlan({ ...plan, clips: sparseClips })).toThrow(
+      "clip must be an object",
+    );
     for (const gain of [NaN, Infinity, -1])
       expect(() =>
         validateAudioPlan({ ...plan, clips: [{ ...clip, gain }] }),

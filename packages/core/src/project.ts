@@ -1,11 +1,5 @@
 import type { AudioPlan } from "./audio-plan.js";
-import type { BrowserProtocolOptions } from "./runtime.js";
-import { defaultVelocastRuntime } from "./runtime.js";
-import type {
-  BrowserProtocol,
-  CompositionDefinition,
-  FrameAdapterContext,
-} from "./types.js";
+import type { CompositionDefinition, FrameAdapterContext } from "./types.js";
 import { validateComposition } from "./validation.js";
 
 export interface FrameSourceContext<
@@ -139,13 +133,6 @@ export function defineProject(
       compositions.map((composition) => defineFrameComposition(composition)),
     ),
   });
-}
-
-export function startVelocast(
-  project: VelocastProject | readonly FrameComposition[],
-  options: BrowserProtocolOptions = {},
-): BrowserProtocol {
-  return defaultVelocastRuntime.startProject(project, options);
 }
 
 /** Props cross the browser protocol as JSON. Reject values that cannot be snapshotted faithfully. */

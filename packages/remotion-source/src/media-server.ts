@@ -268,7 +268,11 @@ export async function serveRemotionBundle(
         );
         server.closeAllConnections();
         try {
-          await (await session)?.close();
+          const media = await session?.catch((error: unknown) => {
+            // Cancelled startup has already joined its owned process cleanup.
+            if (!signal.aborted || error !== signal.reason) throw error;
+          });
+          await media?.close();
         } finally {
           await stopped;
           await Promise.allSettled([...active, ...cache.values()]);

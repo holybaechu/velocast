@@ -11,7 +11,7 @@ const { hostResponses } = require("./host-responses.cjs");
 
 const mode = "webcodecs";
 test(
-  "shared textures encode changing and repeated frames through Mediabunny WebCodecs",
+  "snapshot transactions encode changing and repeated frames through Mediabunny WebCodecs",
   {
     skip: !process.env.VELOCAST_WEBCODECS_TEST_BINARY,
     timeout: 60_000,
@@ -78,12 +78,20 @@ test(
       height: 2160,
     });
     await request({ method: "resize", width: 160, height: 100 });
+    // Draw once before opening the encoder; later no-op seeks must retain the
+    // initialized Canvas2D content as well as continuously changing scenes.
+    await request({
+      method: "execute",
+      script:
+        "const canvas=document.createElement('canvas');canvas.id='once';canvas.width=160;canvas.height=100;document.body.append(canvas);const ctx=canvas.getContext('2d');ctx.fillStyle='rgb(32,64,192)';ctx.fillRect(0,0,160,100)",
+    });
     const audioRate = 44100;
     const audioSamples = audioRate / 5;
     const opened = await request({
       method: "webcodecs-open",
       settings: {
         mediaBackend: "webcodecs",
+        startFrame: 0,
         width: 160,
         height: 100,
         fps: 30,
@@ -106,6 +114,8 @@ test(
       ),
     );
     const colors = [
+      [32, 64, 192],
+      [32, 64, 192],
       [0, 255, 0],
       [255, 0, 0],
       [0, 0, 255],
@@ -114,21 +124,24 @@ test(
       [0, 255, 0],
     ];
     for (const [index, color] of colors.entries()) {
-      await request({
-        method: "execute",
-        script: `document.documentElement.style.background = document.body.style.background = 'rgb(${color.join(",")})'`,
+      const token = `frame-${index}`;
+      const frame = await request({
+        method: "webcodecs-frame",
+        index,
+        frame: index,
+        token,
+        script: `${index < 2 ? "" : `document.getElementById('once')?.remove();document.documentElement.style.background = document.body.style.background = 'rgb(${color.join(",")})';`}document.title = 'velocast-script-result:${token}:ok:'`,
       });
-      const frame = await request({ method: "webcodecs-frame", index });
+      assert.equal(frame.frame, index);
+      assert.equal(frame.token, token);
       assert.equal(frame.timestamp, Math.round((index * 1_000_000) / 30));
       assert.equal(frame.frames, index + 1);
       assert.equal(frame.handle, undefined);
       assert.equal(frame.width, 160);
-      assert.equal(frame.cpuReadback, false);
+      assert.equal(frame.cpuReadback, true);
     }
     const finished = await request({ method: "webcodecs-finish" });
     assert.equal(finished.frames, colors.length);
-    assert.equal(finished.outstandingTextureLeases, 0);
-    assert.ok(finished.peakTextureLeases <= 32);
     const ids = { bt709: 1, bt470bg: 5, smpte170m: 6, "iec61966-2-1": 13 };
     const color = finished.colorSpace;
     assert.ok(

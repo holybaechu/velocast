@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -153,6 +154,180 @@ test("version-mismatch derives an internally consistent manifest before setup", 
   const result = JSON.parse(readFileSync(output, "utf8"));
   assert.equal(result.status, "PASS");
   assert.match(result.stderr, /artifact\.compatibility_mismatch/);
+});
+
+test("finalizer certifies software preference only from a completed off request and matching report", () => {
+  const root = temp("velocast-finalize-software-");
+  const evidence = join(root, "evidence"),
+    runtime = join(root, "runtime");
+  mkdirSync(evidence);
+  mkdirSync(join(runtime, "electron-host"), { recursive: true });
+  writeFileSync(
+    join(runtime, "electron-host/media-client.cjs"),
+    `
+    exports.runMediaOperation = async ({kind, path}) => {
+      if (kind === 'frame-hashes') return {frameCount:240, hashes:Array.from({length:240},(_,i)=>String(i))};
+      const original = path.includes('original-lyrics');
+      return {video:{codec:'avc',frameCount:original?240:12,duration:original?4:1.2},audio:{codec:'aac',sampleRate:48000,channels:2,duration:original?4:1.2}};
+    };
+  `,
+  );
+  const template = JSON.parse(
+    readFileSync(join(repo, "release/windows-private-rc-run.template.json")),
+  );
+  const state = {
+    steps: Object.fromEntries(
+      template.steps.map(({ id }) => [id, { status: "complete" }]),
+    ),
+  };
+  for (const [step, file, startFrame, endFrame] of [
+    ["npm-original-lyrics", "npm-original-lyrics", 820, 1060],
+    ["pnpm-clip-caption-music", "pnpm-clip-caption-music", 0, 12],
+    ["npm-original-lyrics-repeat", "npm-original-lyrics-repeat", 820, 1060],
+    ["software-preference", "pnpm-software-preference", 0, 12],
+  ]) {
+    writeFileSync(join(evidence, `${file}.mp4`), "fixture video");
+    const stdout = join(evidence, `${step}.stdout.json`);
+    writeFileSync(
+      stdout,
+      JSON.stringify({
+        status: "success",
+        request: { range: { startFrame, endFrame } },
+      }),
+    );
+    state.steps[step].attempts = [{ stdout: { path: stdout } }];
+  }
+  for (const name of [
+    "preview-browser",
+    "negative-corrupt-archive",
+    "negative-corrupt-cache",
+    "negative-version-mismatch",
+    "negative-cancel-render",
+    "negative-offline-empty-cache",
+    "concurrent-setup",
+  ])
+    writeFileSync(join(evidence, `${name}.json`), '{"status":"PASS"}');
+  const requestPath = join(evidence, "software-request.json");
+  state.steps["software-preference"].attempts[0].request = {
+    path: requestPath,
+  };
+  const request = {
+    argv: [
+      process.execPath,
+      "cli.js",
+      "render",
+      "scene",
+      "--acceleration",
+      "off",
+    ],
+  };
+  const report = {
+    webcodecs: {
+      hardware_acceleration: "prefer-software",
+      hardware_encoder_verified: false,
+    },
+    capture_backend: "electron_compositor_snapshot",
+    conversion_backend: "chromium_webcodecs",
+    encoder_backend: "electron_webcodecs_h264",
+    cpu_readback_frames: 12,
+    frames_expected: 12,
+    frames_rendered: 12,
+    frames_encoded: 12,
+  };
+  const statePath = join(root, "state.json"),
+    host = join(root, "host.json");
+  writeFileSync(host, '{"validationStatus":"validated"}');
+  const cases = [
+    [
+      "missing step",
+      (value) => {
+        delete value.state.steps["software-preference"];
+      },
+      /step is incomplete: software-preference/,
+    ],
+    [
+      "wrong request",
+      (value) => {
+        value.request.argv[5] = "auto";
+      },
+      /software preference request/,
+    ],
+    [
+      "overridden request",
+      (value) => {
+        value.request.argv.push("--acceleration=auto");
+      },
+      /software preference request/,
+    ],
+    [
+      "wrong preference",
+      (value) => {
+        value.report.webcodecs.hardware_acceleration = "prefer-hardware";
+      },
+      /software preference report/,
+    ],
+    [
+      "hardware claim",
+      (value) => {
+        value.report.webcodecs.hardware_encoder_verified = true;
+      },
+      /software preference report/,
+    ],
+    [
+      "incomplete report",
+      (value) => {
+        value.report.frames_encoded = 11;
+      },
+      /software preference report/,
+    ],
+    ["matching evidence", () => {}, null],
+  ];
+  for (const [name, mutate, expected] of cases) {
+    const value = structuredClone({ state, request, report });
+    mutate(value);
+    writeFileSync(statePath, JSON.stringify(value.state));
+    writeFileSync(requestPath, JSON.stringify(value.request));
+    writeFileSync(
+      join(evidence, "pnpm-software-preference.report.json"),
+      JSON.stringify(value.report),
+    );
+    const output = join(root, `${name}.json`);
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(repo, "scripts/release/windows-private-rc-finalize.mjs"),
+        "--root",
+        root,
+        "--state",
+        statePath,
+        "--runtime",
+        runtime,
+        "--host-requirements",
+        host,
+        "--output",
+        output,
+      ],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    if (expected) {
+      assert.notEqual(result.status, 0, name);
+      assert.match(result.stderr, expected, name);
+      assert.equal(existsSync(output), false, name);
+    } else {
+      assert.equal(result.status, 0, result.stderr);
+      const accepted = JSON.parse(readFileSync(output));
+      assert.equal(accepted.scenarios.softwarePreference, true);
+      assert.ok(
+        accepted.videos.some(
+          (video) =>
+            video.role === "software-preference" && video.video.frames === 12,
+        ),
+      );
+      assert.ok(
+        accepted.notRunInThisGate.includes("hardware-encoder-selection-proof"),
+      );
+    }
+  }
 });
 
 function run(script, args, additions = {}) {

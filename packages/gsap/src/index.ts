@@ -96,22 +96,11 @@ function assertTimeline(value: unknown): asserts value is GsapTimeline {
   }
 }
 
-function validateFps(fps: unknown): number {
-  if (typeof fps !== "number" || !Number.isSafeInteger(fps) || fps <= 0) {
-    throw error(
-      "VELOCAST_GSAP_INVALID_OPTIONS",
-      "fps must be a positive integer",
-    );
-  }
-
-  return fps;
-}
-
-function validateDimension(value: unknown, key: "width" | "height"): number {
+function validatePositiveInteger(value: unknown, name: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
     throw error(
       "VELOCAST_GSAP_INVALID_OPTIONS",
-      `${key} must be a positive integer`,
+      `${name} must be a positive integer`,
     );
   }
 
@@ -134,18 +123,9 @@ function validateTarget(target: unknown): string | undefined {
 }
 
 function validateDurationFrames(value: unknown): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
-    throw error(
-      "VELOCAST_GSAP_INVALID_OPTIONS",
-      "durationFrames must be a positive integer",
-    );
-  }
-
-  return value;
+  return value === undefined
+    ? undefined
+    : validatePositiveInteger(value, "durationFrames");
 }
 
 function resolveDurationFrames(
@@ -262,12 +242,15 @@ function resolveRegistrationOptions(
   options: GsapTimelineRegistrationOptions | undefined,
 ): GsapTimelineRegistrationOptions {
   const normalizedOptions = validateRegistrationOptionsShape(options);
-  const fps = validateFps(normalizedOptions?.fps ?? LEGACY_DEFAULT_FPS);
-  const width = validateDimension(
+  const fps = validatePositiveInteger(
+    normalizedOptions?.fps ?? LEGACY_DEFAULT_FPS,
+    "fps",
+  );
+  const width = validatePositiveInteger(
     normalizedOptions?.width ?? LEGACY_DEFAULT_WIDTH,
     "width",
   );
-  const height = validateDimension(
+  const height = validatePositiveInteger(
     normalizedOptions?.height ?? LEGACY_DEFAULT_HEIGHT,
     "height",
   );
@@ -290,7 +273,7 @@ export function createGsapFrameAdapter(
   assertTimeline(timeline);
   const normalizedOptions = validateAdapterOptionsShape(options);
 
-  const fps = validateFps(normalizedOptions.fps);
+  const fps = validatePositiveInteger(normalizedOptions.fps, "fps");
   const durationFrames = resolveDurationFrames(
     timeline,
     fps,
@@ -339,10 +322,10 @@ export function defineGsapComposition<Props = unknown>(
   if (typeof options.video !== "object" || options.video === null) {
     throw error("VELOCAST_GSAP_INVALID_OPTIONS", "video must be an object");
   }
-  const fps = validateFps(options.video.fps);
+  const fps = validatePositiveInteger(options.video.fps, "fps");
   const createTimeline = options.createTimeline;
-  validateDimension(options.video.width, "width");
-  validateDimension(options.video.height, "height");
+  validatePositiveInteger(options.video.width, "width");
+  validatePositiveInteger(options.video.height, "height");
   if (validateDurationFrames(options.video.durationFrames) === undefined) {
     throw error(
       "VELOCAST_GSAP_INVALID_OPTIONS",

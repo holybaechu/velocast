@@ -29,7 +29,16 @@ async function fixture(t, packageName = "core") {
 
 for (const [packageName, modules] of [
   ["core", ["registry", "dom-discovery", "composition-definitions"]],
-  ["cli", ["job", "remotion-command", "linux-cef-runtime", "audio-plan-ffmpeg"]],
+  [
+    "cli",
+    [
+      "job",
+      "remotion-command",
+      "linux-cef-runtime",
+      "audio-plan-ffmpeg",
+      "media-test-fixtures",
+    ],
+  ],
 ]) {
   test(`${packageName}: remove exact retired emits while retaining active outputs and assets`, async (t) => {
     const { root, dist } = await fixture(t, packageName);

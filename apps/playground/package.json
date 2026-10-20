@@ -3,10 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node -e \"console.log('playground uses static file entry')\"",
     "lint": "eslint . --max-warnings 0 --global document --global window --global HTMLElement",
     "check-types": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "dependencies": {
     "@velocast/core": "workspace:*",

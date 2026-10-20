@@ -1,4 +1,4 @@
-import { writeTestWav } from "./media-test-fixtures.js";
+import { writeTestWav } from "../test-fixtures/media.js";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

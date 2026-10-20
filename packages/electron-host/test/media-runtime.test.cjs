@@ -6,11 +6,92 @@ const fs = require("node:fs"),
   path = require("node:path"),
   vm = require("node:vm");
 const { createRequire } = require("node:module");
+const { EventEmitter } = require("node:events");
+const { PassThrough } = require("node:stream");
 const {
   createMediaSession,
   runMediaOperation,
 } = require("../media-client.cjs");
 const { wavHeader } = require("../media-runtime.cjs");
+const solidBitmap = require("./support/solid-bitmap.cjs");
+
+test("media utility JSONL preserves Unicode paths across pipe chunks", async () => {
+  const temporary = fs.realpathSync(os.tmpdir()),
+    parent = fs.mkdtempSync(path.join(temporary, "velocast-media-ipc-")),
+    ownedParent = fs.realpathSync(parent),
+    directory = path.join(parent, "미디어"),
+    ipcMain = new EventEmitter(),
+    started = Promise.withResolvers(),
+    exited = Promise.withResolvers();
+  fs.mkdirSync(directory);
+  let input;
+  const contents = new EventEmitter();
+  contents.mainFrame = {};
+  contents.setWindowOpenHandler = () => {};
+  contents.send = (_channel, { id, operation }) => {
+    ipcMain.emit(
+      "velocast:media:result",
+      { sender: contents, senderFrame: contents.mainFrame },
+      { id, ok: true, result: operation },
+    );
+  };
+  const fakeFs = Object.create(fs);
+  fakeFs.createReadStream = (_file, options) =>
+    (input = new PassThrough(options));
+  const dependencies = {
+    "node:fs": fakeFs,
+    "./profile-directory.cjs": { configureProfileDirectory() {} },
+    "electron/main": {
+      app: {
+        whenReady: () => Promise.resolve(),
+        exit: exited.resolve,
+      },
+      BrowserWindow: class {
+        webContents = contents;
+        loadFile() {
+          started.resolve();
+          return Promise.resolve();
+        }
+        destroy() {}
+      },
+      ipcMain,
+    },
+  };
+  try {
+    vm.runInNewContext(
+      `(function(require,__dirname){${fs.readFileSync(path.join(__dirname, "../media-main.cjs"), "utf8")}\n})`,
+      { process: { env: { VELOCAST_MEDIA_SCRATCH: directory } } },
+    )((name) => dependencies[name] ?? require(name), path.dirname(__dirname));
+    await started.promise;
+    for (const split of [false, true]) {
+      const id = Number(split) + 1,
+        request = path.join(directory, `${id}.request.json`),
+        response = path.join(directory, `${id}.response.json`),
+        operation = { kind: "probe", path: path.join(directory, "소리.wav") };
+      fs.writeFileSync(request, JSON.stringify(operation));
+      const bytes = Buffer.from(
+        JSON.stringify({ id, request, response }) + "\n",
+      );
+      if (split) {
+        const offset = bytes.indexOf(Buffer.from("미")) + 1;
+        input.write(bytes.subarray(0, offset));
+        input.write(bytes.subarray(offset));
+      } else input.write(bytes);
+      assert.deepEqual(JSON.parse(fs.readFileSync(response, "utf8")), {
+        id,
+        ok: true,
+        result: operation,
+      });
+    }
+    input.end();
+    assert.equal(await exited.promise, 0);
+  } finally {
+    input?.destroy();
+    assert.equal(fs.realpathSync(parent), ownedParent);
+    assert.equal(path.dirname(ownedParent), temporary);
+    fs.rmSync(ownedParent, { recursive: true, force: true });
+  }
+});
 
 for (const cancellationFails of [false, true])
   test(`failed mux joins its sibling before removing output and inputs${cancellationFails ? " even when cancellation fails" : ""}`, async () => {
@@ -138,19 +219,8 @@ test(
     );
     let session;
     try {
-      const framePath = path.join(directory, "frame.bmp"),
-        bmp = Buffer.alloc(54 + 64 * 64 * 3);
-      bmp.write("BM");
-      bmp.writeUInt32LE(bmp.length, 2);
-      bmp.writeUInt32LE(54, 10);
-      bmp.writeUInt32LE(40, 14);
-      bmp.writeInt32LE(64, 18);
-      bmp.writeInt32LE(64, 22);
-      bmp.writeUInt16LE(1, 26);
-      bmp.writeUInt16LE(24, 28);
-      for (let index = 54; index < bmp.length; index += 3)
-        bmp[index + 2] = 255;
-      fs.writeFileSync(framePath, bmp);
+      const framePath = path.join(directory, "frame.bmp");
+      fs.writeFileSync(framePath, solidBitmap(64, 64, "red"));
       const audioPath = path.join(directory, "audio.wav");
       fs.writeFileSync(
         audioPath,

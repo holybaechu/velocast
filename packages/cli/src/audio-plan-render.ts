@@ -38,8 +38,9 @@ async function verifyPcm(
     hash.update(bytes);
     const joined = carry.length ? Buffer.concat([carry, bytes]) : bytes;
     const complete = joined.length - (joined.length % 4);
+    const samples = new DataView(joined.buffer, joined.byteOffset, complete);
     for (let offset = 0; offset < complete; offset += 4)
-      if (!Number.isFinite(joined.readFloatLE(offset)))
+      if (!Number.isFinite(samples.getFloat32(offset, true)))
         throw new Error("PCM output contains non-finite samples");
     carry = Buffer.from(joined.subarray(complete));
   }

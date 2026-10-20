@@ -10,14 +10,14 @@ const { spawn } = require("node:child_process");
 const { hostResponses } = require("./host-responses.cjs");
 
 test(
-  "known unavailable GPU rejects shared-texture load and resize without creating a window",
+  "known unavailable GPU rejects compositor load and resize without creating a window",
   {
     skip: !process.env.VELOCAST_WEBCODECS_TEST_BINARY,
     timeout: 15000,
   },
   async (t) => {
     const directory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "velocast-shared-capability-"),
+      path.join(os.tmpdir(), "velocast-compositor-capability-"),
     );
     const profile = path.join(directory, "profile");
     fs.mkdirSync(profile);
@@ -96,7 +96,7 @@ app.emit("gpu-info-update");
       assert.equal(reply.ok, false);
       assert.match(
         reply.error,
-        /^capture\.shared_texture_unavailable: disabled_software$/,
+        /^capture\.compositor_unavailable: disabled_software$/,
       );
     }
     assert.equal(fs.existsSync(marker), false);

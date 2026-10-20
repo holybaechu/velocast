@@ -5,6 +5,7 @@ export {
   VelocastRuntime,
 } from "./runtime.js";
 import { defaultVelocastRuntime } from "./runtime.js";
+import type { FrameComposition, VelocastProject } from "./project.js";
 import type {
   BrowserProtocol,
   CompositionManifest,
@@ -13,6 +14,13 @@ import type {
   VelocastGlobal,
 } from "./types.js";
 import type { BrowserProtocolOptions } from "./runtime.js";
+
+export function startVelocast(
+  project: VelocastProject | readonly FrameComposition[],
+  options: BrowserProtocolOptions = {},
+): BrowserProtocol {
+  return defaultVelocastRuntime.startProject(project, options);
+}
 
 export function installBrowserProtocol(
   options: BrowserProtocolOptions = {},

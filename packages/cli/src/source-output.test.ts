@@ -3,7 +3,7 @@ import {
   writeTestPng,
   writeTestVideo,
   writeTestWav,
-} from "./media-test-fixtures.js";
+} from "../test-fixtures/media.js";
 import {
   copyFile,
   mkdtemp,

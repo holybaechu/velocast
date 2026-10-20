@@ -1,4 +1,4 @@
-use crate::native_browser::NativeBrowser;
+use crate::electron_app::ElectronRenderer;
 use crate::render_job::{RenderJobResources, WorkerCommand};
 use crate::telemetry::{RenderModeLabel, RenderTelemetry};
 use anyhow::{ensure, Context};
@@ -41,7 +41,7 @@ pub async fn render_segments(
     job: &RenderJob,
     composition: &CompositionManifest,
     plan: &RenderPipelinePlan,
-    browser: &NativeBrowser,
+    browser: &ElectronRenderer,
     output: &Path,
     directory: &Path,
     resources: &mut RenderJobResources,

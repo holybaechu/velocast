@@ -86,7 +86,7 @@ export function probeRendererCapabilities(
       parsed.browserHosts.length !== 1 ||
       parsed.browserHosts[0] !== "electron" ||
       parsed.defaultBrowserHost !== "electron" ||
-      parsed.electronHostProtocolVersion !== 4
+      parsed.electronHostProtocolVersion !== 5
     ) {
       return {
         available: false,

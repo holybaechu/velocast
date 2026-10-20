@@ -68,6 +68,7 @@ export async function previewCommand(
   let watchFailure: Error | undefined;
   let watchExit: Promise<void> | undefined;
   let server: Awaited<ReturnType<typeof createPreviewServer>> | undefined;
+  const failures: unknown[] = [];
   try {
     signal.throwIfAborted();
     if (options.watchCommand) {
@@ -114,21 +115,39 @@ export async function previewCommand(
     );
     await done;
     if (watchFailure) throw watchFailure;
+  } catch (error) {
+    failures.push(error);
   } finally {
     stopped.abort();
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
     try {
       await server?.close();
-    } finally {
-      if (watch) {
+    } catch (error) {
+      failures.push(error);
+    }
+    if (watch) {
+      try {
         await terminateRendererProcess(
           watch,
           { cause: "abort", escalate: () => {} },
           1000,
         );
         await watchExit;
+      } catch (error) {
+        failures.push(error);
       }
     }
   }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(
+      failures,
+      failures
+        .map((error) =>
+          error instanceof Error ? error.message : String(error),
+        )
+        .join("\n"),
+      { cause: failures[0] },
+    );
 }

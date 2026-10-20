@@ -8,23 +8,24 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 const workspace = resolve(import.meta.dirname, "../../..");
 const directory = await mkdtemp(join(tmpdir(), "velocast-preview-pack-"));
 const consumer = join(directory, "consumer");
-const pnpmExec = process.env.npm_execpath;
-const pnpm = pnpmExec
-  ? pnpmExec.endsWith(".exe")
-    ? { command: pnpmExec, prefix: [] }
-    : { command: process.execPath, prefix: [pnpmExec] }
-  : { command: "pnpm", prefix: [] };
+const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const run = (command, args, cwd = workspace) => {
-  const result = spawnSync(command, args, {
-    cwd,
-    encoding: "utf8",
-    stdio: "pipe",
-  });
+  const batch = process.platform === "win32" && command.endsWith(".cmd");
+  const result = spawnSync(
+    batch ? (process.env.ComSpec ?? "cmd.exe") : command,
+    batch ? ["/d", "/c", "call", command, ...args] : args,
+    {
+      cwd,
+      encoding: "utf8",
+      stdio: "pipe",
+    },
+  );
   if (result.status !== 0)
     throw new Error(
       `${command} ${args.join(" ")} failed (${result.status})\n${result.stdout}\n${result.stderr}`,
@@ -33,8 +34,8 @@ const run = (command, args, cwd = workspace) => {
 };
 
 try {
-  run(pnpm.command, [...pnpm.prefix, "--filter", "@velocast/core", "pack", "--pack-destination", directory]);
-  run(pnpm.command, [...pnpm.prefix, "--filter", "@velocast/preview", "pack", "--pack-destination", directory]);
+  run(pnpm, ["--filter", "@velocast/core", "pack", "--pack-destination", directory]);
+  run(pnpm, ["--filter", "@velocast/preview", "pack", "--pack-destination", directory]);
   const names = await readdir(directory);
   const core = names.find((name) => name.startsWith("velocast-core-") && name.endsWith(".tgz"));
   const preview = names.find((name) => name.startsWith("velocast-preview-") && name.endsWith(".tgz"));
@@ -44,10 +45,9 @@ try {
     join(consumer, "package.json"),
     JSON.stringify({ name: "preview-pack-consumer", private: true, type: "module" }),
   );
-  const npmCli = join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js");
   run(
-    process.execPath,
-    [npmCli, "install", "--offline", "--ignore-scripts", join(directory, core), join(directory, preview)],
+    npm,
+    ["install", "--offline", "--ignore-scripts", join(directory, core), join(directory, preview)],
     consumer,
   );
   const entry = new URL(
@@ -68,9 +68,18 @@ try {
   const api = await import(entry.href);
   if (typeof api.PreviewApp !== "function" || typeof api.HttpPreviewApi !== "function")
     throw new Error("public preview UI exports are missing");
-  const expected = ["bridge.js", "child-bridge.js", "rpc-wire.js", "browser-runtime.js"];
+  const expected = [
+    "bridge.js",
+    "child-bridge.js",
+    "rpc-wire.js",
+    "element-inspection.js",
+    "browser-runtime.js",
+  ];
   if (JSON.stringify(manifest.assets) !== JSON.stringify(expected))
     throw new Error("installed platform manifest does not match its fixed asset set");
+  await Promise.all(
+    expected.map((name) => readFile(new URL(`platform/${name}`, root))),
+  );
   console.log(
     JSON.stringify(
       {

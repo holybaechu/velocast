@@ -188,12 +188,12 @@ pub(crate) fn prepare(
     let cancellation =
         crate::cancellation::RenderCancellation::from_event_log_path(job.event_log_path.as_deref());
     let mut downloaded = BTreeMap::<String, PathBuf>::new();
-    let mut sources = Vec::new();
+    let mut sources = BTreeMap::new();
     let mut total = 0;
     for clip in &plan.clips {
         let url = resolve_source(&base, &clip.source)?;
         if let Some(path) = downloaded.get(url.as_str()) {
-            sources.push(path.clone());
+            sources.insert(clip.source.clone(), path.clone());
             continue;
         }
         if downloaded.len() >= SOURCE_COUNT_LIMIT {
@@ -210,14 +210,8 @@ pub(crate) fn prepare(
         )?;
         total += length;
         downloaded.insert(url.to_string(), destination.clone());
-        sources.push(destination);
+        sources.insert(clip.source.clone(), destination);
     }
-    let sources = plan
-        .clips
-        .iter()
-        .zip(sources)
-        .map(|(clip, path)| (clip.source.clone(), path))
-        .collect::<BTreeMap<_, _>>();
     Ok(Some(serde_json::json!({"plan":plan,"sources":sources})))
 }
 

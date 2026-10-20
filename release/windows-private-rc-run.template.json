@@ -109,6 +109,15 @@
       "outputs": ["C:\\velocast-private-rc\\evidence\\pnpm-clip-caption-music.mp4", "C:\\velocast-private-rc\\evidence\\pnpm-clip-caption-music.report.json", "C:\\velocast-private-rc\\evidence\\pnpm-clip-caption-music.events.jsonl"]
     },
     {
+      "id": "software-preference",
+      "kind": "render",
+      "scope": "pnpm",
+      "environment": "minimal",
+      "argv": ["<NODE_EXE>", "C:\\velocast-private-rc\\pnpm-consumer\\node_modules\\velocast\\dist\\bin.js", "render", "<MEDIA_COMPOSITION>", "--config", "<MEDIA_CONFIG>", "--acceleration", "off", "--concurrency", "1", "--assembly", "reference", "--output", "C:\\velocast-private-rc\\evidence\\pnpm-software-preference.mp4", "--report", "C:\\velocast-private-rc\\evidence\\pnpm-software-preference.report.json", "--events", "C:\\velocast-private-rc\\evidence\\pnpm-software-preference.events.jsonl", "--json"],
+      "cwd": "C:\\velocast-private-rc\\projects\\clip-caption-music",
+      "outputs": ["C:\\velocast-private-rc\\evidence\\pnpm-software-preference.mp4", "C:\\velocast-private-rc\\evidence\\pnpm-software-preference.report.json", "C:\\velocast-private-rc\\evidence\\pnpm-software-preference.events.jsonl"]
+    },
+    {
       "id": "npm-original-lyrics-repeat",
       "kind": "render-repeat",
       "scope": "npm",

@@ -59,6 +59,10 @@ impl RenderJobResources {
 
     pub async fn check_workers(&mut self) -> anyhow::Result<()> {
         self.check_cancellation()?;
+        // Synchronous browser requests must still let stderr readers progress.
+        if !self.workers.running.is_empty() {
+            tokio::task::yield_now().await;
+        }
         self.workers.reap_completed(true).await
     }
 
@@ -285,15 +289,12 @@ impl WorkerGroup {
                 .map_err(worker_monitor_failed_error)?;
             let stderr = collect_worker_output(&mut worker).await;
             if fail_on_error && !status.success() {
-                return Err(crate::errors::RendererError::WorkerFailed {
-                    start: worker.start,
-                    end: worker.end,
-                    message: format!(
-                        "exit status: {status}\nstderr:\n{}",
-                        String::from_utf8_lossy(&stderr).trim()
-                    ),
-                }
-                .into());
+                anyhow::bail!(
+                    "worker {}..{} failed: exit status: {status}\nstderr:\n{}",
+                    worker.start,
+                    worker.end,
+                    String::from_utf8_lossy(&stderr).trim()
+                );
             }
         }
         Ok(())
@@ -766,19 +767,31 @@ mod tests {
                 resources.spawn_workers(vec![fixture_command(
                     &ready,
                     &root.join("finished"),
-                    "fail",
+                    "flood-fail",
                 )])?;
                 wait_until_exists(&ready).await;
-                for _ in 0..100 {
+                std::fs::write(ready.with_extension("flood"), b"")?;
+                // Windows schedules a blocking task for each stderr read.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while std::time::Instant::now() < deadline {
                     resources.check_workers().await?;
-                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    // Electron frame requests are synchronous. Disabled events
+                    // must not prevent the worker's stderr reader from running.
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
                 Err::<(), _>(anyhow::anyhow!("worker failure was not observed"))
             },
         )
         .await
         .unwrap_err();
-        assert!(error.to_string().contains("worker 0..1 failed"));
+        assert!(
+            error.to_string().contains("worker 0..1 failed"),
+            "unexpected worker result: {error:#}"
+        );
+        assert!(
+            error.to_string().contains("noisy worker failure"),
+            "missing worker diagnostic: {error:#}"
+        );
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
 
@@ -879,7 +892,17 @@ mod tests {
             .unwrap();
             return;
         }
-        if mode == "fail" {
+        if mode == "flood-fail" {
+            while !ready.with_extension("flood").exists() {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            use std::io::Write;
+            std::io::stderr()
+                .write_all(&vec![b'x'; 1024 * 1024])
+                .unwrap();
+            eprintln!("\nnoisy worker failure");
+        }
+        if mode == "fail" || mode == "flood-fail" {
             std::process::exit(7);
         }
         std::thread::sleep(std::time::Duration::from_millis(250));

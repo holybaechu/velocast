@@ -16,6 +16,7 @@ import { RendererRuntimeAcquisition } from "./renderer-runtime.js";
 import { loadConfigFromPath } from "./config-loader.js";
 import {
   doctorCommand,
+  type DoctorProbeInput,
   executeRendererJob,
   probeCapture,
   renderComposition,
@@ -36,6 +37,20 @@ afterEach(() => {
 });
 
 describe("doctorCommand", () => {
+  function doctorProbe(overrides: Partial<DoctorProbeInput>): DoctorProbeInput {
+    return {
+      platform: "win32",
+      arch: "x64",
+      browserRuntime: {
+        host: "electron",
+        available: true,
+        gpuCaptureSupported: true,
+      },
+      webCodecsAvailable: true,
+      ...overrides,
+    };
+  }
+
   it.each(["local", "cache"] as const)(
     "probes an inspected %s runtime with its complete environment",
     async (source) => {
@@ -66,18 +81,10 @@ describe("doctorCommand", () => {
             capabilityEnv = options?.resolveRendererProcessEnv?.({
               rendererBinary: runtime.binary,
             });
-            return {
+            return doctorProbe({
               platform: "linux",
-              arch: "x64",
               rendererBinary: options?.env?.VELOCAST_RENDERER_BINARY,
-              browserRuntime: {
-                host: "electron" as const,
-                available: true,
-                gpuCaptureSupported: true,
-              },
-
-              webCodecsAvailable: true,
-            };
+            });
           },
         },
       );
@@ -96,20 +103,11 @@ describe("doctorCommand", () => {
 
   it("preserves an existing local renderer without requiring a managed artifact", async () => {
     const writes: string[] = [];
-    const localProbe = {
-      platform: "win32" as const,
-      arch: "x64",
+    const localProbe = doctorProbe({
       rendererBinary: "C:\\vc-target\\debug\\velocast-renderer.exe",
-      browserRuntime: {
-        host: "electron" as const,
-        available: true,
-        gpuCaptureSupported: true,
-      },
       requiredGpuPrerequisites: [],
       requiredGpuBackends: [],
-
-      webCodecsAvailable: true,
-    };
+    });
 
     await doctorCommand(
       { json: true },
@@ -131,9 +129,7 @@ describe("doctorCommand", () => {
 
   it("reports legacy host readiness when no managed artifact is available", async () => {
     const writes: string[] = [];
-    const unavailableProbe = {
-      platform: "win32" as const,
-      arch: "x64",
+    const unavailableProbe = doctorProbe({
       browserRuntime: {
         host: "electron" as const,
         available: false,
@@ -141,9 +137,7 @@ describe("doctorCommand", () => {
       },
       requiredGpuPrerequisites: [],
       requiredGpuBackends: [],
-
-      webCodecsAvailable: true,
-    };
+    });
 
     await doctorCommand(
       { json: true },
@@ -168,27 +162,19 @@ describe("doctorCommand", () => {
       { json: true },
       {
         write: (value) => writes.push(value),
-        probe: () => ({
-          platform: "win32",
-          arch: "x64",
-          rendererBinary: "/tmp/velocast-renderer",
-          browserRuntime: {
-            host: "electron" as const,
-            available: true,
-            gpuCaptureSupported: true,
-          },
-          displayVariablesUnset: true,
-          requiredGpuBackends: [
-            {
-              backend: "webcodecs",
-              available: true,
-              packetWriterAvailable: true,
-            },
-          ],
-
-          webCodecsAvailable: true,
-          requiredGpuPacketWriterAvailable: true,
-        }),
+        probe: () =>
+          doctorProbe({
+            rendererBinary: "/tmp/velocast-renderer",
+            displayVariablesUnset: true,
+            requiredGpuBackends: [
+              {
+                backend: "webcodecs",
+                available: true,
+                packetWriterAvailable: true,
+              },
+            ],
+            requiredGpuPacketWriterAvailable: true,
+          }),
       },
     );
 
@@ -203,26 +189,18 @@ describe("doctorCommand", () => {
       { json: false },
       {
         write: (value) => writes.push(value),
-        probe: () => ({
-          platform: "win32",
-          arch: "x64",
-          rendererBinary: "C:\\vc-target\\debug\\velocast-renderer.exe",
-          browserRuntime: {
-            host: "electron" as const,
-            available: true,
-            gpuCaptureSupported: true,
-          },
-          requiredGpuPrerequisites: [],
-          requiredGpuBackends: [
-            {
-              backend: "webcodecs",
-              available: true,
-              packetWriterAvailable: true,
-            },
-          ],
-
-          webCodecsAvailable: true,
-        }),
+        probe: () =>
+          doctorProbe({
+            rendererBinary: "C:\\vc-target\\debug\\velocast-renderer.exe",
+            requiredGpuPrerequisites: [],
+            requiredGpuBackends: [
+              {
+                backend: "webcodecs",
+                available: true,
+                packetWriterAvailable: true,
+              },
+            ],
+          }),
       },
     );
 
@@ -239,31 +217,23 @@ describe("doctorCommand", () => {
       { json: false },
       {
         write: (value) => writes.push(value),
-        probe: () => ({
-          platform: "win32",
-          arch: "x64",
-          rendererBinary: "C:\\vc-target\\debug\\velocast-renderer.exe",
-          browserRuntime: {
-            host: "electron" as const,
-            available: true,
-            gpuCaptureSupported: true,
-          },
-          requiredGpuPrerequisites: [],
-          requiredGpuBackends: [
-            {
-              backend: "webcodecs",
-              available: true,
-              packetWriterAvailable: true,
-            },
-            {
-              backend: "webcodecs",
-              available: true,
-              packetWriterAvailable: true,
-            },
-          ],
-
-          webCodecsAvailable: true,
-        }),
+        probe: () =>
+          doctorProbe({
+            rendererBinary: "C:\\vc-target\\debug\\velocast-renderer.exe",
+            requiredGpuPrerequisites: [],
+            requiredGpuBackends: [
+              {
+                backend: "webcodecs",
+                available: true,
+                packetWriterAvailable: true,
+              },
+              {
+                backend: "webcodecs",
+                available: true,
+                packetWriterAvailable: true,
+              },
+            ],
+          }),
       },
     );
 
@@ -279,34 +249,26 @@ describe("doctorCommand", () => {
       { json: true },
       {
         write: (value) => writes.push(value),
-        probe: () => ({
-          platform: "win32",
-          arch: "x64",
-          rendererBinary: "/tmp/velocast-renderer",
-          browserRuntime: {
-            host: "electron" as const,
-            available: true,
-            gpuCaptureSupported: true,
-          },
-          requiredGpuPrerequisites: [
-            {
-              available: false,
-              code: "platform.device_unavailable",
-              reason: "GPU device unavailable",
-            },
-          ],
-          requiredGpuBackends: [
-            {
-              backend: "webcodecs",
-              available: false,
-              unavailableCode: "encoder.codec_unavailable",
-              reason: "WebCodecs encoder webcodecs unavailable",
-              packetWriterAvailable: true,
-            },
-          ],
-
-          webCodecsAvailable: true,
-        }),
+        probe: () =>
+          doctorProbe({
+            rendererBinary: "/tmp/velocast-renderer",
+            requiredGpuPrerequisites: [
+              {
+                available: false,
+                code: "platform.device_unavailable",
+                reason: "GPU device unavailable",
+              },
+            ],
+            requiredGpuBackends: [
+              {
+                backend: "webcodecs",
+                available: false,
+                unavailableCode: "encoder.codec_unavailable",
+                reason: "WebCodecs encoder webcodecs unavailable",
+                packetWriterAvailable: true,
+              },
+            ],
+          }),
       },
     );
 
@@ -331,33 +293,26 @@ describe("doctorCommand", () => {
       { json: false },
       {
         write: (value) => writes.push(value),
-        probe: () => ({
-          platform: "win32",
-          arch: "x64",
-          rendererBinary: "/tmp/velocast-renderer",
-          browserRuntime: {
-            host: "electron" as const,
-            available: true,
-            gpuCaptureSupported: true,
-          },
-          requiredGpuPrerequisites: [
-            {
-              available: false,
-              code: "platform.device_unavailable",
-              reason: "GPU device unavailable",
-            },
-          ],
-          requiredGpuBackends: [
-            {
-              backend: "webcodecs",
-              available: false,
-              reason: "WebCodecs encoder webcodecs unavailable",
-              packetWriterAvailable: true,
-            },
-          ],
-
-          webCodecsAvailable: false,
-        }),
+        probe: () =>
+          doctorProbe({
+            rendererBinary: "/tmp/velocast-renderer",
+            requiredGpuPrerequisites: [
+              {
+                available: false,
+                code: "platform.device_unavailable",
+                reason: "GPU device unavailable",
+              },
+            ],
+            requiredGpuBackends: [
+              {
+                backend: "webcodecs",
+                available: false,
+                reason: "WebCodecs encoder webcodecs unavailable",
+                packetWriterAvailable: true,
+              },
+            ],
+            webCodecsAvailable: false,
+          }),
       },
     );
 

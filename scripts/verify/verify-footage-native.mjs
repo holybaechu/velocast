@@ -109,7 +109,7 @@ assert.equal(probe.video?.width, 320); assert.equal(probe.video?.height, 90);
 assert.equal(probe.audio?.sampleRate, 48000);
 const telemetry = JSON.parse(await readFile(report, "utf8"));
 assert.equal(telemetry.encoder_backend, "electron_webcodecs_h264");
-assert.equal(telemetry.cpu_readback_frames, 0);
+assert.equal(telemetry.cpu_readback_frames, 16);
 assert.equal(telemetry.frames_encoded, durationFrames);
 const checked = [];
 for (const frame of [0, 1, 2, 5, 6, 13, 15]) {

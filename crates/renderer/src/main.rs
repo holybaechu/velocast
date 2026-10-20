@@ -5,12 +5,10 @@ mod browser_surface;
 mod cancellation;
 mod capabilities;
 mod electron_app;
-mod errors;
 mod events;
 mod frame_loop;
 mod generated;
 mod input_props;
-mod native_browser;
 mod output_media;
 mod output_result;
 mod output_workspace;
@@ -22,8 +20,8 @@ mod webcodecs;
 
 use args::Args;
 use clap::Parser;
+use electron_app::ElectronRenderer;
 use events::{RendererEvent, RendererEventSink};
-use native_browser::NativeBrowser;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use velocast_protocol::{CompositionManifest, RenderJob, RenderJobKind, RenderOperation};
@@ -42,7 +40,7 @@ async fn run() -> anyhow::Result<()> {
         return Ok(());
     }
     tracing_subscriber::fmt()
-        .with_env_filter("info")
+        .with_max_level(tracing::Level::INFO)
         .with_writer(std::io::stderr)
         .init();
     let mut job = args.parse_job()?;
@@ -208,9 +206,9 @@ async fn run_coordinator_render_with_mode(
         webcodecs::validate_job(job)?;
     }
     let props = input_props::read_input_props(job.input_props_path.as_deref())?;
-    let renderer = NativeBrowser::new(mode)?;
+    let renderer = ElectronRenderer::new(mode)?;
     let started = Instant::now();
-    renderer.load(job).await?;
+    renderer.load(job, props.as_ref()).await?;
     telemetry.page_load_ms += started.elapsed().as_millis();
     let started = Instant::now();
     let compositions = renderer.discover_compositions()?;
@@ -283,7 +281,7 @@ async fn run_coordinator_render_with_mode(
             effective_concurrency: plan.concurrency,
             probe_tier: "media_metadata".into(),
             segment_count: plan.ranges.len(),
-            capture_mode: "electron_shared_texture".into(),
+            capture_mode: "electron_compositor_snapshot".into(),
             conversion_mode: "chromium_webcodecs".into(),
             encoder_mode: requested_backend.into(),
             planned_encoder_backend: format!(
@@ -339,7 +337,7 @@ async fn run_coordinator_render_with_mode(
 
 use anyhow::Context;
 fn select_url_composition_or_measure(
-    renderer: &NativeBrowser,
+    renderer: &ElectronRenderer,
     compositions: &[CompositionManifest],
     selector: &str,
 ) -> anyhow::Result<CompositionManifest> {
@@ -483,9 +481,9 @@ async fn run_worker(mut job: RenderJob) -> anyhow::Result<()> {
         ));
         resources.check_cancellation()?;
         let mode = initial_surface_for_job(&job);
-        let renderer = NativeBrowser::new(mode)?;
+        let renderer = ElectronRenderer::new(mode)?;
         let load_started = Instant::now();
-        renderer.load(&job).await?;
+        renderer.load(&job, props.as_ref()).await?;
         report.page_load_ms += load_started.elapsed().as_millis();
         let composition = match &job.composition {
             Some(value) => value.clone(),
@@ -665,7 +663,7 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
     #[test]
-    fn video_requires_shared_textures_and_diagnostics_use_software() {
+    fn video_requires_compositor_and_diagnostics_use_software() {
         use browser_surface::BrowserSurfaceMode::{Software, WebCodecs};
         let mut job: RenderJob = serde_json::from_value(serde_json::json!({
             "mode": "composition", "serve_url": "http://localhost",

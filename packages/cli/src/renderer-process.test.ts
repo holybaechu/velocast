@@ -1,7 +1,14 @@
-import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { EventEmitter, getEventListeners } from "node:events";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
@@ -86,7 +93,7 @@ describe("runRenderer", () => {
               outputApiVersion: 1,
               browserHosts: ["electron"],
               defaultBrowserHost: "electron",
-              electronHostProtocolVersion: 4,
+              electronHostProtocolVersion: 5,
               supportedMediaBackends: ["webcodecs"],
               videoEncoderBackend: "webcodecs",
               mediaRuntime: "mediabunny",
@@ -270,12 +277,16 @@ describe("runRenderer", () => {
       const controller = new AbortController();
       const terminateProcess = vi.fn(() => termination.promise);
       const readEventProtocol = vi.fn();
+      let eventLogPath = "";
       const result = runRenderer(
         "/opt/velocast/velocast-renderer",
         { mode: "composition" },
         {
           resolveProcessEnv: () => ({}),
-          spawnRenderer: () => child,
+          spawnRenderer: (_binary, args) => {
+            eventLogPath = JSON.parse(args[1]!).event_log_path;
+            return child;
+          },
           waitForProcess: () => adapter.promise,
           signal: controller.signal,
           terminateProcess,
@@ -288,11 +299,14 @@ describe("runRenderer", () => {
       await flushMicrotasks();
       expect(terminateProcess).toHaveBeenCalledTimes(1);
       expect(readEventProtocol).not.toHaveBeenCalled();
+      const retainedDuringTermination = existsSync(dirname(eventLogPath));
 
       termination.resolve();
       await expect(result).rejects.toThrow(
         "renderer execution was cancelled: controlled abort",
       );
+      expect(retainedDuringTermination).toBe(true);
+      expect(existsSync(dirname(eventLogPath))).toBe(false);
       expect(child.listenerCount("exit")).toBe(0);
     });
 
@@ -473,60 +487,158 @@ describe("runRenderer", () => {
       expect(child.listenerCount("exit")).toBe(0);
     });
 
-    it("keeps adapter rejection primary and reports cleanup failure secondarily", async () => {
-      const child = createRendererProcess();
-      const adapterError = new Error("adapter primary");
-      const cleanupError = new Error("cleanup secondary");
-      const result = runRenderer(
-        "/opt/velocast/velocast-renderer",
-        { mode: "composition", event_log_path: "explicit-events.jsonl" },
-        {
-          resolveProcessEnv: () => ({}),
-          spawnRenderer: () => child,
-          waitForProcess: async () => {
-            throw adapterError;
+    it.each([
+      ["rejected", new Error("cleanup secondary")],
+      ["fulfilled", undefined],
+    ] as const)(
+      "reports cleanup failure after a %s adapter settlement",
+      async (status, cleanupError) => {
+        const child = createRendererProcess();
+        const adapterError = new Error("adapter primary");
+        const result = runRenderer(
+          "/opt/velocast/velocast-renderer",
+          { mode: "composition", event_log_path: "explicit-events.jsonl" },
+          {
+            resolveProcessEnv: () => ({}),
+            spawnRenderer: () => child,
+            waitForProcess: async () => {
+              if (status === "rejected") throw adapterError;
+            },
+            cleanupEventProtocol: () => {
+              throw cleanupError;
+            },
           },
-          cleanupEventProtocol: () => {
-            throw cleanupError;
-          },
-        },
-      );
+        );
 
-      await expect(result).rejects.toMatchObject({
-        message:
-          "adapter primary\nSecondary renderer lifecycle diagnostics:\n- cleanup secondary",
-        cause: adapterError,
-      });
-    });
+        const primaryMessage =
+          status === "rejected"
+            ? adapterError.message
+            : "renderer completed but lifecycle cleanup failed";
+        await expect(result).rejects.toMatchObject({
+          message: `${primaryMessage}\nSecondary renderer lifecycle diagnostics:\n- ${cleanupError?.message ?? "undefined"}`,
+          cause:
+            status === "rejected"
+              ? adapterError
+              : expect.objectContaining({ message: primaryMessage }),
+        });
+      },
+    );
 
-    it("keeps abort primary and reports termination failure secondarily", async () => {
+    it("releases the default cancellation listener when timed-out termination fails", async () => {
       const child = createRendererProcess();
       const adapter = deferred<void>();
       const controller = new AbortController();
       const terminationError = new Error("termination secondary");
+      Object.assign(child, {
+        kill: () => {
+          throw terminationError;
+        },
+      });
+      let fireTimeout!: () => void;
+      let eventLogPath = "";
       const result = runRenderer(
         "/opt/velocast/velocast-renderer",
         { mode: "composition" },
         {
           resolveProcessEnv: () => ({}),
-          spawnRenderer: () => child,
+          spawnRenderer: (_binary, args) => {
+            eventLogPath = JSON.parse(args[1]!).event_log_path;
+            writeFileSync(eventLogPath, "owned termination evidence");
+            return child;
+          },
           waitForProcess: () => adapter.promise,
           signal: controller.signal,
-          terminateProcess: async () => {
-            throw terminationError;
+          timeoutMs: 50,
+          scheduleTimeout: (callback) => {
+            fireTimeout = callback;
           },
         },
       );
 
-      controller.abort(new Error("abort primary"));
+      fireTimeout();
 
-      await expect(result).rejects.toMatchObject({
-        message:
-          "renderer execution was cancelled: abort primary\nSecondary renderer lifecycle diagnostics:\n- termination secondary",
-      });
-      adapter.resolve();
-      await flushMicrotasks();
+      try {
+        await expect(result).rejects.toMatchObject({
+          message: expect.stringMatching(
+            /renderer execution timed out[\s\S]*termination secondary/,
+          ),
+          cause: expect.objectContaining({ name: "RendererTimeoutError" }),
+        });
+        expect(readFileSync(eventLogPath, "utf8")).toBe(
+          "owned termination evidence",
+        );
+        expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+        expect(child.listenerCount("exit")).toBe(0);
+      } finally {
+        adapter.resolve();
+        await flushMicrotasks();
+        const root = dirname(eventLogPath);
+        if (existsSync(root)) {
+          const absolute = realpathSync(root);
+          expect(dirname(absolute)).toBe(realpathSync(tmpdir()));
+          expect(basename(absolute)).toMatch(/^velocast-renderer-events-/);
+          rmSync(absolute, { recursive: true, force: true });
+        }
+      }
     });
+
+    it.each([
+      ["throw", new Error("termination secondary")],
+      ["reject", new Error("termination secondary")],
+      ["reject", undefined],
+    ] as const)(
+      "keeps abort primary and retains evidence after custom termination %s: %s",
+      async (failure, terminationError) => {
+        const child = createRendererProcess();
+        const adapter = deferred<void>();
+        const controller = new AbortController();
+        let eventLogPath = "";
+        const result = runRenderer(
+          "/opt/velocast/velocast-renderer",
+          { mode: "composition" },
+          {
+            resolveProcessEnv: () => ({}),
+            spawnRenderer: (_binary, args) => {
+              eventLogPath = JSON.parse(args[1]!).event_log_path;
+              writeFileSync(eventLogPath, "owned termination evidence");
+              return child;
+            },
+            waitForProcess: () => adapter.promise,
+            signal: controller.signal,
+            terminateProcess: () => {
+              if (failure === "throw") throw terminationError;
+              return Promise.reject(terminationError);
+            },
+          },
+        );
+
+        controller.abort(new Error("abort primary"));
+
+        try {
+          await expect(result).rejects.toMatchObject({
+            message: expect.stringContaining(
+              `renderer execution was cancelled: abort primary\nSecondary renderer lifecycle diagnostics:\n- ${terminationError?.message ?? "undefined"}`,
+            ),
+            cause: expect.objectContaining({
+              message: "renderer execution was cancelled: abort primary",
+            }),
+          });
+          expect(readFileSync(eventLogPath, "utf8")).toBe(
+            "owned termination evidence",
+          );
+        } finally {
+          adapter.resolve();
+          await flushMicrotasks();
+          const root = dirname(eventLogPath);
+          if (existsSync(root)) {
+            const absolute = realpathSync(root);
+            expect(dirname(absolute)).toBe(realpathSync(tmpdir()));
+            expect(basename(absolute)).toMatch(/^velocast-renderer-events-/);
+            rmSync(absolute, { recursive: true, force: true });
+          }
+        }
+      },
+    );
   });
 
   it("surfaces renderer_failed JSONL events instead of scraping stderr", async () => {

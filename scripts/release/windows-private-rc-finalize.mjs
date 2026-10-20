@@ -27,6 +27,7 @@ const requiredSteps = [
   "concurrent-setup",
   "npm-original-lyrics",
   "pnpm-clip-caption-music",
+  "software-preference",
   "npm-original-lyrics-repeat",
   "preview-browser",
   "corrupt-archive",
@@ -67,6 +68,48 @@ const repeat = await verifyVideo({
   path: join(root, "evidence/npm-original-lyrics-repeat.mp4"),
   step: "npm-original-lyrics-repeat",
 });
+const software = await verifyVideo({
+  ...videos[1],
+  role: "software-preference",
+  path: join(root, "evidence/pnpm-software-preference.mp4"),
+  step: "software-preference",
+});
+const softwareAttempt = state.steps["software-preference"].attempts.at(-1);
+const softwareRequest = JSON.parse(
+  readFileSync(softwareAttempt.request.path, "utf8"),
+);
+const acceleration = softwareRequest.argv.indexOf("--acceleration");
+const accelerationArgs = softwareRequest.argv.filter(
+  (value) => value === "--acceleration" || value.startsWith("--acceleration="),
+);
+if (
+  accelerationArgs.length !== 1 ||
+  acceleration < 0 ||
+  softwareRequest.argv[acceleration + 1] !== "off"
+)
+  throw new Error(
+    "software preference request must specify --acceleration off",
+  );
+const softwareReport = JSON.parse(
+  readFileSync(
+    join(root, "evidence/pnpm-software-preference.report.json"),
+    "utf8",
+  ),
+);
+if (
+  softwareReport.webcodecs?.hardware_acceleration !== "prefer-software" ||
+  softwareReport.webcodecs?.hardware_encoder_verified !== false ||
+  softwareReport.capture_backend !== "electron_compositor_snapshot" ||
+  softwareReport.conversion_backend !== "chromium_webcodecs" ||
+  !softwareReport.encoder_backend?.startsWith("electron_webcodecs_") ||
+  softwareReport.cpu_readback_frames !== software.frames ||
+  ["frames_expected", "frames_rendered", "frames_encoded"].some(
+    (key) => softwareReport[key] !== software.frames,
+  )
+)
+  throw new Error(
+    "software preference report does not confirm the requested WebCodecs behavior",
+  );
 const mediaOptions = {
   electronBinary: join(runtime, "electron/electron.exe"),
   hostScript: join(runtime, "electron-host/main.cjs"),
@@ -126,7 +169,7 @@ const output = {
     "watch-command-child-cleanup",
   ],
   hostRequirements,
-  videos: [...videoEvidence, repeat],
+  videos: [...videoEvidence, repeat, software],
   cache: { root: join(root, "cache"), leftovers },
   publication: { upload: false, publicRelease: false, supportedManifestFlip: false },
   state: { path: resolve(args.state), sha256: sha256(resolve(args.state)) },

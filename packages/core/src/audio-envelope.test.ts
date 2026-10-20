@@ -44,7 +44,10 @@ it("fades and ducks continuously through preroll and independently rounded slice
     { sample: 100, gain: 0 },
   ]);
   expect(() => fadeAudioEnvelope(10, 8, 8)).toThrow(/fit/);
+  const sparseEnvelope = [...points];
+  delete sparseEnvelope[2];
   for (const volumeEnvelope of [
+    sparseEnvelope,
     [],
     [
       { sample: 1, gain: 1 },

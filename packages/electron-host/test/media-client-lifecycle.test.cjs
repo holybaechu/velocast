@@ -20,6 +20,7 @@ function fixture({
   electron = false,
   afterOpen,
   onPipeline,
+  onRequest,
 } = {}) {
   const events = [],
     directories = [],
@@ -86,6 +87,7 @@ function fixture({
       child.stdin.write = (line) => {
         const command = JSON.parse(line);
         const operation = JSON.parse(fs.readFileSync(command.request, "utf8"));
+        if (onRequest) return onRequest(command, operation);
         const result = { decoded: true };
         if (cooperative && operation.outputPath) {
           fs.copyFileSync(operation.path, operation.outputPath);
@@ -243,6 +245,26 @@ test("Electron utility callers no longer require a stock Node video worker", asy
   }
 });
 
+test("startup cancellation after readiness joins the host before rejecting", async () => {
+  const f = fixture(),
+    controller = new AbortController(),
+    interruption = new Error("startup interrupted");
+  let session;
+  try {
+    const starting = f.client.createMediaSession({
+      electronBinary: "fake-electron",
+      signal: controller.signal,
+    }).then((result) => (session = result));
+    controller.abort(interruption);
+    await assert.rejects(starting, (error) => error === interruption);
+    assert.ok(f.events.indexOf("remove") > f.events.indexOf("taskkill-exit"));
+    assert.equal(fs.existsSync(f.directories[0]), false);
+  } finally {
+    await session?.close();
+    await f.cleanup();
+  }
+});
+
 test("cleanup awaits the delayed tree killer and asynchronously retries transient profile locks", async () => {
   const f = fixture({ transientLocks: 2 });
   try {
@@ -359,59 +381,75 @@ for (const abort of [false, true])
     },
   );
 
-test(
-  "mid-copy call cancellation retains its abort cause and rolls back only owned output",
-  { timeout: 3000 },
-  async () => {
-    const directory = fs.mkdtempSync(
-      path.join(os.tmpdir(), "velocast-publication-test-"),
-    );
-    const source = path.join(directory, "source.bin"),
-      destination = path.join(directory, "destination.bin"),
-      bytes = Buffer.alloc(1024 * 1024, 0x7f),
-      ownerController = new AbortController(),
-      controller = new AbortController(),
-      interruption = new Error("mid-copy interruption");
-    let copiedBytes = 0;
-    let session;
-    const f = fixture({
-      cooperative: true,
-      onPipeline(writer) {
-        writer.once("drain", () => {
-          copiedBytes = fs.statSync(destination).size;
-          controller.abort(interruption);
-        });
-      },
-    });
-    try {
-      fs.writeFileSync(source, bytes);
-      session = await f.client.createMediaSession({
-        electronBinary: "fake-electron",
-        signal: ownerController.signal,
-      });
-      await assert.rejects(
-        session.run(
-          { kind: "copy", path: source, outputPath: destination },
-          { signal: controller.signal },
+for (const replaced of [false, true])
+  test(
+    `mid-copy call cancellation retains its abort cause and rolls back only owned output${replaced ? " while preserving a replacement symlink" : ""}`,
+    { timeout: 3000, skip: replaced && process.platform === "win32" },
+    async () => {
+      const temporary = fs.realpathSync(os.tmpdir()),
+        directory = fs.mkdtempSync(
+          path.join(temporary, "velocast-publication-test-"),
         ),
-        (error) => {
-          assert.equal(error.code, "ABORT_ERR");
-          assert.equal(error.cause, interruption);
-          return true;
+        ownedDirectory = fs.realpathSync(directory);
+      const source = path.join(directory, "source.bin"),
+        destination = path.join(directory, "destination.bin"),
+        moved = path.join(directory, "moved.bin"),
+        bytes = Buffer.alloc(1024 * 1024, 0x7f),
+        ownerController = new AbortController(),
+        controller = new AbortController(),
+        interruption = new Error("mid-copy interruption");
+      let copiedBytes = 0;
+      let session;
+      const f = fixture({
+        cooperative: true,
+        onPipeline(writer) {
+          writer.once("drain", () => {
+            copiedBytes = fs.statSync(destination).size;
+            if (replaced) {
+              fs.renameSync(destination, moved);
+              fs.symlinkSync(moved, destination);
+            }
+            controller.abort(interruption);
+          });
         },
-      );
-      assert.equal(ownerController.signal.aborted, false);
-      assert.ok(copiedBytes > 0 && copiedBytes < bytes.length);
-      assert.equal(fs.existsSync(destination), false);
-      assert.deepEqual(fs.readFileSync(source), bytes);
-      assert.equal(fs.existsSync(f.directories[0]), false);
-    } finally {
-      await session?.close();
-      await f.cleanup();
-      await fs.promises.rm(directory, { recursive: true, force: true });
-    }
-  },
-);
+      });
+      try {
+        fs.writeFileSync(source, bytes);
+        session = await f.client.createMediaSession({
+          electronBinary: "fake-electron",
+          signal: ownerController.signal,
+        });
+        await assert.rejects(
+          session.run(
+            { kind: "copy", path: source, outputPath: destination },
+            { signal: controller.signal },
+          ),
+          (error) => {
+            assert.equal(error.code, "ABORT_ERR");
+            assert.equal(error.cause, interruption);
+            return true;
+          },
+        );
+        assert.equal(ownerController.signal.aborted, false);
+        assert.ok(copiedBytes > 0 && copiedBytes < bytes.length);
+        if (replaced) {
+          assert.equal(fs.lstatSync(destination).isSymbolicLink(), true);
+          assert.equal(fs.readlinkSync(destination), moved);
+          const partial = fs.readFileSync(moved);
+          assert.ok(partial.length > 0 && partial.length < bytes.length);
+          assert.deepEqual(partial, bytes.subarray(0, partial.length));
+        } else assert.equal(fs.existsSync(destination), false);
+        assert.deepEqual(fs.readFileSync(source), bytes);
+        assert.equal(fs.existsSync(f.directories[0]), false);
+      } finally {
+        await session?.close();
+        await f.cleanup();
+        assert.equal(fs.realpathSync(directory), ownedDirectory);
+        assert.equal(path.dirname(ownedDirectory), temporary);
+        await fs.promises.rm(ownedDirectory, { recursive: true, force: true });
+      }
+    },
+  );
 
 test("publication failure preserves source and an existing destination", async () => {
   const directory = fs.mkdtempSync(
@@ -441,6 +479,73 @@ test("publication failure preserves source and an existing destination", async (
     await fs.promises.rm(directory, { recursive: true, force: true });
   }
 });
+
+for (const removalError of [undefined, "EACCES"])
+  test(`one-shot operations preserve a null abort reason${removalError ? " when cleanup also fails" : ""}`, async () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "velocast-publication-test-"),
+    );
+    const source = path.join(directory, "source.bin"),
+      destination = path.join(directory, "destination.bin"),
+      controller = new AbortController(),
+      f = fixture({
+        cooperative: true,
+        removalError,
+        afterOpen(file) {
+          if (file === destination) controller.abort(null);
+        },
+      });
+    try {
+      fs.writeFileSync(source, "source bytes");
+      await assert.rejects(
+        f.client.runMediaOperation(
+          { kind: "copy", path: source, outputPath: destination },
+          { electronBinary: "fake-electron", signal: controller.signal },
+        ),
+        (error) => {
+          if (removalError) {
+            assert.equal(error.name, "AggregateError");
+            assert.equal(error.cause, null);
+            assert.equal(error.errors[0], null);
+            assert.match(error.errors[1].message, /persistent cleanup denial/);
+          } else assert.equal(error, null);
+          return true;
+        },
+      );
+      assert.equal(fs.existsSync(destination), false);
+      assert.equal(fs.readFileSync(source, "utf8"), "source bytes");
+      assert.equal(fs.existsSync(f.directories[0]), !!removalError);
+    } finally {
+      await f.cleanup();
+      await fs.promises.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+for (const reason of [null, false, 0, ""])
+  test(`response-wait cancellation preserves abort reason ${JSON.stringify(reason)}`, async () => {
+    const controller = new AbortController(),
+      f = fixture({
+        onRequest() {
+          setTimeout(() => controller.abort(reason), 0);
+        },
+      });
+    try {
+      await assert.rejects(
+        f.client.runMediaOperation(
+          { kind: "probe" },
+          { electronBinary: "fake-electron", signal: controller.signal },
+        ),
+        (error) => {
+          assert.equal(error, reason);
+          return true;
+        },
+      );
+      assert.ok(f.events.indexOf("remove") > f.events.indexOf("taskkill-exit"));
+      assert.equal(fs.existsSync(f.directories[0]), false);
+    } finally {
+      await f.cleanup();
+    }
+  });
 
 test("successful cooperative shutdown also yields between delayed profile-unlock retries", async () => {
   const f = fixture({ cooperative: true, transientLocks: 2 });

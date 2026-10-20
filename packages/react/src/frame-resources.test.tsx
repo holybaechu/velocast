@@ -24,12 +24,6 @@ afterEach(async () => {
   document.body.innerHTML = "";
 });
 
-it("exposes an awaited frame-resource hook for imperative media preparation", () => {
-  expect(
-    "useFrameResource" in authoring && typeof authoring.useFrameResource,
-  ).toBe("function");
-});
-
 it("awaits actual resource paint and reruns on repeated frames with new props", async () => {
   const decoded = deferred<void>();
   let started = 0;

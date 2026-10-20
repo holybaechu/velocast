@@ -1,4 +1,4 @@
-// Full CLI acceptance for shared-texture WebCodecs video and native audio, containers, ranges and assembly.
+// Full CLI acceptance for compositor-snapshot WebCodecs video and native audio, containers, ranges and assembly.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -161,8 +161,8 @@ try {
     assert.ok(rms > 0.04 && rms < 0.1, `unexpected audio RMS ${rms}`);
     const telemetry = JSON.parse(await readFile(`${file}.json`, "utf8"));
     assert.equal(telemetry.frames_encoded, frames);
-    assert.equal(telemetry.capture_backend, "electron_shared_texture");
-    assert.equal(telemetry.cpu_readback_frames, 0);
+    assert.equal(telemetry.capture_backend, "electron_compositor_snapshot");
+    assert.equal(telemetry.cpu_readback_frames, frames);
     assert.match(telemetry.encoder_backend, /webcodecs/);
     results.push({ file, codec, audioCodec, frames, audioRms: rms });
     console.log(JSON.stringify(results.at(-1)));

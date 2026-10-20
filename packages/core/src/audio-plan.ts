@@ -50,7 +50,7 @@ export function validateAudioPlan(plan: AudioPlan): AudioPlan {
     true,
   );
   if (!Array.isArray(plan.clips)) throw new TypeError("clips must be an array");
-  const clips = plan.clips.map((clip): AudioClip => {
+  const clips = Array.from(plan.clips, (clip): AudioClip => {
     if (!clip || typeof clip !== "object" || Array.isArray(clip))
       throw new TypeError("clip must be an object");
     if (
@@ -86,7 +86,7 @@ export function validateAudioPlan(plan: AudioPlan): AudioPlan {
         throw new RangeError("volumeEnvelope must contain 1 to 10000 points");
       let previous = -1;
       volumeEnvelope = Object.freeze(
-        clip.volumeEnvelope.map((point: AudioEnvelopePoint) => {
+        Array.from(clip.volumeEnvelope, (point: AudioEnvelopePoint) => {
           if (!point || typeof point !== "object")
             throw new TypeError("envelope point must be an object");
           const sample = integer(point.sample, "envelope sample", true);
@@ -131,6 +131,14 @@ export function sliceAudioPlan(
   endSample: number,
 ): AudioPlan {
   const snapshot = validateAudioPlan(plan);
+  return sliceValidatedAudioPlan(snapshot, startSample, endSample);
+}
+
+function sliceValidatedAudioPlan(
+  snapshot: AudioPlan,
+  startSample: number,
+  endSample: number,
+): AudioPlan {
   integer(startSample, "slice startSample", true);
   integer(endSample, "slice endSample", true);
   if (endSample < startSample || endSample > snapshot.durationSamples)
@@ -169,7 +177,7 @@ export function sliceAudioPlan(
 /** Clip a plan to its own half-open output duration, retaining input clip order. */
 export function normalizeAudioPlan(plan: AudioPlan): AudioPlan {
   const snapshot = validateAudioPlan(plan);
-  return sliceAudioPlan(snapshot, 0, snapshot.durationSamples);
+  return sliceValidatedAudioPlan(snapshot, 0, snapshot.durationSamples);
 }
 
 /** Frame slicing uses independently rounded absolute boundaries, never rounded durations. */

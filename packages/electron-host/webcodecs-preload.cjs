@@ -2,7 +2,7 @@
 
 // This preload belongs only to the trusted empty encoder window. Composition
 // pages remain sandboxed, without a preload or access to these IPC channels.
-const { ipcRenderer, sharedTexture } = require("electron/renderer");
+const { ipcRenderer } = require("electron/renderer");
 const { MediaSession } = require("./media-session.cjs");
 const frameUtility = process.argv.includes("--velocast-frame-utility");
 const utilityOnly =
@@ -30,7 +30,26 @@ ipcRenderer.on(
         );
       else if (method === "open" && session)
         result = await session.open(settings);
-      else if (method === "finish" && session) result = await session.finish();
+      else if (method === "frame" && session) {
+        const decoder = new ImageDecoder({
+          data: settings.png,
+          type: "image/png",
+        });
+        try {
+          const { image } = await decoder.decode({ frameIndex: 0 });
+          result = await session.encode(
+            {
+              getVideoFrame: () => image.clone(),
+              release: () => image.close(),
+            },
+            settings.index,
+          );
+        } finally {
+          decoder.close();
+        }
+        result = { ...result, frame: settings.frame, token: settings.token };
+      } else if (method === "finish" && session)
+        result = await session.finish();
       else throw new Error("webcodecs.invalid_command");
       reply(id, { result });
     } catch (error) {
@@ -39,19 +58,4 @@ ipcRenderer.on(
   },
 );
 
-sharedTexture.setSharedTextureReceiver(
-  async ({ importedSharedTexture }, { id, index }) => {
-    // Acknowledge transfer immediately; Electron's transfer deadline is 1 second.
-    // The separate result acknowledges submission/backpressure, not final drain.
-    if (!session) {
-      importedSharedTexture.release();
-      failure(id, new Error("webcodecs.utility_only"));
-      return;
-    }
-    void session.encode(importedSharedTexture, index).then(
-      (result) => reply(id, { result }),
-      (error) => failure(id, error),
-    );
-  },
-);
 ipcRenderer.send("velocast:webcodecs:ready");

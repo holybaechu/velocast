@@ -24,8 +24,8 @@ for (const key of ["frames_expected", "frames_rendered", "frames_encoded"])
   requireValue(report[key] === 240, `expected ${key}=240`);
 requireValue(report.encoder_backend === "electron_webcodecs_h264", "unexpected encoder backend");
 requireValue(report.conversion_backend === "chromium_webcodecs", "unexpected conversion backend");
-requireValue(report.capture_backend === "electron_shared_texture", "unexpected capture backend");
-requireValue(report.cpu_readback_frames === 0, "incorrect frame readback count");
+requireValue(report.capture_backend === "electron_compositor_snapshot", "unexpected capture backend");
+requireValue(report.cpu_readback_frames === 240, "incorrect frame readback count");
 if (args.get("--compare")) {
   const other = resolve(args.get("--compare"));
   const second = await runMediaOperation({ kind: "probe", path: other, frames: true });

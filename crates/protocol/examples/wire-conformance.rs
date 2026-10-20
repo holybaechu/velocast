@@ -45,7 +45,7 @@ fn sample_events() -> [RendererEvent; 6] {
             effective_concurrency: 3,
             probe_tier: "segments_and_final_deep".into(),
             segment_count: 3,
-            capture_mode: "electron_shared_texture".into(),
+            capture_mode: "electron_compositor_snapshot".into(),
             conversion_mode: "chromium_webcodecs".into(),
             encoder_mode: "webcodecs".into(),
             planned_encoder_backend: "electron_webcodecs_h264".into(),
@@ -53,7 +53,7 @@ fn sample_events() -> [RendererEvent; 6] {
         },
         RendererEvent::FrameRendered {
             frame: 0,
-            capture_backend: Some("electron_shared_texture".into()),
+            capture_backend: Some("electron_compositor_snapshot".into()),
             surface_format_in: None,
         },
         RendererEvent::FrameEncoded {
@@ -66,7 +66,7 @@ fn sample_events() -> [RendererEvent; 6] {
             fallback_used: false,
             fallback_reason: None,
             cpu_readback_frames: 4_294_967_296,
-            capture_backend: Some("electron_shared_texture".into()),
+            capture_backend: Some("electron_compositor_snapshot".into()),
             conversion_backend: Some("chromium_webcodecs".into()),
             encoder_backend: Some("electron_webcodecs_h264".into()),
         },

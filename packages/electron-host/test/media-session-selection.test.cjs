@@ -125,7 +125,7 @@ function fixture(behavior = "ok") {
 }
 test("Mediabunny buffers packets, drains once and releases all frame wrappers", async () => {
   const { session, state, imported } = fixture();
-  assert.equal((await session.open(settings)).cpuReadback, false);
+  await session.open(settings);
   for (let i = 0; i < 6; i++) {
     const result = await session.encode(imported(), i);
     assert.equal(result.frames, i + 1);

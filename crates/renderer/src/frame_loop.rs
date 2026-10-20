@@ -93,7 +93,7 @@ pub(crate) fn render_context_with_input_props(
 pub async fn render_frame_png(
     composition: &CompositionManifest,
     frame: u32,
-    browser: &crate::native_browser::NativeBrowser,
+    browser: &crate::electron_app::ElectronRenderer,
     output: &Path,
     telemetry: &mut crate::telemetry::RenderTelemetry,
     events: &mut crate::events::RendererEventSink,

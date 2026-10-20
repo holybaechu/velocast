@@ -6,11 +6,10 @@ const { spawn } = require("node:child_process");
 const { pipeline } = require("node:stream/promises");
 
 function cleanupFailure(primary, cleanup) {
-  if (!primary) return cleanup;
-  if (primary === cleanup || primary.errors?.includes(cleanup)) return primary;
+  if (primary === cleanup || primary?.errors?.includes(cleanup)) return primary;
   return new AggregateError(
     [primary, cleanup],
-    `${primary.message ?? primary}; cleanup failed: ${cleanup.message ?? cleanup}`,
+    `${primary?.message ?? primary}; cleanup failed: ${cleanup?.message ?? cleanup}`,
     { cause: primary },
   );
 }
@@ -210,29 +209,29 @@ async function createMediaSession(options = {}) {
   const readResult = (file, signal, timeoutMs) =>
     new Promise((resolve, reject) => {
       let timer, poll;
-      const finish = (error, value) => {
+      const finish = (settle, value) => {
         clearTimeout(timer);
         clearInterval(poll);
         signal?.removeEventListener("abort", abort);
-        error ? reject(error) : resolve(value);
+        settle(value);
       };
       const abort = () => {
         kill();
-        finish(signal.reason ?? new Error("media.aborted"));
+        finish(reject, signal.reason);
       };
       const check = () => {
         if (fs.existsSync(file)) {
           try {
-            finish(null, JSON.parse(fs.readFileSync(file, "utf8")));
+            finish(resolve, JSON.parse(fs.readFileSync(file, "utf8")));
           } catch (error) {
-            finish(error);
+            finish(reject, error);
           }
         } else if (exited)
-          finish(exitError ?? new Error(`media.host_exited: ${stderr}`));
+          finish(reject, exitError ?? new Error(`media.host_exited: ${stderr}`));
       };
       timer = setTimeout(() => {
         kill();
-        finish(new Error("media.timeout"));
+        finish(reject, new Error("media.timeout"));
       }, timeoutMs);
       poll = setInterval(check, 10);
       signal?.addEventListener("abort", abort, { once: true });
@@ -287,6 +286,7 @@ async function createMediaSession(options = {}) {
       options.signal,
       options.timeoutMs ?? 30000,
     );
+    options.signal?.throwIfAborted();
     if (!result.ok) throw new Error(result.error);
   } catch (error) {
     try {
@@ -363,7 +363,7 @@ async function createMediaSession(options = {}) {
       }
       if (destinationIdentity) {
         try {
-          const current = fs.statSync(outputPath, { throwIfNoEntry: false });
+          const current = fs.lstatSync(outputPath, { throwIfNoEntry: false });
           if (
             current?.dev === destinationIdentity.dev &&
             current?.ino === destinationIdentity.ino &&
@@ -406,18 +406,22 @@ async function createMediaSession(options = {}) {
 }
 async function runMediaOperation(operation, options = {}) {
   const session = await createMediaSession(options);
-  let result, failure;
+  let result,
+    failure,
+    failed = false;
   try {
     result = await session.runMediaOperation(operation, options);
   } catch (error) {
     failure = error;
+    failed = true;
   }
   try {
     await session.close();
   } catch (cleanup) {
-    failure = cleanupFailure(failure, cleanup);
+    failure = failed ? cleanupFailure(failure, cleanup) : cleanup;
+    failed = true;
   }
-  if (failure) throw failure;
+  if (failed) throw failure;
   return result;
 }
 module.exports = { createMediaSession, runMediaOperation };

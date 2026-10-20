@@ -71,62 +71,29 @@ export function createMediaTimeline(
       style: clip.style ? Object.freeze({ ...clip.style }) : undefined,
     });
   });
+  const toSample = (frame: number) =>
+    framesToSamples(frame, config.fps, sampleRate, "round");
   const audio = validateAudioPlan({
     sampleRate,
-    durationSamples: framesToSamples(
-      config.durationFrames,
-      config.fps,
-      sampleRate,
-      "round",
-    ),
+    durationSamples: toSample(config.durationFrames),
     clips: snapshot.map((clip) => {
       const from = clip.from ?? 0;
-      const startSample = framesToSamples(
-        from,
-        config.fps,
-        sampleRate,
-        "round",
-      );
-      const durationSamples =
-        framesToSamples(
-          from + clip.durationFrames,
-          config.fps,
-          sampleRate,
-          "round",
-        ) - startSample;
+      const startSample = toSample(from);
+      const endSample = toSample(from + clip.durationFrames);
+      const durationSamples = endSample - startSample;
       return {
         source: clip.src,
         startSample,
         durationSamples,
-        sourceStartSample: framesToSamples(
-          clip.trimBeforeFrames ?? 0,
-          config.fps,
-          sampleRate,
-          "round",
-        ),
+        sourceStartSample: toSample(clip.trimBeforeFrames ?? 0),
         gain: clip.muted ? 0 : (clip.gain ?? 1),
         volumeEnvelope:
           clip.volumeEnvelope ??
           fadeAudioEnvelope(
             durationSamples,
-            framesToSamples(
-              from + (clip.fadeInFrames ?? 0),
-              config.fps,
-              sampleRate,
-              "round",
-            ) - startSample,
-            framesToSamples(
-              from + clip.durationFrames,
-              config.fps,
-              sampleRate,
-              "round",
-            ) -
-              framesToSamples(
-                from + clip.durationFrames - (clip.fadeOutFrames ?? 0),
-                config.fps,
-                sampleRate,
-                "round",
-              ),
+            toSample(from + (clip.fadeInFrames ?? 0)) - startSample,
+            endSample -
+              toSample(from + clip.durationFrames - (clip.fadeOutFrames ?? 0)),
           ),
       };
     }),
