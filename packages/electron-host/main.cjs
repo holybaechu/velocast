@@ -274,9 +274,7 @@ async function commandLoad(command) {
       frame: false,
       backgroundColor: "#000000",
       webPreferences: {
-        // Shared mode permits faster compositor pacing; capture still uses
-        // acknowledged PNG snapshots, never unsolicited paint textures.
-        offscreen: software ? true : { useSharedTexture: true },
+        offscreen: true,
         backgroundThrottling: false,
         nodeIntegration: false,
         contextIsolation: true,
@@ -291,13 +289,11 @@ async function commandLoad(command) {
     });
     const contents = window.webContents;
     debug("created browser", `offscreen=${contents.isOffscreen()}`);
-    // A startup paint can already be queued when automatic painting stops.
-    contents.on("paint", (event) => event.texture?.release());
     // Snapshot requests drive capture; disable the unrelated streaming paint queue.
     contents.stopPainting();
     // Avoid the default 60 Hz wait for authoring readiness and forced redraws.
     // This affects compositor scheduling, not encoded frame timestamps.
-    contents.setFrameRate(software ? 240 : 1000);
+    contents.setFrameRate(240);
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
     contents.on("will-attach-webview", (event) => event.preventDefault());
     contents.on("page-title-updated", onTitle);
