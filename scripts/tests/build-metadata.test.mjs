@@ -78,7 +78,7 @@ for (const packageName of ["cli", "core", "remotion-compat"]) {
         ...process.env,
         PATH: [
           dirname(process.execPath),
-          join(pkg, "node_modules/.bin"),
+          join(repository, "packages", packageName, "node_modules/.bin"),
           process.env.PATH,
         ].join(delimiter),
       },

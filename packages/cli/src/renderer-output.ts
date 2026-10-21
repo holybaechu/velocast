@@ -1,7 +1,8 @@
 import { isObjectRecord } from "./internal/validation.js";
 
 const knownRendererErrorPatterns = [
-  /(?:media|encoder|runtime|acceleration|capture|webcodecs|electron|output|worker)\.[a-z_]+(?:: [^\r\n]+|(?=\r?$))/m,
+  /(?:media|encoder|runtime|acceleration|capture|webcodecs|electron|output|worker)\.[a-z_]+: [^\r\n]+/,
+  /(?<=^Error: )(?:output|worker)\.[a-z_]+(?=\r?$)/m,
   /composition [^\r\n]+ was not found/,
   /selector [^\r\n]+ was not found in composition metadata/,
 ];

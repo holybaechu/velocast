@@ -990,6 +990,19 @@ describe("waitForRendererProcess", () => {
     );
   });
 
+  it("preserves unknown errors when a stack filename crosses output chunks", async () => {
+    const child = createRendererProcess();
+    const result = waitForRendererProcess(child);
+
+    child.stderr.write("unknown failure\n    at /app/runtime.js");
+    child.stderr.end(":15:2\n");
+    child.emit("close", 1);
+
+    await expect(result).rejects.toThrow(
+      "unknown failure\n    at /app/runtime.js:15:2",
+    );
+  });
+
   it("keeps known renderer errors that appear before the retained output tail", async () => {
     const child = createRendererProcess();
     const result = waitForRendererProcess(child, {
