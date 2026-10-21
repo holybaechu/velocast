@@ -289,7 +289,8 @@ async function commandLoad(command) {
     });
     const contents = window.webContents;
     debug("created browser", `offscreen=${contents.isOffscreen()}`);
-    // Keep painting active so initialized Canvas2D layers reach compositor snapshots.
+    // Snapshot requests drive capture; disable the unrelated streaming paint queue.
+    contents.stopPainting();
     // Avoid the default 60 Hz wait for authoring readiness and forced redraws.
     // This affects compositor scheduling, not encoded frame timestamps.
     contents.setFrameRate(240);
@@ -487,7 +488,8 @@ async function dispatch(command) {
       window.setContentSize(width, height);
       // Keep the logical viewport pinned while each snapshot forces its own redraw.
       await setSnapshotViewport(width, height);
-      if (software) await captureSnapshot(width, height);
+      // Finish the surface resize before authoring can initialize canvas layers.
+      await captureSnapshot(width, height);
       return {};
     }
     case "paint": {
