@@ -49,7 +49,11 @@
     "test": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/tsconfig.base.json"],
-      "env": ["CHROME_PATH", "VELOCAST_BROWSER_BINARY"],
+      "env": [
+        "CHROME_PATH",
+        "VELOCAST_BROWSER_BINARY",
+        "VELOCAST_PREVIEW_GATE_CLI"
+      ],
       "outputs": []
     }
   }

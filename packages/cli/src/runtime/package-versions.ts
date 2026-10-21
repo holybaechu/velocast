@@ -17,19 +17,18 @@ const officialPackages = [
 export function installedVelocastVersions(): Record<string, string> {
   const versions: Record<string, string> = {};
   const own = findPackageJson(dirname(fileURLToPath(import.meta.url)));
-  if (own) {
-    const metadata = readPackageMetadata(own);
-    if (metadata.name === "velocast" && metadata.version) {
-      versions.velocast = metadata.version;
-    }
-  }
+  if (!own)
+    throw new Error(
+      "package.metadata_invalid: cannot locate velocast/package.json",
+    );
+  versions.velocast = readPackageMetadata(own, "velocast").version;
   const require = createRequire(import.meta.url);
   for (const name of officialPackages.slice(1)) {
     for (const directory of require.resolve.paths(name) ?? []) {
       const packageJson = join(directory, name, "package.json");
       let metadata;
       try {
-        metadata = readPackageMetadata(packageJson);
+        metadata = readPackageMetadata(packageJson, name);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (
@@ -38,11 +37,6 @@ export function installedVelocastVersions(): Record<string, string> {
         )
           continue;
         throw error;
-      }
-      if (metadata.name !== name || !metadata.version) {
-        throw new Error(
-          `package.metadata_invalid: ${packageJson} must identify ${name} and its version`,
-        );
       }
       versions[name] = metadata.version;
       break;
@@ -83,21 +77,23 @@ function findPackageJson(start: string): string | undefined {
   }
 }
 
-function readPackageMetadata(path: string): {
-  name?: string;
-  version?: string;
-} {
+function readPackageMetadata(
+  path: string,
+  name: string,
+): { name: string; version: string } {
   const metadata: unknown = JSON.parse(readFileSync(path, "utf8"));
   if (
     !metadata ||
     typeof metadata !== "object" ||
-    ("name" in metadata && typeof metadata.name !== "string") ||
-    ("version" in metadata && typeof metadata.version !== "string")
+    !("name" in metadata) ||
+    metadata.name !== name ||
+    !("version" in metadata) ||
+    typeof metadata.version !== "string" ||
+    !metadata.version.trim()
   ) {
-    throw new Error(`package.metadata_invalid: ${path}`);
+    throw new Error(
+      `package.metadata_invalid: ${path} must identify ${name} and its version`,
+    );
   }
-  return metadata as {
-    name?: string;
-    version?: string;
-  };
+  return { name, version: metadata.version };
 }

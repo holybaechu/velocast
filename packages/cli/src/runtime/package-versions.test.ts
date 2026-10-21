@@ -1,12 +1,30 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertCompatibleVelocastVersions,
   installedVelocastVersions,
 } from "./package-versions.js";
 import { loadReleaseManifest } from "./release-manifest.js";
+
+const ownMetadata = vi.hoisted(() => ({
+  value: undefined as string | undefined,
+}));
+const cliPackage = fileURLToPath(
+  new URL("../../package.json", import.meta.url),
+);
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return {
+    ...fs,
+    readFileSync: (path: string, encoding: BufferEncoding) =>
+      path === cliPackage && ownMetadata.value !== undefined
+        ? ownMetadata.value
+        : fs.readFileSync(path, encoding),
+  };
+});
 
 const lookupPaths = vi.hoisted(() => [] as string[]);
 vi.mock("node:module", () => ({
@@ -19,6 +37,7 @@ vi.mock("node:module", () => ({
 }));
 
 afterEach(() => {
+  ownMetadata.value = undefined;
   for (const directory of lookupPaths.splice(0))
     rmSync(directory, { recursive: true, force: true });
 });
@@ -62,6 +81,17 @@ describe("official package compatibility", () => {
     expect(() =>
       assertCompatibleVelocastVersions(loadReleaseManifest()),
     ).toThrow("package.version_mismatch");
+  });
+
+  it.each([
+    { name: "velocast" },
+    { name: "velocast", version: "" },
+    { name: "wrong", version: "0.1.0" },
+  ])("rejects malformed CLI metadata (%j)", (metadata) => {
+    ownMetadata.value = JSON.stringify(metadata);
+    expect(() => installedVelocastVersions()).toThrow(
+      "package.metadata_invalid",
+    );
   });
 
   it("allows optional integrations to be absent", () => {

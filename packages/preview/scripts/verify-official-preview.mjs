@@ -15,6 +15,9 @@ const cli = resolve(cliPath);
 const { launchCdpBrowser, stopBrowser, cleanupBrowserResources } = await import(
   pathToFileURL(join(dirname(cli), "media/browser-cdp.js")).href
 );
+const { terminateRendererProcess } = await import(
+  pathToFileURL(join(dirname(cli), "render/renderer-process.js")).href
+);
 const authoredPath = join(projectPath, "dist/index.html");
 const authoredBefore = await readFile(authoredPath);
 const config =
@@ -25,6 +28,8 @@ const config =
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let server;
 let browser;
+let serverStopped;
+let previewStarted = false;
 let primary;
 let serverLog = "";
 try {
@@ -46,10 +51,17 @@ try {
     {
       cwd: projectPath,
       env: { ...process.env, INIT_CWD: projectPath },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
       detached: process.platform !== "win32",
     },
   );
+  serverStopped = new Promise((done) => {
+    server.once("exit", done);
+    server.once("error", done);
+  });
+  server.on("message", (message) => {
+    if (message?.type === "velocast.preview.starting") previewStarted = true;
+  });
   server.stderr.on("data", (chunk) => (serverLog += chunk));
   const ready = await new Promise((resolveReady, reject) => {
     let text = "";
@@ -181,7 +193,33 @@ try {
         await browser?.close();
       },
       async () => {
-        if (server) await stopBrowser(server);
+        if (server) {
+          // Disconnect asks preview to cancel and join detached native work on every OS.
+          if (server.connected) server.disconnect();
+          if (!previewStarted) {
+            let timer;
+            try {
+              await Promise.race([
+                serverStopped,
+                new Promise((done) => {
+                  timer = setTimeout(done, 5000);
+                }),
+              ]);
+            } finally {
+              clearTimeout(timer);
+            }
+            // Before preview starts there is no native work to reap. A stalled
+            // config import can be terminated without interrupting owned cleanup.
+            if (!previewStarted)
+              await terminateRendererProcess(
+                server,
+                { cause: "abort", escalate: () => {} },
+                0,
+              );
+          }
+          await serverStopped;
+          await stopBrowser(server);
+        }
         await writeFile(authoredPath, authoredBefore);
       },
     ],
