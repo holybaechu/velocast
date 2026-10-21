@@ -51,6 +51,12 @@ for (const packageName of ["cli", "core", "remotion-compat"]) {
       join(pkg, "node_modules"),
       "junction",
     );
+    // pnpm's relative package links also need the workspace virtual store.
+    symlinkSync(
+      join(repository, "node_modules"),
+      join(root, "node_modules"),
+      "junction",
+    );
     const source = "export const value = 42;\n";
     writeFileSync(join(pkg, "src/index.ts"), source);
     const dist = join(pkg, "dist");
@@ -84,7 +90,7 @@ for (const packageName of ["cli", "core", "remotion-compat"]) {
       },
       encoding: "utf8",
     });
-    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
     assert.equal(existsSync(join(dist, "removed")), false);
     assert.equal(existsSync(join(dist, "linked")), false);
     assert.equal(readFileSync(join(outside, "keep.txt"), "utf8"), "keep");
