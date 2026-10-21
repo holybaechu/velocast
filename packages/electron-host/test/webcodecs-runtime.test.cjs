@@ -78,6 +78,13 @@ test(
       height: 2160,
     });
     await request({ method: "resize", width: 160, height: 100 });
+    await request({
+      method: "execute",
+      script: `window.__velocastRenderer = ${fs.readFileSync(
+        path.resolve(__dirname, "../../../crates/renderer/browser/runtime.js"),
+        "utf8",
+      )}`,
+    });
     // Draw once before opening the encoder; later no-op seeks must retain the
     // initialized Canvas2D content as well as continuously changing scenes.
     await request({
@@ -125,12 +132,17 @@ test(
     ];
     for (const [index, color] of colors.entries()) {
       const token = `frame-${index}`;
+      const seekScript =
+        index < 2
+          ? ""
+          : `document.getElementById('once')?.remove();document.documentElement.style.background = document.body.style.background = 'rgb(${color.join(",")})';`;
       const frame = await request({
         method: "webcodecs-frame",
         index,
         frame: index,
         token,
-        script: `${index < 2 ? "" : `document.getElementById('once')?.remove();document.documentElement.style.background = document.body.style.background = 'rgb(${color.join(",")})';`}document.title = 'velocast-script-result:${token}:ok:'`,
+        // Match production paint readiness before acknowledging the exact token.
+        script: `window.__velocastRenderer.report('${token}', 'velocast-script-result:', () => window.__velocastRenderer.completeFrame(() => {${seekScript}}, undefined, true))`,
       });
       assert.equal(frame.frame, index);
       assert.equal(frame.token, token);

@@ -289,8 +289,7 @@ async function commandLoad(command) {
     });
     const contents = window.webContents;
     debug("created browser", `offscreen=${contents.isOffscreen()}`);
-    // Snapshot requests drive capture; disable the unrelated streaming paint queue.
-    contents.stopPainting();
+    // Keep painting active so initialized Canvas2D layers reach compositor snapshots.
     // Avoid the default 60 Hz wait for authoring readiness and forced redraws.
     // This affects compositor scheduling, not encoded frame timestamps.
     contents.setFrameRate(240);
