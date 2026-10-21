@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && vite build && node scripts/build-platform.mjs && node ../../scripts/build/copy-release-manifest.mjs preview",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && vite build && node scripts/build-platform.mjs && node ../../scripts/build/copy-release-manifest.mjs preview",
     "check-types": "tsc --noEmit",
     "lint": "eslint src --max-warnings 0",
     "test": "vitest run",

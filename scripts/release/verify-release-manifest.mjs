@@ -1,3 +1,4 @@
+import { requirementsSha256 } from "./hashes.mjs";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -50,7 +51,9 @@ for (const id of requiredTargets) {
   assert(target.runtimeFiles?.length > 0, `${id} runtime inventory is empty`);
   assert(
     !target.runtimeFiles.some((path) =>
-      /(^|\/)(ffmpeg|ffprobe)(\.exe)?$|^(avcodec|avformat|avutil|swresample)-\d+\.dll$|^native-licenses\//i.test(path),
+      /(^|\/)(ffmpeg|ffprobe)(\.exe)?$|^(avcodec|avformat|avutil|swresample)-\d+\.dll$|^native-licenses\//i.test(
+        path,
+      ),
     ),
     `${id} declares a retired external media binary or native dependency`,
   );
@@ -179,24 +182,6 @@ function validateCandidate(id, candidate, target) {
         target.artifact[key] === candidate[key],
         `${id} artifact differs from candidate ${key}`,
       );
-}
-
-function requirementsSha256(requirements) {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        validationStatus: requirements.validationStatus,
-        minimumOsVersion: requirements.minimumOsVersion,
-        minimumGlibcVersion: requirements.minimumGlibcVersion,
-        gpuRequired: requirements.gpuRequired,
-        captureBackends: requirements.captureBackends,
-        conversionBackends: requirements.conversionBackends,
-        encoderBackends: requirements.encoderBackends,
-        softwareFallbackRequired: requirements.softwareFallbackRequired,
-        softwareFallbackImplemented: requirements.softwareFallbackImplemented,
-      }),
-    )
-    .digest("hex");
 }
 
 validateWindowsCandidate(manifest.targets["win32-x64"], windowsCandidate);
@@ -357,7 +342,8 @@ function validateWindowsCandidate(target, candidate) {
   for (const path of target.runtimeFiles)
     assert(
       !/\.(pdb|lib|obj)$/i.test(path) &&
-        (path.startsWith("electron-host/node_modules/") || !/(^|\/)(src|include|cmake|debug)(\/|$)/i.test(path)),
+        (path.startsWith("electron-host/node_modules/") ||
+          !/(^|\/)(src|include|cmake|debug)(\/|$)/i.test(path)),
       `win32-x64 candidate contains a development file: ${path}`,
     );
 }

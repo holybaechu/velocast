@@ -53,7 +53,7 @@ try {
   const url = `http://127.0.0.1:${server.address().port}/`;
   if (dependencyProject === "--cdp") {
     const { launchCdpBrowser } = await import(
-      pathToFileURL(join(repo, "packages/cli/dist/browser-cdp.js")).href
+      pathToFileURL(join(repo, "packages/cli/dist/media/browser-cdp.js")).href
     );
     const cdp = await launchCdpBrowser("about:blank", {
       executable: resolve(browserExecutable),

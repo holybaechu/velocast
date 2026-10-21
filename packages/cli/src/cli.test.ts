@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCli, type CliDependencies } from "./cli.js";
-import { buildCompositionRenderCommandJobFromSource } from "./render-command-job.js";
+import { buildCompositionRenderCommandJobFromSource } from "./render/render-command-job.js";
 
 const config = { entry: "index.html" };
 
@@ -453,7 +453,7 @@ describe("CLI dispatch", () => {
     ).rejects.toBe(error);
   });
 
-  it("dispatches capture probes with their config and options", async () => {
+  it("keeps the legacy probe command callable without loading configuration", async () => {
     const dependencies = commandDependencies();
 
     await runCli(
@@ -470,11 +470,9 @@ describe("CLI dispatch", () => {
       dependencies,
     );
 
-    expect(dependencies.loadConfigFromPath).toHaveBeenCalledExactlyOnceWith(
-      "probe.config.ts",
-    );
+    expect(dependencies.loadConfigFromPath).not.toHaveBeenCalled();
     expect(dependencies.probeCapture).toHaveBeenCalledExactlyOnceWith(
-      config,
+      {},
       "hero",
       expect.objectContaining({
         report: "probe.json",

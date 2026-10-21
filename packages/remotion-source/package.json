@@ -21,7 +21,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node ../../scripts/build/copy-release-manifest.mjs remotion-source",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node ../../scripts/build/copy-release-manifest.mjs remotion-source",
     "check-types": "tsc --noEmit",
     "lint": "eslint src eslint.config.mjs --max-warnings 0",
     "test": "vitest run"

@@ -50,22 +50,16 @@ for (const tarball of tarballs) {
         `${metadata.name} export ${target} is missing`,
       );
     }
+    const entries = readdirSync(root, { recursive: true, withFileTypes: true });
     requireValue(
-      readdirSync(root, { recursive: true }).some((path) =>
-        String(path).endsWith("LICENSE"),
-      ),
+      entries.some((entry) => entry.name.endsWith("LICENSE")),
       `${metadata.name} does not include LICENSE`,
     );
     requireValue(
-      readdirSync(root, { recursive: true }).some((path) =>
-        String(path).endsWith("THIRD_PARTY_NOTICES"),
-      ),
+      entries.some((entry) => entry.name.endsWith("THIRD_PARTY_NOTICES")),
       `${metadata.name} does not include third-party notices`,
     );
-    for (const child of readdirSync(root, {
-      recursive: true,
-      withFileTypes: true,
-    })) {
+    for (const child of entries) {
       if (!child.isFile()) continue;
       const path = join(child.parentPath, child.name);
       const rel = relative(root, path).replaceAll("\\", "/");

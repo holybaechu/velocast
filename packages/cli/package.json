@@ -12,12 +12,12 @@
   "types": "./dist/commands.d.ts",
   "exports": {
     "./source-output": {
-      "types": "./dist/source-output.d.ts",
-      "default": "./dist/source-output.js"
+      "types": "./dist/render/source-output.d.ts",
+      "default": "./dist/render/source-output.js"
     },
     "./preview": {
-      "types": "./dist/preview-server.d.ts",
-      "default": "./dist/preview-server.js"
+      "types": "./dist/preview/preview-server.d.ts",
+      "default": "./dist/preview/preview-server.js"
     },
     ".": {
       "types": "./dist/commands.d.ts",

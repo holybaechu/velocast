@@ -75,9 +75,9 @@ registerReactComposition('audio-hero',{width:160,height:96,fps:${fps},durationFr
   process.exit(0);
 }
 
-const { createInputSnapshot } = await load("packages/cli/dist/input-snapshot.js");
-const { runRenderer } = await load("packages/cli/dist/renderer-process.js");
-const { mixAudioPlanPcm } = await load("packages/cli/dist/audio-pcm-reference.js");
+const { createInputSnapshot } = await load("packages/cli/dist/project/input-snapshot.js");
+const { runRenderer } = await load("packages/cli/dist/render/renderer-process.js");
+const { mixAudioPlanPcm } = await load("packages/cli/dist/media/audio-pcm-reference.js");
 const { sliceAudioPlanByFrames } = await load("packages/core/dist/index.js");
 const sources = new Map([["tone.wav", { sampleRate, channels }]]);
 const reference = (selected) => interleave(mixAudioPlanPcm(selected, sources, 2));

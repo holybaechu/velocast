@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   environmentFor,
-  runCommandForTest,
+  runCommand,
   runWindowsPrivateRc,
   validateManifest,
 } from "../release/windows-private-rc-orchestrator.mjs";
@@ -245,7 +245,7 @@ test("bounds and joins a real Node child process tree", async (t) => {
     script,
     `import{spawn}from"node:child_process";import{writeFileSync}from"node:fs";const child=spawn(process.execPath,["-e",${JSON.stringify(descendant)}],{stdio:"ignore"});writeFileSync(${JSON.stringify(grandchildPid)},String(child.pid));setInterval(()=>{},1000);`,
   );
-  const result = await runCommandForTest({
+  const result = await runCommand({
     argv: [process.execPath, script],
     cwd: root,
     env: process.env,
@@ -273,7 +273,7 @@ test(
     roots.push(root);
     const command = join(root, "package manager.cmd");
     writeFileSync(command, "@echo off\r\necho shim:%~1\r\n");
-    const result = await runCommandForTest({
+    const result = await runCommand({
       argv: [command, "value with spaces"],
       cwd: root,
       env: process.env,

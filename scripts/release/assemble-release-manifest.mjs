@@ -1,14 +1,6 @@
-import { createHash } from "node:crypto";
+import { sha256File, requirementsSha256 } from "./hashes.mjs";
 import { execFileSync } from "node:child_process";
-import {
-  closeSync,
-  existsSync,
-  openSync,
-  readFileSync,
-  readSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import {
   basename,
   dirname,
@@ -87,10 +79,7 @@ for (const id of selectedIds) {
     ],
     { cwd: repoRoot, stdio: "inherit" },
   );
-  const consumerPath = join(
-    evidenceDir,
-    `${id}-consumer-validation.json`,
-  );
+  const consumerPath = join(evidenceDir, `${id}-consumer-validation.json`);
   const consumer = JSON.parse(readFileSync(consumerPath, "utf8"));
   const requiredScenarios = [
     "scriptsDisabled",
@@ -169,9 +158,7 @@ for (const id of selectedIds) {
       "root",
     ]) {
       if (validated[key] !== evidence[key])
-        throw new Error(
-          `release.validated_candidate_mismatch: ${id}/${key}`,
-        );
+        throw new Error(`release.validated_candidate_mismatch: ${id}/${key}`);
     }
     if (validated.signed !== (evidence.unsigned === false))
       throw new Error(`release.validated_candidate_mismatch: ${id}/signed`);
@@ -234,9 +221,7 @@ function selectTargets(values, ids) {
     ...new Set(values.flatMap((value) => value.split(",")).filter(Boolean)),
   ].sort();
   if (!selected.length || selected.some((id) => !ids.includes(id)))
-    throw new Error(
-      `release.target_invalid: select from ${ids.join(", ")}`,
-    );
+    throw new Error(`release.target_invalid: select from ${ids.join(", ")}`);
   return selected;
 }
 
@@ -258,21 +243,6 @@ function assertOutsideRepo(path) {
   }
 }
 
-function sha256File(path) {
-  const hash = createHash("sha256");
-  const handle = openSync(path, "r");
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
-  try {
-    let bytesRead;
-    while ((bytesRead = readSync(handle, buffer, 0, buffer.length, null)) > 0) {
-      hash.update(buffer.subarray(0, bytesRead));
-    }
-  } finally {
-    closeSync(handle);
-  }
-  return hash.digest("hex");
-}
-
 function validateHostRequirements(id, requirements) {
   if (
     requirements?.validationStatus !== "validated" ||
@@ -287,22 +257,4 @@ function validateHostRequirements(id, requirements) {
   ) {
     throw new Error(`release.host_requirements_missing: ${id}`);
   }
-}
-
-function requirementsSha256(requirements) {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        validationStatus: requirements.validationStatus,
-        minimumOsVersion: requirements.minimumOsVersion,
-        minimumGlibcVersion: requirements.minimumGlibcVersion,
-        gpuRequired: requirements.gpuRequired,
-        captureBackends: requirements.captureBackends,
-        conversionBackends: requirements.conversionBackends,
-        encoderBackends: requirements.encoderBackends,
-        softwareFallbackRequired: requirements.softwareFallbackRequired,
-        softwareFallbackImplemented: requirements.softwareFallbackImplemented,
-      }),
-    )
-    .digest("hex");
 }

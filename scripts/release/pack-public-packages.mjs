@@ -1,10 +1,7 @@
-import { createHash } from "node:crypto";
+import { sha256File } from "./hashes.mjs";
 import {
-  closeSync,
   mkdirSync,
   mkdtempSync,
-  openSync,
-  readSync,
   readdirSync,
   rmSync,
   statSync,
@@ -106,19 +103,4 @@ function sortJson(value) {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => [key, sortJson(child)]),
   );
-}
-
-function sha256File(path) {
-  const hash = createHash("sha256");
-  const handle = openSync(path, "r");
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
-  try {
-    let bytesRead;
-    while ((bytesRead = readSync(handle, buffer, 0, buffer.length, null)) > 0) {
-      hash.update(buffer.subarray(0, bytesRead));
-    }
-  } finally {
-    closeSync(handle);
-  }
-  return hash.digest("hex");
 }

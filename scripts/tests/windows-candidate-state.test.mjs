@@ -96,6 +96,7 @@ test("sync and verifier preserve an accepted private manifest on a disposable fi
   for (const path of [
     "scripts/release/sync-windows-runtime-declarations.mjs",
     "scripts/release/verify-release-manifest.mjs",
+    "scripts/release/hashes.mjs",
     "scripts/release/windows-candidate-state.mjs",
     "release/velocast-release.json",
     "release/windows-runtime-candidate.json",

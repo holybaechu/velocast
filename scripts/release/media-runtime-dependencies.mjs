@@ -41,8 +41,7 @@ export function stageMediaDependencies({ host, output, mediabunny }) {
   host = resolve(host);
   output = resolve(output);
   const modules = join(output, "node_modules");
-  const hoisted = new Map();
-  const visited = new Set();
+  const hoisted = new Set();
   const stagedSources = new Map();
   const packages = [];
   const stage = (name, source, parent = output) => {
@@ -52,7 +51,7 @@ export function stageMediaDependencies({ host, output, mediabunny }) {
     );
     if (manifest.name !== name)
       throw new Error(`runtime.package_identity: ${name}`);
-    const previous = hoisted.get(name);
+    const previous = hoisted.has(name);
     // An intervening nested dependency may shadow the root's version.
     for (
       let directory = parent;
@@ -69,10 +68,9 @@ export function stageMediaDependencies({ host, output, mediabunny }) {
     const destination = previous
       ? join(parent, "node_modules", name)
       : join(modules, name);
-    if (visited.has(destination)) return;
-    visited.add(destination);
+    if (stagedSources.has(destination)) return;
     stagedSources.set(destination, source);
-    if (!previous) hoisted.set(name, { source, destination });
+    hoisted.add(name);
     mkdirSync(dirname(destination), { recursive: true });
     cpSync(source, destination, {
       recursive: true,

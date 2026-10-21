@@ -4,7 +4,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { createPreviewServer } from "../../packages/cli/dist/preview-server.js";
+import { createPreviewServer } from "../../packages/cli/dist/preview/preview-server.js";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const project = await mkdtemp(join(tmpdir(), "velocast-competitive-preview-"));

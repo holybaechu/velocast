@@ -130,7 +130,7 @@ const installedPreview = resolve(
 JSON.parse(await readFile(installedPreview, "utf8"));
 const publicServer = await import(
   new URL(
-    "./node_modules/velocast/dist/preview-server.js",
+    "./node_modules/velocast/dist/preview/preview-server.js",
     `file:///${project.replaceAll("\\", "/")}/`,
   ).href
 );

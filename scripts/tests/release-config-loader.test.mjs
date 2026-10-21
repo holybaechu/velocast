@@ -8,7 +8,7 @@ import test from "node:test";
 import { URL } from "node:url";
 
 const loader = new URL(
-  "../../packages/cli/dist/config-loader.js",
+  "../../packages/cli/dist/project/config-loader.js",
   import.meta.url,
 ).href;
 

@@ -1,13 +1,10 @@
-import { createHash } from "node:crypto";
+import { sha256File } from "./hashes.mjs";
 import {
   cpSync,
-  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
-  openSync,
   readFileSync,
-  readSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -246,21 +243,6 @@ function assertOutsideRepo(path) {
       "artifact.output_invalid: release artifacts must be outside tracked source",
     );
   }
-}
-
-function sha256File(path) {
-  const hash = createHash("sha256");
-  const handle = openSync(path, "r");
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
-  try {
-    let bytesRead;
-    while ((bytesRead = readSync(handle, buffer, 0, buffer.length, null)) > 0) {
-      hash.update(buffer.subarray(0, bytesRead));
-    }
-  } finally {
-    closeSync(handle);
-  }
-  return hash.digest("hex");
 }
 
 function verifyExecutableArchitecture(path, expected) {

@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -10,10 +11,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Config } from "@velocast/core";
-import { afterEach, describe, expect, it } from "vitest";
-import { RendererRuntimeResolver } from "./renderer-binary.js";
-import { RendererRuntimeAcquisition } from "./renderer-runtime.js";
-import { loadConfigFromPath } from "./config-loader.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { RendererRuntimeResolver } from "./runtime/renderer-binary.js";
+import { RendererRuntimeAcquisition } from "./runtime/renderer-runtime.js";
+import { loadConfigFromPath } from "./project/config-loader.js";
 import {
   doctorCommand,
   type DoctorProbeInput,
@@ -342,7 +343,7 @@ describe("command entrypoint exports", () => {
 });
 
 describe("executeRendererJob", () => {
-  it("uses config-file-relative snapshot paths for probes and closes after success", async () => {
+  it("uses config-file-relative snapshot paths for renders and closes after success", async () => {
     const project = mkTempDir("velocast-snapshot-config-");
     const invocation = mkTempDir("velocast-snapshot-invocation-");
     mkdirSync(join(project, "dist"));
@@ -359,10 +360,11 @@ describe("executeRendererJob", () => {
     let url = "";
     await executeRendererJob(
       {
-        kind: "capture-probe",
+        kind: "composition",
         config,
         compositionId: "hero",
-        options: { report: "probe.json" },
+        output: "out.mp4",
+        options: { report: "render.json" },
       },
       {
         pathOptions: { cwd: invocation, env: {} },
@@ -379,7 +381,7 @@ describe("executeRendererJob", () => {
           expect(await (await fetch(url)).text()).toBe("project entry");
           expect(job.render_session.sourceVersion).toMatch(/^[a-f0-9]{64}$/);
           expect(job.input_props_path).toBeUndefined();
-          expect(job.report_path).toBe(join(invocation, "probe.json"));
+          expect(job.report_path).toBe(join(invocation, "render.json"));
         },
       },
     );
@@ -404,17 +406,6 @@ describe("executeRendererJob", () => {
           },
           compositionId: "hero",
           output: "out.mp4",
-        },
-        dependencies,
-      ),
-    ).rejects.toThrow("snapshot.requires_local_entry");
-    await expect(
-      executeRendererJob(
-        {
-          kind: "capture-probe",
-          config: { renderer: { snapshotRoot: "dist" } },
-          compositionId: "hero",
-          options: { report: "report.json" },
         },
         dependencies,
       ),
@@ -709,7 +700,7 @@ describe("executeRendererJob", () => {
     expect(received).toBe(controller.signal);
   });
 
-  it("routes composition, probe, and URL requests through one renderer pipeline", async () => {
+  it("routes composition and URL requests through one renderer pipeline", async () => {
     const cwd = mkTempDir("velocast-execute-renderer-job-");
     const calls: Array<{ binary: string; job: Record<string, unknown> }> = [];
     const dependencies = {
@@ -739,15 +730,6 @@ describe("executeRendererJob", () => {
     );
     await executeRendererJob(
       {
-        kind: "capture-probe",
-        config: { serve: { url: "http://127.0.0.1:4545" } },
-        compositionId: "product-hero",
-        options: { report: "reports/probe.json" },
-      },
-      dependencies,
-    );
-    await executeRendererJob(
-      {
         kind: "url",
         config: { renderer: { binary: "url-renderer", acceleration: "off" } },
         url: "http://127.0.0.1:4545/page",
@@ -757,127 +739,65 @@ describe("executeRendererJob", () => {
       dependencies,
     );
 
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(2);
     expect(calls.map((call) => call.binary)).toEqual([
       "resolved:configured-renderer",
-      "resolved:auto",
       "resolved:url-renderer",
     ]);
-    expect(calls.map((call) => call.job.mode)).toEqual([
-      "composition",
-      "composition",
-      "url",
-    ]);
+    expect(calls.map((call) => call.job.mode)).toEqual(["composition", "url"]);
     expect(calls[0]?.job).toMatchObject({
       output: join(cwd, "renders/composition.mp4"),
       report_path: join(cwd, "reports/composition.json"),
     });
     expect(calls[1]?.job).toMatchObject({
-      capture_probe: "accelerated_paint",
-      output: join(cwd, ".velocast/tmp/capture-probe-unused.mp4"),
-      report_path: join(cwd, "reports/probe.json"),
-    });
-    expect(calls[2]?.job).toMatchObject({
       serve_url: "http://127.0.0.1:4545/page",
       selector: "#hero",
       output: join(cwd, "renders/url.mp4"),
     });
     expect(existsSync(join(cwd, "renders"))).toBe(true);
     expect(existsSync(join(cwd, "reports"))).toBe(true);
-    expect(existsSync(join(cwd, ".velocast/tmp"))).toBe(true);
+    expect(existsSync(join(cwd, ".velocast/tmp"))).toBe(false);
   });
 
-  it("reports missing probe report when direct probe requests omit options", async () => {
+  it("rejects direct legacy probe requests before loading source or acquiring resources", async () => {
     await expect(
       executeRendererJob({
         kind: "capture-probe",
         config: { serve: { url: "http://127.0.0.1:4545" } },
         compositionId: "product-hero",
       }),
-    ).rejects.toThrow("--report is required for probe-capture");
+    ).rejects.toThrow("capture.probe_retired");
   });
 });
 
 describe("probeCapture", () => {
-  it("builds capture-probe jobs without requiring a real output", async () => {
-    const jobs: unknown[] = [];
-    const cwd = mkTempDir("velocast-probe-capture-paths-");
-    await probeCapture(
-      { serve: { url: "http://127.0.0.1:4545" } },
-      "product-hero",
-      { report: "renders/linux-capture-probe.report.json" },
-      {
-        pathOptions: { cwd, env: {} },
-        runRenderer: async (_binary, job) => {
-          expect(existsSync(join(cwd, ".velocast/tmp"))).toBe(true);
-          expect(existsSync(join(cwd, "renders"))).toBe(true);
-          jobs.push(job);
-        },
-        runtimeResolver: fakeRuntimeResolver(),
-        resolveRendererBinary: () => "velocast-renderer",
-      },
-    );
-
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0]).toMatchObject({
-      mode: "composition",
-      composition_id: "product-hero",
-      capture_probe: "accelerated_paint",
-      acceleration: "required",
-      output: join(cwd, ".velocast/tmp/capture-probe-unused.mp4"),
-      report_path: join(cwd, "renders/linux-capture-probe.report.json"),
-    });
-  });
-
-  it("builds capture-probe jobs from entry-backed configs", async () => {
-    const jobs: unknown[] = [];
-    const cwd = mkTempDir("velocast-probe-entry-");
-    const entry = join(cwd, "index.html");
-    writeFileSync(entry, "<!doctype html>");
-
-    await probeCapture(
-      { entry: "index.html" },
-      "product-hero",
-      { report: "reports/capture-probe.report.json" },
-      {
-        pathOptions: { cwd, env: {} },
-        runRenderer: async (_binary, job) => {
-          jobs.push(job);
-        },
-        runtimeResolver: fakeRuntimeResolver(),
-        resolveRendererBinary: () => "velocast-renderer",
-      },
-    );
-
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0]).toMatchObject({
-      mode: "composition",
-      composition_id: "product-hero",
-      serve_url: pathToFileURL(entry).href,
-      capture_probe: "accelerated_paint",
-      report_path: join(cwd, "reports/capture-probe.report.json"),
-    });
-  });
-
-  it("keeps missing and blank report errors distinct", async () => {
-    await expect(
-      probeCapture(
-        { serve: { url: "http://127.0.0.1:4545" } },
-        "product-hero",
-        {},
-      ),
-    ).rejects.toThrow("--report is required for probe-capture");
-
-    await expect(
-      probeCapture(
-        { serve: { url: "http://127.0.0.1:4545" } },
-        "product-hero",
-        {
-          report: "",
-        },
-      ),
-    ).rejects.toThrow("--report must be a non-empty string");
-  });
+  it.each([
+    {},
+    { report: "" },
+    { report: "report.json", inputPropsFile: "missing.json" },
+  ])(
+    "rejects legacy calls without resolving inputs or launching work (%j)",
+    async (options) => {
+      const acquire = vi.fn();
+      const runRenderer = vi.fn();
+      const cwd = mkTempDir("velocast-retired-probe-");
+      await expect(
+        probeCapture(
+          { entry: "missing.html", serve: { command: "must not start" } },
+          "hero",
+          options,
+          {
+            pathOptions: { cwd, env: {} },
+            runtimeAcquisition: { acquire },
+            runRenderer,
+          },
+        ),
+      ).rejects.toThrow("capture.probe_retired: use render --report");
+      expect(acquire).not.toHaveBeenCalled();
+      expect(runRenderer).not.toHaveBeenCalled();
+      expect(readdirSync(cwd)).toEqual([]);
+    },
+  );
 });
 
 describe("renderComposition", () => {

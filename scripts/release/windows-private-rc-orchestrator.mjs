@@ -354,7 +354,7 @@ export function environmentFor(manifest, step, hostEnv) {
   return env;
 }
 
-function runCommand(input) {
+export function runCommand(input) {
   return new Promise((resolveRun, reject) => {
     const batch =
       process.platform === "win32" && /\.(?:cmd|bat)$/i.test(input.argv[0]);
@@ -443,12 +443,6 @@ function runCommand(input) {
       return stopping;
     }
   });
-}
-
-/** Test seam for bounded real child-process termination; production orchestration
- * uses the same runner when no injected runner is supplied. */
-export function runCommandForTest(input) {
-  return runCommand(input);
 }
 
 async function terminateProcessTree(child) {

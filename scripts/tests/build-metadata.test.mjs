@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -18,7 +19,15 @@ import { fileURLToPath } from "node:url";
 
 const repository = fileURLToPath(new URL("../../", import.meta.url));
 
-for (const packageName of ["cli", "core", "remotion-compat"]) {
+for (const packageName of [
+  "cli",
+  "core",
+  "remotion-compat",
+  "react",
+  "remotion-source",
+  "gsap",
+  "preview",
+]) {
   test(`${packageName} build removes stale outputs and recreates code and release metadata`, (t) => {
     const root = realpathSync(
       mkdtempSync(join(tmpdir(), "velocast-build-metadata-")),
@@ -46,11 +55,22 @@ for (const packageName of ["cli", "core", "remotion-compat"]) {
         join(repository, "packages", packageName, file),
         join(pkg, file),
       );
-    symlinkSync(
-      join(repository, "packages", packageName, "node_modules"),
-      join(pkg, "node_modules"),
-      "junction",
+    const dependencies = join(
+      repository,
+      "packages",
+      packageName,
+      "node_modules",
     );
+    mkdirSync(join(pkg, "node_modules"));
+    // Keep Vite's temporary config bundle inside the fixture, not the real checkout.
+    for (const name of readdirSync(dependencies).filter(
+      (name) => !name.startsWith("."),
+    ))
+      symlinkSync(
+        join(dependencies, name),
+        join(pkg, "node_modules", name),
+        "junction",
+      );
     // pnpm's relative package links also need the workspace virtual store.
     symlinkSync(
       join(repository, "node_modules"),
@@ -59,6 +79,46 @@ for (const packageName of ["cli", "core", "remotion-compat"]) {
     );
     const source = "export const value = 42;\n";
     writeFileSync(join(pkg, "src/index.ts"), source);
+    if (packageName === "gsap") {
+      copyFileSync(
+        join(repository, "packages/gsap/vite.config.ts"),
+        join(pkg, "vite.config.ts"),
+      );
+      writeFileSync(join(pkg, "src/global.ts"), source);
+    }
+    if (packageName === "preview") {
+      for (const file of [
+        "vite.config.mjs",
+        "scripts/build-platform.mjs",
+        "src/browser-runtime.d.ts",
+      ]) {
+        mkdirSync(dirname(join(pkg, file)), { recursive: true });
+        copyFileSync(
+          join(repository, "packages/preview", file),
+          join(pkg, file),
+        );
+      }
+      for (const name of [
+        "bridge-entry",
+        "child-bridge",
+        "rpc-wire",
+        "element-inspection",
+      ])
+        writeFileSync(join(pkg, "src", `${name}.ts`), source);
+      mkdirSync(join(pkg, "app"));
+      writeFileSync(
+        join(pkg, "app/index.html"),
+        '<script type="module" src="/main.ts"></script>',
+      );
+      writeFileSync(join(pkg, "app/main.ts"), source);
+      for (const file of [
+        "crates/renderer/browser/runtime.js",
+        "contracts/renderer-protocol.json",
+      ]) {
+        mkdirSync(dirname(join(root, file)), { recursive: true });
+        copyFileSync(join(repository, file), join(root, file));
+      }
+    }
     const dist = join(pkg, "dist");
     mkdirSync(join(dist, "removed"), { recursive: true });
     writeFileSync(join(dist, "removed/module.js"), "obsolete output");

@@ -1,6 +1,5 @@
 //! Isolated Electron control transport; image bytes stay inside Electron.
 use crate::browser_protocol::{self, BrowserDriver};
-use crate::browser_surface::BrowserSurfaceMode;
 use crate::cancellation::RenderCancellation;
 use crate::frame_loop::{seek_frame_script, SelectorMeasurement};
 use anyhow::{ensure, Context};
@@ -16,6 +15,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 use velocast_protocol::{AudioPlan, CompositionManifest, RenderJob, RenderSession};
+use velocast_renderer_policy::browser_surface::BrowserSurfaceMode;
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 #[cfg(all(windows, test))]

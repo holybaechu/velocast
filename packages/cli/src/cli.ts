@@ -1,29 +1,29 @@
 import { cac } from "cac";
 import type { Command } from "cac";
-import { loadConfigFromPath } from "./config-loader.js";
-import { initCommand } from "./init-command.js";
-import { auditCommand, type AgentAuditOptions } from "./agent-audit.js";
+import { loadConfigFromPath } from "./project/config-loader.js";
+import { initCommand } from "./authoring/init-command.js";
+import { auditCommand, type AgentAuditOptions } from "./authoring/agent-audit.js";
 import {
   analyzeMusicCommand,
   type AnalyzeMusicCommandOptions,
-} from "./music-analysis.js";
-import { installSkillCommand } from "./skill-install.js";
-import { templatesCommand } from "./template-catalog.js";
+} from "./authoring/music-analysis.js";
+import { installSkillCommand } from "./authoring/skill-install.js";
+import { templatesCommand } from "./authoring/template-catalog.js";
 import {
   importTranscriptCommand,
   type TranscriptImportOptions,
-} from "./timestamps.js";
+} from "./authoring/timestamps.js";
 import {
   previewCommand,
   type PreviewCommandOptions,
-} from "./preview-command.js";
+} from "./preview/preview-command.js";
 import {
   failedOutputResult,
   OutputFailureError,
   printOutputResult,
-} from "./output-result.js";
-import { resolveCliOutputPath } from "./paths.js";
-import type { RustRenderJob } from "./render-command-job.js";
+} from "./render/output-result.js";
+import { resolveCliOutputPath } from "./project/paths.js";
+import type { RustRenderJob } from "./render/render-command-job.js";
 import {
   doctorCommand,
   inspectCompositions,
@@ -389,9 +389,8 @@ export async function runCli(
       "JSON file containing composition input props",
     )
     .action(async (compositionId: string, options: ProbeOptions) => {
-      const config = await loadConfig(options.config);
       await (dependencies.probeCapture ?? probeCapture)(
-        config,
+        {},
         compositionId,
         options,
       );

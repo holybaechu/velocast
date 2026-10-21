@@ -1,7 +1,6 @@
 mod args;
 mod audio_pipeline;
 mod browser_protocol;
-mod browser_surface;
 mod cancellation;
 mod capabilities;
 mod electron_app;
@@ -25,6 +24,7 @@ use events::{RendererEvent, RendererEventSink};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use velocast_protocol::{CompositionManifest, RenderJob, RenderJobKind, RenderOperation};
+use velocast_renderer_policy::browser_surface::BrowserSurfaceMode;
 
 fn main() -> anyhow::Result<()> {
     tokio::runtime::Builder::new_current_thread()
@@ -186,11 +186,11 @@ async fn run_coordinator_render(
     )
     .await
 }
-fn initial_surface_for_job(job: &RenderJob) -> browser_surface::BrowserSurfaceMode {
+fn initial_surface_for_job(job: &RenderJob) -> BrowserSurfaceMode {
     if job.operation == RenderOperation::Render {
-        browser_surface::BrowserSurfaceMode::WebCodecs
+        BrowserSurfaceMode::WebCodecs
     } else {
-        browser_surface::BrowserSurfaceMode::Software
+        BrowserSurfaceMode::Software
     }
 }
 
@@ -200,7 +200,7 @@ async fn run_coordinator_render_with_mode(
     event_sink: &mut RendererEventSink,
     resources: &mut render_job::RenderJobResources,
     output_context: &mut output_result::OutputContext,
-    mode: browser_surface::BrowserSurfaceMode,
+    mode: BrowserSurfaceMode,
 ) -> anyhow::Result<()> {
     if job.operation == RenderOperation::Render {
         webcodecs::validate_job(job)?;
@@ -664,7 +664,7 @@ mod tests {
     }
     #[test]
     fn video_requires_compositor_and_diagnostics_use_software() {
-        use browser_surface::BrowserSurfaceMode::{Software, WebCodecs};
+        use velocast_renderer_policy::browser_surface::BrowserSurfaceMode::{Software, WebCodecs};
         let mut job: RenderJob = serde_json::from_value(serde_json::json!({
             "mode": "composition", "serve_url": "http://localhost",
             "output": "movie.mp4", "codec": "h264"
