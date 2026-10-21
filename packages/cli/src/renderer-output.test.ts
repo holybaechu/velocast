@@ -6,12 +6,23 @@ import {
 } from "./renderer-output.js";
 
 describe("extractKnownRendererError", () => {
-  it("extracts exact accelerated paint timeout messages from renderer output", () => {
+  it.each([
+    "output.frame_count_mismatch: actual encoded packets differ from schedule",
+    "output.timestamps_not_rebased",
+    "worker.encoder_mismatch",
+    "acceleration.required_unavailable: WebCodecs cannot guarantee hardware encoding",
+  ])("preserves current renderer validation errors: %s", (message) => {
+    expect(
+      extractKnownRendererError(`INFO renderer\nError: ${message}\n`),
+    ).toBe(message);
+  });
+
+  it("does not mistake stack frame filenames for renderer error codes", () => {
     expect(
       extractKnownRendererError(
-        "2026-05-15T12:00:00Z INFO renderer\nError: frame 0 timed out waiting for accelerated paint\n",
+        "unexpected failure\n    at /app/runtime.js:15:2\n",
       ),
-    ).toBe("frame 0 timed out waiting for accelerated paint");
+    ).toBeUndefined();
   });
 
   it("extracts exact media host exit messages from renderer output", () => {
@@ -28,106 +39,6 @@ describe("extractKnownRendererError", () => {
         "INFO muxing segments\nError: media.invalid_container: invalid data found when reading segment\n",
       ),
     ).toBe("media.invalid_container: invalid data found when reading segment");
-  });
-
-  it("extracts required GPU benchmark validation failures from renderer output", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: required GPU benchmark expected positive total_wall_ms, got 0\n",
-      ),
-    ).toBe("required GPU benchmark expected positive total_wall_ms, got 0");
-  });
-
-  it("extracts segment worker compatibility validation failures from renderer output", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: worker_backend.incompatible: worker 1 used cpu_readback\n",
-      ),
-    ).toBe("worker_backend.incompatible: worker 1 used cpu_readback");
-  });
-
-  it("extracts remuxed output validation failures from renderer output", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: remuxed output contains 238 frame(s), expected 240\n",
-      ),
-    ).toBe("remuxed output contains 238 frame(s), expected 240");
-  });
-
-  it("extracts selected frame hash count validation failures", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: decoded selected frame hash count 16 did not match selected frame count 17 in renders/out.mp4\n",
-      ),
-    ).toBe(
-      "decoded selected frame hash count 16 did not match selected frame count 17 in renders/out.mp4",
-    );
-  });
-
-  it("extracts selected frame hash missing-frame validation failures", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: decoded selected frame hash probe missing frame 172 in renders/out.mp4\n",
-      ),
-    ).toBe(
-      "decoded selected frame hash probe missing frame 172 in renders/out.mp4",
-    );
-  });
-
-  it("extracts boundary frame hash probe count failures", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: decoded boundary frame hash probe returned 16 frame(s), expected 17 in renders/out.mp4\n",
-      ),
-    ).toBe(
-      "decoded boundary frame hash probe returned 16 frame(s), expected 17 in renders/out.mp4",
-    );
-  });
-
-  it("extracts selected frame hash probe count failures", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: decoded selected frame hash probe returned 16 frame(s), expected 17 in renders/out.mp4\n",
-      ),
-    ).toBe(
-      "decoded selected frame hash probe returned 16 frame(s), expected 17 in renders/out.mp4",
-    );
-  });
-
-  it("extracts adjacent duplicate frame hash validation failures", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: adjacent duplicate decoded segment-boundary frame at index 120 in renders/out.mp4\n",
-      ),
-    ).toBe(
-      "adjacent duplicate decoded segment-boundary frame at index 120 in renders/out.mp4",
-    );
-  });
-
-  it("extracts frame zero preview repeat validation failures", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: frame 0 matched preview frame 72 in renders/out.mp4\n",
-      ),
-    ).toBe("frame 0 matched preview frame 72 in renders/out.mp4");
-  });
-
-  it("extracts watched frame range repeat validation failures", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: frames 168-176 repeated decoded frame hash: frame 176 matched frame 168 in renders/out.mp4\n",
-      ),
-    ).toBe(
-      "frames 168-176 repeated decoded frame hash: frame 176 matched frame 168 in renders/out.mp4",
-    );
-  });
-
-  it("extracts watched frame preview repeat validation failures", () => {
-    expect(
-      extractKnownRendererError(
-        "INFO renderer\nError: frame 168 matched frame 0 in renders/out.mp4\n",
-      ),
-    ).toBe("frame 168 matched frame 0 in renders/out.mp4");
   });
 
   it("extracts webcodecs encoder initialization failures from renderer output", () => {
@@ -171,60 +82,6 @@ describe("extractKnownRendererError", () => {
     );
   });
 
-  it("preserves required acceleration unavailable backend cause", () => {
-    expect(
-      extractKnownRendererError(
-        [
-          "INFO renderer starting",
-          "Error: accelerated rendering is required, but no compatible GPU backend is available on this platform.",
-          "Backend cause: acceleration.required_unavailable: no required GPU backend is available (webcodecs unavailable: platform.device_unavailable: WebCodecs codec unavailable)",
-          "",
-        ].join("\n"),
-      ),
-    ).toBe(
-      [
-        "accelerated rendering is required, but no compatible GPU backend is available on this platform.",
-        "Backend cause: acceleration.required_unavailable: no required GPU backend is available (webcodecs unavailable: platform.device_unavailable: WebCodecs codec unavailable)",
-      ].join("\n"),
-    );
-  });
-
-  it("preserves required acceleration path fallback guidance", () => {
-    expect(
-      extractKnownRendererError(
-        [
-          "INFO renderer starting",
-          "Error: accelerated rendering is required, but it is not available for this render path: streamed BGRA worker assembly is enabled.",
-          'Set acceleration to "auto" to allow software fallback, or disable the incompatible option.',
-          "",
-        ].join("\n"),
-      ),
-    ).toBe(
-      [
-        "accelerated rendering is required, but it is not available for this render path: streamed BGRA worker assembly is enabled.",
-        'Set acceleration to "auto" to allow software fallback, or disable the incompatible option.',
-      ].join("\n"),
-    );
-  });
-
-  it("preserves required acceleration pixel-format guidance", () => {
-    expect(
-      extractKnownRendererError(
-        [
-          "INFO renderer starting",
-          "Error: accelerated rendering currently supports nv12/yuv420p output, but yuv444p was requested.",
-          "Use --pixel-format nv12, or use --acceleration off for the software BGRA path.",
-          "",
-        ].join("\n"),
-      ),
-    ).toBe(
-      [
-        "accelerated rendering currently supports nv12/yuv420p output, but yuv444p was requested.",
-        "Use --pixel-format nv12, or use --acceleration off for the software BGRA path.",
-      ].join("\n"),
-    );
-  });
-
   it("extracts exact Electron load errors from renderer output", () => {
     expect(
       extractKnownRendererError(
@@ -251,22 +108,12 @@ describe("extractKnownRendererError", () => {
     ).toBe("selector #hero was not found in composition metadata");
   });
 
-  it("extracts accelerated readback errors from renderer output", () => {
-    expect(
-      extractKnownRendererError(
-        "Error: capture.accelerated_readback_unavailable\n",
-      ),
-    ).toBe("capture.accelerated_readback_unavailable");
-  });
-
   it("extracts compositor capture probe errors from renderer output", () => {
     expect(
       extractKnownRendererError(
         "Error: capture.compositor_unavailable: Electron compositor unavailable\n",
       ),
-    ).toBe(
-      "capture.compositor_unavailable: Electron compositor unavailable",
-    );
+    ).toBe("capture.compositor_unavailable: Electron compositor unavailable");
   });
 
   it("extracts exact worker failure messages from renderer output", () => {
@@ -280,32 +127,34 @@ describe("extractKnownRendererError", () => {
   it("extracts worker failure details from renderer output", () => {
     expect(
       extractKnownRendererError(
-        "Error: worker 120..240 failed: status exit code: 1\nstdout:\n\nstderr:\nframe 128 timed out waiting for accelerated paint\n",
+        "Error: worker 120..240 failed: status exit code: 1\nstdout:\n\nstderr:\nelectron.host_error: composition paint timed out\n",
       ),
     ).toBe(
-      "worker 120..240 failed: status exit code: 1\nstdout:\n\nstderr:\nframe 128 timed out waiting for accelerated paint",
+      "worker 120..240 failed: status exit code: 1\nstdout:\n\nstderr:\nelectron.host_error: composition paint timed out",
     );
   });
 });
 
 describe("extractRendererSuccessWarning", () => {
-  it("surfaces auto acceleration fallback from successful renderer output", () => {
+  it("surfaces structured fallback text from successful renderer output", () => {
     expect(
       extractRendererSuccessWarning(
         [
           "2026-05-21T10:00:00Z INFO initializing",
-          "hardware encoder unavailable; falling back to software BGRA stdin",
+          "renderer completed using fallback path: codec configuration unsupported",
           "render complete",
         ].join("\n"),
       ),
-    ).toBe("hardware encoder unavailable; falling back to software BGRA stdin");
+    ).toBe(
+      "renderer completed using fallback path: codec configuration unsupported",
+    );
   });
 
   it("prefers detailed fallback backend causes from successful renderer output", () => {
     expect(
       extractRendererSuccessWarning(
         [
-          "hardware encoder unavailable; falling back to software BGRA stdin",
+          "renderer completed using CPU readback for 3 frame(s)",
           "renderer completed using fallback path: hardware encoder unavailable: accelerated rendering is required, but no compatible GPU backend is available on this platform.",
           "Backend cause: acceleration.required_unavailable: no required GPU backend is available (webcodecs unavailable: platform.device_unavailable: WebCodecs codec unavailable)",
         ].join("\n"),

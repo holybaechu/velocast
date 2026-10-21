@@ -32,7 +32,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "node ../../scripts/build/prune-retired-emits.mjs cli && tsc -p tsconfig.build.json && node ../../scripts/build/copy-release-manifest.mjs cli",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node ../../scripts/build/copy-release-manifest.mjs cli",
     "lint": "eslint src test-fixtures eslint.config.mjs --max-warnings 0",
     "check-types": "tsc --noEmit",
     "test": "vitest run --dir src",

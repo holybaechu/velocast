@@ -91,7 +91,7 @@ export function probeRendererCapabilities(
       return {
         available: false,
         reason:
-          "renderer.electron_unsupported: rebuild or install a renderer advertising Electron host protocol 4",
+          "renderer.electron_unsupported: rebuild or install a renderer advertising Electron host protocol 5",
       };
     }
     if (

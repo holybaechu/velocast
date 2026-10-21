@@ -53,8 +53,6 @@ export interface ArtifactResolverOptions {
   manifest?: VelocastReleaseManifest;
   fetch?: typeof globalThis.fetch;
   now?: () => number;
-  /** @deprecated Ignored; lock age cannot establish ownership. */
-  lockStat?: typeof statSync;
 }
 
 export interface ResolvedReleaseRuntime {

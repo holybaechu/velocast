@@ -1,47 +1,14 @@
 import { isObjectRecord } from "./internal/validation.js";
 
 const knownRendererErrorPatterns = [
-  /(?:media|encoder|runtime|acceleration|capture|webcodecs)\.[a-z_]+: [^\r\n]+/,
-  /electron\.[a-z_]+: [^\r\n]+/,
-  /config serve\.url is required for render/,
+  /(?:media|encoder|runtime|acceleration|capture|webcodecs|electron|output|worker)\.[a-z_]+(?:: [^\r\n]+|(?=\r?$))/m,
   /composition [^\r\n]+ was not found/,
   /selector [^\r\n]+ was not found in composition metadata/,
-  /capture\.accelerated_paint_unavailable/,
-  /capture\.accelerated_readback_unavailable/,
-  /accelerated rendering [^\r\n]+/,
-  /hardware encoder [^\r\n]+/,
-  /frame \d+ timed out waiting for accelerated paint/,
-  /required GPU benchmark [^\r\n]+/,
-  /worker_backend\.incompatible:[^\r\n]+/,
-  /remuxed output [^\r\n]+/,
-  /webcodecs decoded (?:(?:boundary|selected) )?frame hash probe failed for [^\r\n]+/,
-  /decoded (?:boundary|selected) frame hash probe returned \d+ frame\(s\), expected \d+ in [^\r\n]+/,
-  /decoded frame hash count \d+ did not match expected frame count \d+ in [^\r\n]+/,
-  /decoded selected frame hash count \d+ did not match selected frame count \d+ in [^\r\n]+/,
-  /decoded selected frame hash probe missing frame \d+ in [^\r\n]+/,
-  /adjacent duplicate decoded(?: segment-boundary)? frame(?: hash)? at (?:frame|index) \d+ in [^\r\n]+/,
-  /frame 0 matched preview frame \d+ in [^\r\n]+/,
-  /frames \d+-\d+ repeated decoded frame hash: frame \d+ matched frame \d+ in [^\r\n]+/,
-  /frame \d+ matched frame 0 in [^\r\n]+/,
-  /worker \d+\.\.\d+ failed/,
-];
-
-const multilineRendererErrorPatterns = [
-  /accelerated rendering is required, but no compatible GPU backend is available on this platform\.\r?\nBackend cause: [^\r\n]+/,
-  /accelerated rendering is required, but it is not available for this render path: [^\r\n]+\r?\nSet acceleration to "auto" [^\r\n]+/,
-  /accelerated rendering currently supports nv12\/yuv420p output, but [^\r\n]+\r?\nUse --pixel-format [^\r\n]+/,
-];
-
-const multilineRendererSuccessWarningPatterns = [
-  /renderer completed using fallback path: [^\r\n]+(?:\r?\nBackend cause: [^\r\n]+)?/,
 ];
 
 const rendererSuccessWarningPatterns = [
+  /renderer completed using fallback path: [^\r\n]+(?:\r?\nBackend cause: [^\r\n]+)?/,
   /renderer completed using CPU readback for \d+ frame\(s\)/,
-  /renderer completed using fallback path: [^\r\n]+/,
-  /hardware encoder unavailable; falling back to software BGRA stdin[^\r\n]*/,
-  /required GPU benchmark used \d+ CPU readback frame\(s\)/,
-  /required GPU benchmark fell back from the GPU path: [^\r\n]+/,
 ];
 
 export function extractKnownRendererError(output: string): string | undefined {
@@ -57,13 +24,6 @@ export function extractKnownRendererError(output: string): string | undefined {
     return webcodecsEncoderInitializationFailure[0].trimEnd();
   }
 
-  for (const pattern of multilineRendererErrorPatterns) {
-    const match = output.match(pattern);
-    if (match) {
-      return match[0].trimEnd();
-    }
-  }
-
   for (const pattern of knownRendererErrorPatterns) {
     const match = output.match(pattern);
     if (match) {
@@ -77,17 +37,10 @@ export function extractKnownRendererError(output: string): string | undefined {
 export function extractRendererSuccessWarning(
   output: string,
 ): string | undefined {
-  for (const pattern of multilineRendererSuccessWarningPatterns) {
-    const match = output.match(pattern);
-    if (match) {
-      return match[0].trimEnd();
-    }
-  }
-
   for (const pattern of rendererSuccessWarningPatterns) {
     const match = output.match(pattern);
     if (match) {
-      return match[0];
+      return match[0].trimEnd();
     }
   }
 

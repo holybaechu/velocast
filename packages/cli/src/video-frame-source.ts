@@ -29,8 +29,6 @@ export { videoPixelChecksum } from "./video-frame-decoder.js";
 export interface VideoFrameSourceLimits extends VideoPtsLimits {
   maxSourceBytes?: number;
   maxIndexBytes?: number;
-  /** @deprecated Ignored by the persistent media runtime. */
-  maxLogBytes?: number;
   maxCacheBytes?: number;
   maxQueuedRequests?: number;
   /** Compatibility ceiling; the media runtime shares one persistent seekable decoder per source. */
@@ -47,20 +45,9 @@ export interface VideoFrameSourceOptions {
   limits?: VideoFrameSourceLimits;
   signal?: AbortSignal;
 }
-/** @deprecated The media runtime no longer emits subprocess command events. */
-export interface VideoToolEvent {
-  command: readonly string[];
-  exitStatus: number | null;
-  stdoutBytes: number;
-  stderr: string;
-  elapsedMs: number;
-  terminated: boolean;
-}
 export interface VideoFrameSourceDependencies {
   mediaRunner?: MediaRunner;
   mediaSessionFactory?: MediaSessionFactory;
-  /** @deprecated Ignored; the media runtime does not emit command events. */
-  onCommand?: (event: VideoToolEvent) => void;
 }
 export interface DecodedVideoFrame {
   readonly pts: number;

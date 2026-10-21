@@ -79,10 +79,18 @@ describe("Electron-only capability negotiation", () => {
     (version) => {
       expect(
         probe(
-          { outputApiVersion: 1, electronHostProtocolVersion: version },
+          {
+            outputApiVersion: 1,
+            browserHosts: ["electron"],
+            defaultBrowserHost: "electron",
+            electronHostProtocolVersion: version,
+          },
           "electron",
-        ).available,
-      ).toBe(false);
+        ),
+      ).toMatchObject({
+        available: false,
+        reason: expect.stringContaining("Electron host protocol 5"),
+      });
     },
   );
 

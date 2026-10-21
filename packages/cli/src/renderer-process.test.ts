@@ -863,7 +863,7 @@ describe("runRenderer", () => {
     );
 
     child.stderr.end(
-      "hardware encoder unavailable; falling back to software BGRA stdin\n",
+      "renderer completed using fallback path: codec configuration unsupported\n",
     );
     child.emit("close", 0);
 
@@ -927,13 +927,13 @@ describe("waitForRendererProcess", () => {
     );
     child.stderr.write("x".repeat(1_000));
     child.stderr.end(
-      "hardware encoder unavailable; falling back to software BGRA stdin\n",
+      "renderer completed using fallback path: codec configuration unsupported\n",
     );
     child.emit("close", 0);
 
     await expect(result).resolves.toBeUndefined();
     expect(warnings).toEqual([
-      "Renderer warning: hardware encoder unavailable; falling back to software BGRA stdin\n",
+      "Renderer warning: renderer completed using fallback path: codec configuration unsupported\n",
     ]);
   });
 
@@ -944,14 +944,14 @@ describe("waitForRendererProcess", () => {
     child.emit("exit", 1);
     child.stderr.write("x".repeat(200_000));
     child.stderr.end(
-      "Error: frame 0 timed out waiting for accelerated paint\n",
+      "Error: electron.host_error: composition paint timed out\n",
     );
 
     await Promise.resolve();
     child.emit("close", 1);
 
     await expect(result).rejects.toThrow(
-      "frame 0 timed out waiting for accelerated paint",
+      "electron.host_error: composition paint timed out",
     );
   });
 
@@ -969,12 +969,12 @@ describe("waitForRendererProcess", () => {
     const result = waitForRendererProcess(child, { stdioCloseGraceMs: 0 });
 
     child.stderr.write(
-      "Error: frame 0 timed out waiting for accelerated paint\n",
+      "Error: electron.host_error: composition paint timed out\n",
     );
     child.emit("exit", 1);
 
     await expect(result).rejects.toThrow(
-      "frame 0 timed out waiting for accelerated paint",
+      "electron.host_error: composition paint timed out",
     );
   });
 
