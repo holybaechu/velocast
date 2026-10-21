@@ -64,6 +64,9 @@ export async function previewCommand(
   });
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
+  process.once("disconnect", stop);
+  // An owning parent can disconnect while the CLI is still loading its config.
+  if (process.send && !process.connected) stop();
   let watch: ReturnType<typeof spawn> | undefined;
   let watchFailure: Error | undefined;
   let watchExit: Promise<void> | undefined;
@@ -71,6 +74,16 @@ export async function previewCommand(
   const failures: unknown[] = [];
   try {
     signal.throwIfAborted();
+    if (process.send && process.env.VELOCAST_PREVIEW_GATE_CLI) {
+      // The external consumer gate must join cleanup once native work is possible.
+      await new Promise<void>((done, reject) => {
+        process.send!(
+          { type: "velocast.preview.starting" },
+          (error: Error | null) => (error ? reject(error) : done()),
+        );
+      });
+      signal.throwIfAborted();
+    }
     if (options.watchCommand) {
       watch = spawn(options.watchCommand, {
         shell: true,
@@ -121,6 +134,7 @@ export async function previewCommand(
     stopped.abort();
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
+    process.removeListener("disconnect", stop);
     try {
       await server?.close();
     } catch (error) {
