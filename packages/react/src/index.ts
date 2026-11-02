@@ -44,4 +44,3 @@ export type {
 
 export { createMediaTimeline } from "./media-timeline.js";
 export type { MediaClip } from "./media-timeline.js";
-export { defineProjectCompositions } from "./project-composition.js";

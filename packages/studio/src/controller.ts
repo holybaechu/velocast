@@ -150,9 +150,7 @@ export class StudioController<Frame> {
     frame = this.state.requestedFrame ?? this.state.presentedFrame ?? 0,
   ): Promise<void> {
     if (this.disposed)
-      return Promise.reject(
-        new Error("studio.disposed: controller is closed"),
-      );
+      return Promise.reject(new Error("studio.disposed: controller is closed"));
     let next: StudioSource;
     try {
       next = snapshotSource(source);
@@ -170,9 +168,7 @@ export class StudioController<Frame> {
   }
   seek(frame: number): Promise<void> {
     if (this.disposed)
-      return Promise.reject(
-        new Error("studio.disposed: controller is closed"),
-      );
+      return Promise.reject(new Error("studio.disposed: controller is closed"));
     if (!this.desiredSource)
       return this.invalid(
         "studio.no_source",
@@ -188,9 +184,7 @@ export class StudioController<Frame> {
   }
   setPlaybackRange(range: FrameRange): Promise<void> {
     if (this.disposed)
-      return Promise.reject(
-        new Error("studio.disposed: controller is closed"),
-      );
+      return Promise.reject(new Error("studio.disposed: controller is closed"));
     if (!this.desiredSource)
       return this.invalid(
         "studio.no_source",
@@ -216,9 +210,7 @@ export class StudioController<Frame> {
   }
   play(): Promise<void> {
     if (this.disposed)
-      return Promise.reject(
-        new Error("studio.disposed: controller is closed"),
-      );
+      return Promise.reject(new Error("studio.disposed: controller is closed"));
     if (!this.desiredSource)
       return this.invalid(
         "studio.no_source",
@@ -244,9 +236,7 @@ export class StudioController<Frame> {
   }
   pause(): Promise<void> {
     if (this.disposed)
-      return Promise.reject(
-        new Error("studio.disposed: controller is closed"),
-      );
+      return Promise.reject(new Error("studio.disposed: controller is closed"));
     if (!this.wantsPlayback) {
       try {
         this.stopTick();
@@ -449,6 +439,7 @@ export class StudioController<Frame> {
           operation.signal,
         );
         this.current(intent, operation.signal);
+        let playbackError: StudioError | undefined;
         if (intent.mode === "seek")
           this.audio?.seek(
             framesToSamples(
@@ -470,11 +461,18 @@ export class StudioController<Frame> {
               throw new Error(
                 "studio.audio_duration_mismatch: audio plan must cover playback range",
               );
-            await waitForAudio(
-              this.audio.play(undefined, end),
-              operation.signal,
-            );
-            this.current(intent, operation.signal);
+            try {
+              await waitForAudio(
+                this.audio.play(undefined, end),
+                operation.signal,
+              );
+              this.current(intent, operation.signal);
+            } catch (cause) {
+              this.current(intent, operation.signal);
+              this.wantsPlayback = false;
+              this.audio.pause();
+              playbackError = failure("studio.playback_failed", cause);
+            }
           } else this.anchor = { frame: intent.frame, time: this.readTime() };
         }
         // A ready subscriber may synchronously issue another command. The
@@ -489,10 +487,12 @@ export class StudioController<Frame> {
           range: this.range,
           playing: this.wantsPlayback,
           ended: this.ended,
+          error: playbackError,
         });
         if (intent.epoch === this.epoch && this.wantsPlayback)
           this.scheduleNext();
-        intent.resolve();
+        if (playbackError) intent.reject(playbackError);
+        else intent.resolve();
       } catch (cause) {
         this.initializedRevision = 0;
         const stale =

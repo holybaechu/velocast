@@ -3,6 +3,11 @@ Third-party notices
 Velocast packages include or depend on third-party software. JavaScript and
 Rust dependency license metadata is preserved by their package managers.
 
+The CLI's MCP integration uses the official Model Context Protocol TypeScript
+SDK and Zod. The SDK preserves its Apache-2.0/MIT transition notice and license
+texts in the installed packages. Zod preserves its MIT license and copyright
+notice. These packages are dependencies, not bundled copies of their source.
+
 The optional `@velocast/remotion` JSX bridge depends on Remotion 4.0.244 under
 the `remotion-pinned` alias. The standalone `@velocast/remotion-source`
 integration loads the original project's installed Remotion, bundler, and

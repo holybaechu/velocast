@@ -10,17 +10,13 @@ export type {
   CodeEdit,
 } from "./studio-code.js";
 export type {
-  VideoProject,
-  ProjectAsset,
-  ProjectComposition,
-  ProjectScene,
-  ProjectLayer,
-} from "./video-project.js";
-export {
-  parseVideoProject,
-  isVideoProject,
-  getProjectLayerRange,
-} from "./video-project.js";
+  StudioClientState,
+  StudioClient,
+  StudioControl,
+  StudioClientCommand,
+  StudioClientAcknowledgement,
+  StudioHeartbeat,
+} from "./studio-client.js";
 export type {
   CompositionDefinition,
   CompositionManifest,

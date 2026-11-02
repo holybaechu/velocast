@@ -117,13 +117,9 @@ export async function createProject(
   const parent = dirname(target);
   await mkdir(parent, { recursive: true });
   const template = options.template ?? "product-demo";
-  if (
-    template !== "product-demo" &&
-    template !== "blank" &&
-    template !== "editable-project"
-  )
+  if (template !== "product-demo" && template !== "blank")
     throw new Error(
-      `init.unknown_template: ${String(template)}; choose product-demo, blank, or editable-project`,
+      `init.unknown_template: ${String(template)}; choose product-demo or blank`,
     );
   const selected = {
     files: projectStarterFiles(template),

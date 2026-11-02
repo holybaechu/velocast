@@ -117,6 +117,42 @@ h1 {
   min-height: 27px;
   font-size: 12px;
 }
+.agent-connection {
+  position: relative;
+  margin-left: auto;
+  font-size: 12px;
+}
+.agent-connection > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.agent-connection-content {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: min(420px, calc(100vw - 24px));
+  max-height: calc(100dvh - 70px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #4b4b4b;
+  border-radius: 4px;
+  background: #282828;
+  box-shadow: 0 8px 24px #0006;
+}
+.agent-connection-content p {
+  margin: 0 0 10px;
+}
+.agent-connection-content pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+  font-size: 11px;
+}
 .workspace {
   min-height: 0;
   display: grid;
@@ -436,55 +472,10 @@ h2 {
   font-size: 11px;
   line-height: 1.5;
 }
-.properties-form {
-  display: grid;
-  gap: 14px;
-}
-.property-field {
-  display: grid;
-  gap: 6px;
-  font-size: 11px;
-  color: #bbb;
-}
-.property-field input,
-.property-field textarea {
-  width: 100%;
-  min-height: 32px;
-  background: #1d1d1d;
-  padding: 6px 8px;
-  font-size: 12px;
-}
-.property-field textarea {
-  resize: vertical;
-  min-height: 65px;
-}
-.property-field input[type="color"] {
-  padding: 3px;
-  cursor: pointer;
-}
-.property-toggle {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  padding-block: 4px;
-}
-.property-toggle input {
-  width: 16px;
-  min-height: 16px;
-  height: 16px;
-  accent-color: #ddd;
-}
-.property-field [aria-invalid="true"] {
-  border-color: #c88080;
-}
-.inputs-status {
+.code-status {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
-  margin: 14px 0 9px;
-}
-.save-inputs {
-  width: 100%;
-  font-size: 12px;
 }
 .disclosure {
   margin-top: 18px;
@@ -552,7 +543,7 @@ h2 {
   color: #a3a3a3;
   font-size: 10px;
 }
-.project-canvas {
+.code-canvas {
   position: absolute;
   pointer-events: none;
   z-index: 2;
@@ -579,52 +570,36 @@ h2 {
   opacity: 0;
   pointer-events: none;
 }
-.studio-app[data-editable-project="true"] .workspace {
+.studio-app[data-code-editor="true"] .workspace {
   grid-template-rows: minmax(180px, 1fr) minmax(200px, 32vh);
   grid-template-areas: "library monitor inspector" "timeline timeline inspector";
 }
-.studio-app[data-editable-project="true"] .timeline {
+.studio-app[data-code-editor="true"] .timeline {
   grid-template-rows: 18px 30px minmax(0, 1fr);
   padding-bottom: 0;
 }
-.project-actions {
+.code-actions {
   display: flex;
   margin-right: auto;
   gap: 4px;
   border-left: 1px solid var(--line);
   padding-left: 16px;
 }
-.project-actions button {
+.code-actions button {
   border-color: transparent;
   background: transparent;
 }
-.project-media {
+.code-media {
   border-top: 1px solid var(--line);
   margin-top: 14px;
 }
-.media-list {
-  display: grid;
-  gap: 2px;
-  padding: 0 7px 12px;
-}
-.media-item {
-  justify-content: flex-start;
-  background: transparent;
-  border-color: transparent;
-  font-size: 11px;
-  width: 100%;
-}
-.media-item span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.project-timeline {
+.code-timeline {
   min-height: 0;
   display: flex;
   flex-direction: column;
   margin: 0 -14px;
 }
-.project-toolbar {
+.code-toolbar {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -632,30 +607,23 @@ h2 {
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
-.project-toolbar button {
-  font-size: 11px;
-  min-height: 26px;
-  border-color: transparent;
-  background: transparent;
-}
 .timeline-hint {
   margin-left: auto;
   color: var(--muted);
   font-size: 10px;
 }
-.project-tracks {
+.code-tracks {
   flex: 1;
   overflow: auto;
   padding-bottom: 10px;
 }
-.project-track {
+.code-track {
   display: grid;
   grid-template-columns: 156px minmax(0, 1fr);
   min-height: 31px;
   border-bottom: 1px solid #303030;
 }
-.track-label,
-.ruler-row > button {
+.track-label {
   border: 0;
   border-right: 1px solid var(--line);
   border-radius: 0;
@@ -705,35 +673,15 @@ h2 {
   width: 12px;
   height: 12px;
 }
-.track-clip span:not(.trim-handle) {
+.track-clip span {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.scene-track .track-clip {
-  background: #44403a;
-  border-color: #665f53;
 }
 .track-clip[aria-pressed="true"] {
   border-color: #a8c4df;
 }
 .track-clip:hover:not(:disabled) {
   background: #495867;
-}
-.trim-handle {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 6px;
-  cursor: ew-resize;
-}
-.trim-handle:hover {
-  background: #a8c4df;
-}
-.trim-start {
-  left: 0;
-}
-.trim-end {
-  right: 0;
 }
 .track-playhead {
   position: absolute;
@@ -744,45 +692,7 @@ h2 {
   pointer-events: none;
   background: #e0e0e0;
 }
-.ruler-row {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: #242424;
-}
-.track-ruler {
-  position: relative;
-  margin: 0 16px 0 4px;
-  cursor: pointer;
-}
-.track-ruler span {
-  position: absolute;
-  top: 8px;
-  color: #999;
-  font-size: 10px;
-}
-.track-ruler span:last-child {
-  transform: translateX(-100%);
-}
-.timeline-empty {
-  margin: 15px;
-}
-.selection-heading {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 15px;
-}
-.selection-heading h2 {
-  margin: 0 auto 0 0;
-}
-.selection-heading button {
-  padding: 4px;
-  min-height: 26px;
-  background: transparent;
-  border-color: transparent;
-}
-.project-field {
+.code-field {
   display: grid;
   grid-template-columns: minmax(80px, 1fr) minmax(0, 1.2fr);
   align-items: center;
@@ -791,26 +701,26 @@ h2 {
   color: #bcbcbc;
   font-size: 11px;
 }
-.project-field input,
-.project-field select,
-.project-field textarea {
+.code-field input,
+.code-field select,
+.code-field textarea {
   width: 100%;
   background: #1d1d1d;
   font-size: 12px;
 }
-.project-field textarea {
+.code-field textarea {
   min-height: 80px;
   resize: vertical;
   padding: 6px;
 }
-.project-field:has(textarea) {
+.code-field:has(textarea) {
   grid-template-columns: 1fr;
 }
-.project-field input[type="color"] {
+.code-field input[type="color"] {
   padding: 3px;
   height: 29px;
 }
-.project-field [aria-invalid="true"] {
+.code-field [aria-invalid="true"] {
   border-color: #c88080;
 }
 .property-section {
@@ -819,20 +729,6 @@ h2 {
   padding-top: 13px;
   font-size: 11px;
   font-weight: 600;
-}
-.project-field-error {
-  color: #efb2b2;
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
-.layer-order {
-  display: flex;
-  gap: 6px;
-  margin-top: 12px;
-}
-.layer-order button {
-  flex: 1;
-  font-size: 11px;
 }
 .code-source-path,
 .code-source-help {
@@ -945,26 +841,26 @@ h2 {
   .inspector-panel {
     padding: 14px;
   }
-  .studio-app[data-editable-project="true"] .workspace {
+  .studio-app[data-code-editor="true"] .workspace {
     overflow: auto;
     grid-template-rows: minmax(200px, 35vh) 270px auto 400px;
     grid-template-areas: "monitor" "timeline" "library" "inspector";
   }
-  .studio-app[data-editable-project="true"] .library {
+  .studio-app[data-code-editor="true"] .library {
     display: block;
     border-top: 1px solid var(--line);
     max-height: 220px;
   }
-  .project-timeline {
+  .code-timeline {
     margin-inline: -10px;
   }
   .timeline-hint {
     display: none;
   }
-  .project-track {
+  .code-track {
     grid-template-columns: 120px minmax(0, 1fr);
   }
-  .project-actions {
+  .code-actions {
     padding-left: 6px;
     gap: 0;
   }
@@ -974,25 +870,28 @@ h2 {
   .app-header h1 {
     font-size: 11px;
   }
-  .project-toolbar {
+  .code-toolbar {
     padding-inline: 8px;
   }
-  .project-media {
+  .code-media {
     margin-top: 0;
   }
-  .media-list {
-    display: flex;
-    flex-wrap: wrap;
-  }
-  .media-item {
-    width: auto;
-    max-width: 220px;
-  }
-  .project-field {
+  .code-field {
     grid-template-columns: 120px minmax(0, 1fr);
   }
 }
 @media (max-width: 430px) {
+  .app-header {
+    gap: 4px;
+    padding-inline: 8px;
+  }
+  .app-header h1 {
+    font-size: 0;
+    gap: 0;
+  }
+  .code-actions button span {
+    display: none;
+  }
   .timeline {
     padding-inline: 8px;
   }
@@ -1022,4 +921,7 @@ h2 {
   .workspace {
     grid-template-rows: minmax(90px, 34vh) 88px minmax(0, 1fr);
   }
+}
+[data-code-draft-status]:empty {
+  display: none;
 }

@@ -8,7 +8,6 @@ export interface TemplateCatalogEntry {
   requirements: readonly string[];
   compositions: readonly { id: string; description: string }[];
   editableFiles: readonly string[];
-  inputs?: { file: string; description: string };
   examples: readonly string[];
 }
 const requirements = [
@@ -73,32 +72,6 @@ export const TEMPLATE_CATALOG: readonly TemplateCatalogEntry[] = [
       "npm install",
       "npm run studio",
       "npm run render",
-    ],
-  },
-  {
-    id: "editable-project",
-    title: "Structured project",
-    description:
-      "Optional JSON authoring with scenes, layers and media import in Studio.",
-    compositionId: "product-demo",
-    workflow: ["build", "studio", "frame", "render", "verify"],
-    requirements,
-    compositions: [
-      {
-        id: "product-demo",
-        description: "960x540, 30fps, 900 frames; three scenes and music",
-      },
-    ],
-    editableFiles: ["project.json", "src/main.jsx"],
-    inputs: {
-      file: "project.json",
-      description:
-        "Validated VideoProject document selected by config.inputPropsFile.",
-    },
-    examples: [
-      "velocast init my-video --template editable-project",
-      "npm install",
-      "npm run studio",
     ],
   },
 ];

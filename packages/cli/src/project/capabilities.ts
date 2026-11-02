@@ -13,7 +13,7 @@ export function capabilitiesReport(commands: readonly Command[]) {
     outputApiVersion: OUTPUT_API_VERSION,
     authoring: {
       default: "react",
-      adapters: ["react", "gsap", "javascript", "project"],
+      adapters: ["react", "gsap", "javascript"],
       react: {
         definition: "@velocast/react defineReactComposition and startVelocast",
         editing:
@@ -21,20 +21,6 @@ export function capabilitiesReport(commands: readonly Command[]) {
         media:
           "StillImage for decoded stills; createMediaTimeline shares video/audio timing; muted video skips audio decoding",
         example: "velocast init my-video --template product-demo",
-      },
-      project: {
-        format: "velocast-project",
-        version: 1,
-        parser: "@velocast/core parseVideoProject",
-        renderer: "@velocast/react defineProjectCompositions",
-        layers: ["text", "shape", "image", "video", "audio"],
-        timing:
-          "Nonoverlapping scene cuts in composition frames; layer frames relative to scene or composition; ranges fit their parent",
-        editing:
-          "Stable IDs; array order controls visual stacking; source project.json is shared with Studio",
-        media:
-          "Local relative asset paths; video assets require hasAudio; images use a fixed first/default frame; trimBeforeFrames, gain, fadeInFrames and fadeOutFrames",
-        example: "velocast init my-video --template editable-project",
       },
       composition:
         "Stable ID, dimensions, fps, durationFrames and a frame-derived source",
@@ -73,18 +59,31 @@ export function capabilitiesReport(commands: readonly Command[]) {
       codeEditing:
         "Map composition IDs in config.studio.sources and build with studioSourcePlugin from velocast/vite. GET /api/code reports fields and revisions; saved source must match the displayed build receipt before export.",
       persistence:
-        "Source files and config.inputPropsFile are durable; selection, playback and canvas zoom are session-local",
+        "Mapped source files and durable recovery history are shared. Generic input files remain code-owned. Browser selection and playback are exposed as explicit client contexts",
       concurrency:
         "Version-gated edits and refreshes; one active export per Studio server",
       lifetime:
         "Jobs and URLs belong to the Studio server; completed output files survive shutdown",
+    },
+    agent: {
+      transport: "MCP stdio using velocast mcp --url <Studio URL>",
+      connection:
+        "Connect agent in Studio supplies command and args for an existing MCP-capable agent",
+      context:
+        "Explicit browser client IDs, presented frame, selection, drafts and errors; controls require matching context/source revisions and browser acknowledgement",
+      source:
+        "Guarded literal or whole-file writes to explicitly mapped sources; durable undo and recovery",
+      images:
+        "studio_frame returns exact-frame PNG content, reusing completed matching jobs",
+      lifecycle:
+        "MCP shutdown leaves the existing Studio and its exports running",
     },
     runtime: {
       readiness: "velocast doctor --json",
       encoding: "Electron WebCodecs; codec availability depends on the host",
       acceleration: "auto and off are preferences; required is unsupported",
       releases:
-        "Native downloads depend on a published verified release; local builds are supported",
+        "Native downloads depend on a published verified release; setup --from <archive> --sha256 <trusted-hash> installs a complete trusted local bundle without build tools",
     },
     examples: [
       "velocast init my-video --json",

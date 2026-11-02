@@ -144,7 +144,7 @@ Run \`npm install\`, then \`npm run studio\`. Open the printed URL. Ctrl+C stops
 
 Author in \`src/${blank ? "video" : "product-demo"}.jsx\`${blank ? "" : " or `src/social-card.jsx`"}. Each file defines a normal React composition. Use \`useCurrentFrame\` for deterministic animation and \`Layer\` for source-editable boundaries. Register new compositions in \`src/main.jsx\` and map their source files in \`velocast.config.ts\`.
 
-In Studio, select a layer in the canvas or timeline, change text, layout or timing, then save. Supported literal changes write to that JSX file. Computed expressions stay controlled by code and show why they cannot be edited. The source location identifies where to change them in your editor. Undo/redo belongs to the running server; external edits reset its history. Playback, selection and ranges are session settings. Keep the source plugin in \`vite.config.mjs\`: it records which source revisions produced each successful build so Studio can distinguish saved edits from displayed frames.
+In Studio, select a layer in the canvas or timeline, change text, layout or timing, then save. Supported literal changes write to that JSX file. Computed expressions stay controlled by code and show why they cannot be edited. The source location identifies where to change them in your editor. Undo/redo survives Studio restarts and includes observed external edits, retaining 50 steps per source under \`.velocast/source-history\`. Playback, selection and ranges are session settings. Keep the source plugin in \`vite.config.mjs\`: it records which source revisions produced each successful build so Studio can distinguish saved edits from displayed frames.
 
 Keep assets in \`public/assets\` and refer to them with paths such as \`assets/image.png\`. \`StillImage\` waits for decoding and fixes animated images to their first frame. Use \`createMediaTimeline\` for audio/video: declare source, timing, trim, gain and fades once, render its \`Timeline\`, and pass its \`audio\` to the composition. For silent video, set \`muted: true\`. The sample artwork and locally generated instrumental music may be replaced or reused freely.
 
@@ -152,7 +152,9 @@ Frames start at zero; ranges end exclusively. A Layer's timing is relative to it
 
 Use Export in Studio or \`npm run render\`, then \`npm run verify\`. \`npm run frame\` captures frame 60. For a short test: \`npx velocast render ${blank ? "video" : "product-demo"} --start-frame 30 --end-frame 60 --output renders/test.mp4 --json\`. Inspect the image and play output with sound; metadata checks cannot judge appearance.
 
-For scripts and agents, start with \`npx velocast capabilities --json\` and the running Studio's \`GET /api/capabilities\`. \`GET /api/code?compositionId=${blank ? "video" : "product-demo"}\` returns source locations, revisions and supported fields. Direct source editing, \`npm run build\`, and CLI \`compositions\`, \`frame\`, \`render\`, and \`verify\` also work without Studio.
+To connect an existing agent, open Studio's Connect agent menu and add the shown MCP configuration to your agent. It can read the active tab, inspect frames, make guarded source edits, render and locate outputs. Each tab has its own ID; the agent must choose one explicitly. Unsaved Studio edits stay local until saved or discarded.
+
+For scripts, start with \`npx velocast capabilities --json\` and the running Studio's \`GET /api/capabilities\`. \`GET /api/code?compositionId=${blank ? "video" : "product-demo"}\` returns source locations, revisions and supported fields. Direct source editing, \`npm run build\`, and CLI \`compositions\`, \`frame\`, \`render\`, and \`verify\` also work without Studio.
 `,
   };
 }

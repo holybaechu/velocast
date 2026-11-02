@@ -11,12 +11,7 @@ import { pipeline } from "node:stream/promises";
 import { dirname, extname, isAbsolute, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import {
-  isVideoProject,
-  type CodeEdit,
-  type CodeSource,
-  type Config,
-} from "@velocast/core";
+import { type CodeEdit, type CodeSource, type Config } from "@velocast/core";
 import { BROWSER_PROTOCOL_VERSION } from "../generated/renderer-contracts.js";
 import {
   executeRendererJob,
@@ -44,18 +39,13 @@ import { studioSourceRevision } from "./studio-source-revision.js";
 import {
   MAX_STUDIO_INPUT_BYTES,
   StudioInputsError,
-  StudioInputsStore,
+  readStudioInputs,
 } from "./studio-inputs.js";
-import {
-  importStudioAsset,
-  MAX_STUDIO_ASSET_BYTES,
-  STUDIO_ASSET_EXTENSIONS,
-} from "./studio-assets.js";
-import { runMediaOperation, type MediaProbe } from "../media/media-runtime.js";
 import { resolveRendererContainer } from "../render/renderer-options.js";
 import { codeSourceConfig, StudioCodeError } from "./studio-code-config.js";
 import { MAX_STUDIO_CODE_BYTES, StudioCodeStore } from "./studio-code-store.js";
 import { readSourceReceipt } from "./source-receipt.js";
+import { StudioClients, StudioClientError } from "./studio-clients.js";
 
 interface StudioAssets {
   entryScript: string;
@@ -71,7 +61,6 @@ export interface StudioServerOptions {
   signal?: AbortSignal;
 }
 export interface StudioServerDependencies extends RendererRunDependencies {
-  probeAsset?: (path: string, signal: AbortSignal) => Promise<MediaProbe>;
   /** Tests/pack consumers may select an installed studio dist directory explicitly. */
   assetsDirectory?: string;
   /** Bounded candidate lease; tests may shorten it without running an expiry minute. */
@@ -290,7 +279,7 @@ export async function createStudioServer(
     codeConfig.sources,
     owner.signal,
   );
-  const inputsStore = new StudioInputsStore(inputPropsPath, owner.signal);
+  const clients = new StudioClients();
   const pending = new Set<Promise<void>>();
   const artifacts = new Map<string, string>();
   const jobs = new Map<
@@ -312,7 +301,7 @@ export async function createStudioServer(
   let origin = "",
     closed = false,
     refreshing = false,
-    savingInputs = false,
+    savingCode = false,
     outputBusy = false;
   let closePromise: Promise<void> | undefined;
   const acquisition =
@@ -480,7 +469,7 @@ export async function createStudioServer(
       );
   };
   const available = () => {
-    if (refreshing || savingInputs)
+    if (refreshing || savingCode)
       throw new RequestError(
         409,
         "studio.refresh_busy",
@@ -667,24 +656,20 @@ export async function createStudioServer(
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/capabilities") {
-        const saved = await inputsStore.read();
-        const editableProject =
-          saved.enabled && isVideoProject(saved.inputProps);
         json(response, 200, {
           apiVersion: 1,
           operations: {
             session: "GET /api/session",
             changes: "GET /api/changes",
+            clients: "GET /api/clients",
+            control: "POST /api/control",
+            agentConnection: "GET /api/agent-connection",
             inputs: "GET /api/inputs",
-            saveInputs: inputPropsPath ? "POST /api/inputs" : null,
-            history: inputPropsPath ? "GET /api/history" : null,
-            changeHistory: inputPropsPath ? "POST /api/history" : null,
-            importAsset: editableProject ? "POST /api/assets" : null,
-            code: "GET /api/code?compositionId=:id",
-            editCode: codeStore.compositions().length ? "POST /api/code" : null,
-            codeHistory: codeStore.compositions().length
-              ? "POST /api/code/history"
-              : null,
+            code: "GET /api/code?compositionId=:id&includeSource=true",
+            editCode: "POST /api/code",
+            replaceCode: "POST /api/code/replace",
+            codeHistory: "POST /api/code/history",
+            recoverCode: "POST /api/code/recover",
             startJob: "POST /api/jobs",
             listJobs: "GET /api/jobs",
             job: "GET /api/jobs/:id",
@@ -693,66 +678,47 @@ export async function createStudioServer(
             commitRefresh: "POST /api/commit-refresh",
             discardRefresh: "POST /api/discard-refresh",
           },
-          outputRequest: {
-            required: ["compositionId", "expectedSourceVersion"],
-            exactlyOne: ["frame", "range"],
-            frame: "zero-based integer",
-            range: { start: "inclusive frame", end: "exclusive frame" },
-          },
-          inputs: {
-            enabled: !!inputPropsPath,
-            persistence: inputPropsPath
-              ? "configured input-props file"
-              : "disabled",
-            saveRequired: [
-              "expectedSourceVersion",
-              "expectedRevision",
-              "inputProps",
-            ],
-            value: "JSON object",
-          },
-          history: {
-            required: ["action", "expectedSourceVersion", "expectedRevision"],
-            actions: ["undo", "redo"],
-            externalEdits: "Direct source file edits clear session history",
-          },
           code: {
             compositions: codeStore.compositions(),
-            build: {
-              required: "studioSourcePlugin from velocast/vite",
-              displayed:
-                "GET /api/session returns top-level codeRevisions[compositionId] for the frozen build",
-              ready:
-                "Compare displayed revision with GET /api/code revision after a successful build and staged refresh",
-            },
             editRequired: [
               "compositionId",
               "expectedSourceVersion",
               "expectedRevision",
               "edits",
             ],
-            edit: {
-              id: "stable source element ID",
-              field: "editable field from GET /api/code",
-              value: "string, finite number or boolean",
-            },
+            replaceRequired: [
+              "compositionId",
+              "expectedSourceVersion",
+              "expectedRevision",
+              "source",
+            ],
             historyRequired: [
               "compositionId",
               "expectedSourceVersion",
               "expectedRevision",
               "action",
             ],
+            build:
+              "Build with studioSourcePlugin from velocast/vite. The displayed codeRevisions must match saved revisions before export.",
             lifecycle:
-              "Writes saved source; a successful build and staged refresh are required to display it. Direct file edits clear source history.",
+              "Writes mapped source files, with durable undo and recovery. External source edits are observed. Project code is trusted local code.",
           },
-          assets: {
-            enabled: editableProject,
-            query: ["name", "expectedSourceVersion", "expectedRevision"],
-            body: "Raw binary file contents",
-            extensions: STUDIO_ASSET_EXTENSIONS,
-            destination: "public/assets relative to the saved project file",
-            inspection:
-              "Audio and video are probed with the configured media runtime. Images use their declared extension.",
+          control: {
+            required: [
+              "clientId",
+              "expectedRevision",
+              "expectedSourceVersion",
+              "action",
+            ],
+            actions: ["play", "pause", "seek", "select", "composition"],
+            lifecycle:
+              "Commands target one explicit browser and finish only after acknowledgement. Read context again after a timeout or conflict.",
+          },
+          outputRequest: {
+            required: ["compositionId", "expectedSourceVersion"],
+            exactlyOne: ["frame", "range"],
+            frame: "zero-based integer",
+            range: { start: "inclusive frame", end: "exclusive frame" },
           },
           jobStatuses: [
             "running",
@@ -767,17 +733,71 @@ export async function createStudioServer(
             requestBytes: MAX_STUDIO_INPUT_BYTES,
             inputPropsBytes: MAX_STUDIO_INPUT_BYTES,
             historyEntries: 50,
-            assetBytes: MAX_STUDIO_ASSET_BYTES,
             codeBytes: MAX_STUDIO_CODE_BYTES,
             codeEdits: 100,
+            browserClients: 32,
+            clientExpirySeconds: 30,
           },
           lifecycle:
-            "Jobs survive HTTP disconnection. Cancellation and session shutdown join owned work before completion. Completed artifacts survive session shutdown.",
+            "Jobs survive HTTP disconnection. Cancellation and shutdown join owned work. Completed output files survive shutdown.",
         });
         return;
       }
+      if (
+        request.method === "GET" &&
+        url.pathname === "/api/agent-connection"
+      ) {
+        json(response, 200, {
+          command: process.execPath,
+          args: [
+            fileURLToPath(new URL("../bin.js", import.meta.url)),
+            "mcp",
+            "--url",
+            origin,
+          ],
+        });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/clients") {
+        json(response, 200, { clients: clients.list() });
+        return;
+      }
+      if (url.pathname.startsWith("/api/clients/")) {
+        const clientId = url.pathname.slice("/api/clients/".length);
+        if (request.method === "POST") {
+          json(response, 200, clients.heartbeat(clientId, await body(request)));
+          return;
+        }
+        if (request.method === "DELETE") {
+          clients.disconnect(clientId);
+          json(response, 200, { disconnected: true });
+          return;
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/api/control") {
+        const input = await body(request);
+        expected(input);
+        const commandOwner = new AbortController();
+        const disconnected = () => {
+          if (!response.writableEnded) commandOwner.abort();
+        };
+        response.once("close", disconnected);
+        try {
+          json(
+            response,
+            200,
+            await clients.control(
+              input,
+              AbortSignal.any([owner.signal, commandOwner.signal]),
+            ),
+          );
+        } finally {
+          response.removeListener("close", disconnected);
+        }
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/api/inputs") {
-        json(response, 200, await inputsStore.read());
+        json(response, 200, await readStudioInputs(inputPropsPath));
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/code") {
@@ -788,20 +808,37 @@ export async function createStudioServer(
             "studio.code_composition",
             "compositionId is required",
           );
-        json(response, 200, codeDescriptor(await codeStore.read(id)));
+        json(
+          response,
+          200,
+          codeDescriptor(
+            await (url.searchParams.get("includeSource") === "true"
+              ? codeStore.readSource(id)
+              : codeStore.read(id)),
+          ),
+        );
         return;
       }
       if (
         request.method === "POST" &&
-        ["/api/code", "/api/code/history"].includes(url.pathname)
+        [
+          "/api/code",
+          "/api/code/history",
+          "/api/code/replace",
+          "/api/code/recover",
+        ].includes(url.pathname)
       ) {
         const input = await body(request);
         const history = url.pathname.endsWith("/history");
+        const replace = url.pathname.endsWith("/replace");
+        const recover = url.pathname.endsWith("/recover");
         onlyKeys(input, [
           "compositionId",
           "expectedSourceVersion",
           "expectedRevision",
-          history ? "action" : "edits",
+          ...(recover
+            ? []
+            : [history ? "action" : replace ? "source" : "edits"]),
         ]);
         expected(input);
         available();
@@ -814,122 +851,41 @@ export async function createStudioServer(
             "studio.code_composition",
             "compositionId is required",
           );
-        if (!active?.codeRevisions?.[input.compositionId])
+        if (!recover && !active?.codeRevisions?.[input.compositionId])
           throw new StudioCodeError(
             400,
             "studio.code_build_untracked",
             "Link source builds with studioSourcePlugin from velocast/vite, then rebuild before editing",
           );
-        savingInputs = true;
+        savingCode = true;
         try {
           json(
             response,
             200,
             codeDescriptor(
-              history
-                ? await codeStore.history(
-                    input.compositionId,
-                    input.expectedRevision,
-                    input.action,
-                  )
-                : await codeStore.edit(
-                    input.compositionId,
-                    input.expectedRevision,
-                    input.edits as CodeEdit[],
-                  ),
+              recover
+                ? await codeStore.recover(input.compositionId)
+                : replace
+                  ? await codeStore.replace(
+                      input.compositionId,
+                      input.expectedRevision,
+                      input.source as string,
+                    )
+                  : history
+                    ? await codeStore.history(
+                        input.compositionId,
+                        input.expectedRevision,
+                        input.action,
+                      )
+                    : await codeStore.edit(
+                        input.compositionId,
+                        input.expectedRevision,
+                        input.edits as CodeEdit[],
+                      ),
             ),
           );
         } finally {
-          savingInputs = false;
-        }
-        return;
-      }
-      if (request.method === "POST" && url.pathname === "/api/inputs") {
-        const input = await body(request);
-        onlyKeys(input, [
-          "expectedSourceVersion",
-          "expectedRevision",
-          "inputProps",
-        ]);
-        expected(input);
-        available();
-        savingInputs = true;
-        try {
-          json(
-            response,
-            200,
-            await inputsStore.save(input.expectedRevision, input.inputProps),
-          );
-        } finally {
-          savingInputs = false;
-        }
-        return;
-      }
-      if (request.method === "GET" && url.pathname === "/api/history") {
-        json(response, 200, await inputsStore.history());
-        return;
-      }
-      if (request.method === "POST" && url.pathname === "/api/assets") {
-        const input = Object.fromEntries(url.searchParams);
-        onlyKeys(input, ["name", "expectedSourceVersion", "expectedRevision"]);
-        expected(input);
-        available();
-        savingInputs = true;
-        const importOwner = new AbortController();
-        const disconnected = () => {
-          if (!response.writableEnded)
-            importOwner.abort(
-              new Error("studio.import_cancelled: media upload disconnected"),
-            );
-        };
-        response.once("close", disconnected);
-        try {
-          const saved = await importStudioAsset(
-            request,
-            url.searchParams,
-            inputsStore,
-            AbortSignal.any([owner.signal, importOwner.signal]),
-            dependencies.probeAsset ??
-              (async (path, signal) => {
-                runtime ??= acquisition.acquire(
-                  config.renderer?.binary,
-                  owner.signal,
-                );
-                const acquired = await runtime;
-                return runMediaOperation<MediaProbe>(
-                  { kind: "probe", path },
-                  { env: acquired.env, signal },
-                );
-              }),
-          );
-          json(response, 200, saved);
-        } finally {
-          response.removeListener("close", disconnected);
-          savingInputs = false;
-        }
-        return;
-      }
-      if (request.method === "POST" && url.pathname === "/api/history") {
-        const input = await body(request);
-        onlyKeys(input, [
-          "action",
-          "expectedSourceVersion",
-          "expectedRevision",
-        ]);
-        expected(input);
-        available();
-        savingInputs = true;
-        try {
-          json(
-            response,
-            200,
-            await inputsStore.changeHistory(
-              input.expectedRevision,
-              input.action,
-            ),
-          );
-        } finally {
-          savingInputs = false;
+          savingCode = false;
         }
         return;
       }
@@ -992,7 +948,7 @@ export async function createStudioServer(
         const input = await body(request);
         onlyKeys(input, ["expectedSourceVersion", "candidateSessionId"]);
         expected(input);
-        if (refreshing || outputBusy || savingInputs)
+        if (refreshing || outputBusy || savingCode)
           throw new RequestError(
             409,
             "studio.refresh_busy",
@@ -1038,7 +994,7 @@ export async function createStudioServer(
         request.method === "POST" &&
         ["/api/refresh", "/api/prepare-refresh"].includes(url.pathname)
       ) {
-        if (refreshing || outputBusy || savingInputs)
+        if (refreshing || outputBusy || savingCode)
           throw new RequestError(
             409,
             "studio.refresh_busy",
@@ -1047,7 +1003,7 @@ export async function createStudioServer(
         const input = await body(request);
         onlyKeys(input, ["expectedSourceVersion"]);
         expected(input);
-        if (refreshing || outputBusy || savingInputs)
+        if (refreshing || outputBusy || savingCode)
           throw new RequestError(
             409,
             "studio.refresh_busy",
@@ -1143,14 +1099,16 @@ export async function createStudioServer(
           response,
           error instanceof RequestError ||
             error instanceof StudioInputsError ||
-            error instanceof StudioCodeError
+            error instanceof StudioCodeError ||
+            error instanceof StudioClientError
             ? error.status
             : 500,
           {
             code:
               error instanceof RequestError ||
               error instanceof StudioInputsError ||
-              error instanceof StudioCodeError
+              error instanceof StudioCodeError ||
+              error instanceof StudioClientError
                 ? error.code
                 : "studio.request_failed",
             message: error instanceof Error ? error.message : String(error),
@@ -1167,6 +1125,7 @@ export async function createStudioServer(
   const close = (): Promise<void> =>
     (closePromise ??= (async () => {
       closed = true;
+      clients.close();
       clearPreparedTimer();
       for (const { record } of jobs.values()) {
         if (record.status === "running") {

@@ -20,8 +20,13 @@ export interface CodeSource {
   compositionId: string;
   path?: string;
   revision?: string;
+  /** Saved source can contain syntax errors; history still restores its exact bytes. */
+  syntaxError?: string;
   /** Exact source revision recorded by the active frozen build, when tracked. */
   displayedRevision?: string;
+  /** Durable copies retained for undo and interrupted-edit recovery. */
+  recoveryPath?: string;
+  recoveryRequired?: boolean;
   elements: CodeElement[];
   canUndo: boolean;
   canRedo: boolean;

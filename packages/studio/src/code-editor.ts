@@ -33,6 +33,7 @@ interface CodeEditorOptions {
   save(edits: CodeEdit[], revision: string): void;
   seek(frame: number): void;
   history(action: "undo" | "redo"): void;
+  recover?(): void;
   draft(): void;
   select(): void;
   inspect?(id: string, signal: AbortSignal): Promise<Bounds>;
@@ -109,12 +110,28 @@ export class CodeEditor {
   get hasDraft(): boolean {
     return this.drafts.size > 0;
   }
+  get selection(): string | undefined {
+    return this.selectedId;
+  }
+
+  selectElement(id: string): void {
+    if (!this.source?.elements.some((element) => element.id === id))
+      throw new Error(`studio.element_missing: No source element named ${id}`);
+    this.select(id);
+  }
   get conflicted(): boolean {
     return !!this.external;
+  }
+  private get recoveryRequired(): boolean {
+    return !!(this.external ?? this.source)?.recoveryRequired;
+  }
+  private get syntaxError(): string | undefined {
+    return (this.external ?? this.source)?.syntaxError;
   }
   canChangeHistory(action: "undo" | "redo"): boolean {
     return (
       !this.busy &&
+      !this.recoveryRequired &&
       !this.hasDraft &&
       !this.external &&
       !!(action === "undo" ? this.source?.canUndo : this.source?.canRedo)
@@ -132,6 +149,10 @@ export class CodeEditor {
       this.source?.compositionId !== source.compositionId;
     const changed =
       this.source?.revision !== source.revision || changedComposition;
+    const recoveryChanged =
+      (this.external ?? this.source)?.recoveryRequired !==
+      source.recoveryRequired;
+    const syntaxChanged = this.syntaxError !== source.syntaxError;
     if (changed || this.displayKey !== displayKey || this.frame !== frame)
       this.drag?.abort();
     this.composition = composition;
@@ -141,6 +162,8 @@ export class CodeEditor {
     if (changed && this.hasDraft && !changedComposition) this.external = source;
     else if (changed) this.accept(source);
     else this.source = source;
+    if ((recoveryChanged || syntaxChanged) && (!changed || this.hasDraft))
+      this.render();
     this.renderStatus();
     this.disable();
     for (const head of this.options.timeline.querySelectorAll<HTMLElement>(
@@ -248,6 +271,13 @@ export class CodeEditor {
     undo.dataset.codeHistory = "undo";
     redo.dataset.codeHistory = "redo";
     this.options.actions.replaceChildren(undo, redo);
+    if (this.recoveryRequired) {
+      const recover = this.button("Recover edit", RotateCcw, () =>
+        this.options.recover?.(),
+      );
+      recover.dataset.codeRecover = "";
+      this.options.actions.append(recover);
+    }
     this.options.media.replaceChildren(
       this.node("div", "panel-heading", "Source"),
       this.sourceLocation("code-source-path"),
@@ -257,6 +287,16 @@ export class CodeEditor {
         "Keep media in public/assets. Select an image, video, or audio layer to change its file path. Add layers and custom animation in your source editor.",
       ),
     );
+    const recoveryPath = (this.external ?? this.source)?.recoveryPath;
+    if (this.recoveryRequired && recoveryPath) {
+      const retained = this.node(
+        "p",
+        "help-text code-source-path",
+        `Retained: ${recoveryPath.split(/[\\/]/).pop()}`,
+      );
+      retained.title = recoveryPath;
+      this.options.media.append(retained);
+    }
     this.renderInspector();
     this.renderTimeline();
     this.inspectKey = "";
@@ -293,7 +333,7 @@ export class CodeEditor {
     });
     discard.dataset.codeDiscard = "";
     toolbar.append(save, discard);
-    const status = this.node("p", "inputs-status");
+    const status = this.node("p", "code-status");
     status.dataset.codeDraftStatus = "";
     status.setAttribute("role", "status");
     this.options.inspector.append(
@@ -324,7 +364,7 @@ export class CodeEditor {
 
   private field(element: CodeElement, name: string): void {
     const field = element.fields[name]!;
-    const label = this.node("label", "project-field code-field");
+    const label = this.node("label", "code-field");
     label.append(this.node("span", "", labels[name] ?? name));
     if (!field.editable) {
       label.append(
@@ -396,7 +436,14 @@ export class CodeEditor {
   }
 
   private save(): void {
-    if (!this.source?.revision || !this.hasDraft || this.busy || this.external)
+    if (
+      !this.source?.revision ||
+      !this.hasDraft ||
+      this.busy ||
+      this.external ||
+      this.recoveryRequired ||
+      this.syntaxError
+    )
       return;
     const edits: CodeEdit[] = [];
     for (const draft of this.drafts.values()) {
@@ -427,11 +474,17 @@ export class CodeEditor {
       "[data-code-draft-status]",
     );
     if (status) {
-      status.textContent = this.external
-        ? "Source changed in another editor. Your draft is kept; reload the saved source to continue."
-        : this.hasDraft
-          ? "Unsaved changes"
-          : "Select a layer to edit supported values.";
+      status.textContent = this.recoveryRequired
+        ? this.hasDraft
+          ? "Discard your local draft before recovering the interrupted source edit."
+          : "A source edit was interrupted. Recover it before editing or exporting."
+        : this.syntaxError
+          ? "Fix the source syntax error in your editor or use Undo."
+          : this.external
+            ? "Source changed in another editor. Your draft is kept; reload the saved source to continue."
+            : this.hasDraft
+              ? "Unsaved changes"
+              : "";
       status.setAttribute("role", "status");
     }
     const discard = this.options.inspector.querySelector<HTMLButtonElement>(
@@ -470,8 +523,8 @@ export class CodeEditor {
   }
 
   private renderTimeline(): void {
-    const tracks = this.node("div", "project-tracks");
-    const toolbar = this.node("div", "project-toolbar");
+    const tracks = this.node("div", "code-tracks");
+    const toolbar = this.node("div", "code-toolbar");
     toolbar.append(
       this.node("span", "", "Layers"),
       this.node("span", "timeline-hint", "Timing is edited in Properties"),
@@ -487,7 +540,7 @@ export class CodeEditor {
               : typeof element.fields.text?.value === "string"
                 ? Type
                 : Layers;
-      const row = this.node("div", "project-track layer-track");
+      const row = this.node("div", "code-track layer-track");
       const label = this.button(element.name, glyph, () =>
         this.select(element.id, true),
       );
@@ -542,11 +595,18 @@ export class CodeEditor {
         const history = control.dataset.codeHistory;
         control.disabled =
           this.busy ||
-          (history
-            ? !this.canChangeHistory(history as "undo" | "redo")
-            : control.hasAttribute("data-code-save")
-              ? !!this.external || !this.hasDraft
-              : false);
+          (control.hasAttribute("data-code-recover")
+            ? this.hasDraft || !this.options.recover
+            : this.recoveryRequired &&
+                !control.hasAttribute("data-code-discard")
+              ? true
+              : history
+                ? !this.canChangeHistory(history as "undo" | "redo")
+                : this.syntaxError && !control.hasAttribute("data-code-discard")
+                  ? true
+                  : control.hasAttribute("data-code-save")
+                    ? !!this.external || !this.hasDraft
+                    : false);
       }
   }
 
@@ -557,7 +617,8 @@ export class CodeEditor {
     this.inspectKey = key;
     this.inspection?.abort();
     this.options.canvas.replaceChildren();
-    if (this.busy || this.disposed) return;
+    if (this.busy || this.disposed || this.recoveryRequired || this.syntaxError)
+      return;
     const operation = new AbortController();
     this.inspection = operation;
     const layers = this.source.elements.filter(
@@ -614,7 +675,14 @@ export class CodeEditor {
     element: CodeElement,
     bounds: Bounds,
   ): void {
-    if (this.busy || this.external || event.button !== 0) return;
+    if (
+      this.busy ||
+      this.external ||
+      this.recoveryRequired ||
+      this.syntaxError ||
+      event.button !== 0
+    )
+      return;
     event.preventDefault();
     this.drag?.abort();
     const operation = new AbortController();

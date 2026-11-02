@@ -37,7 +37,6 @@ it("dispatches init to real filesystem creation without loading config or invoki
   );
   expect(result.directory).toBe(target);
   expect(result.files).toContain("public/assets/overview.svg");
-  expect(result.files).not.toContain("project.json");
   expect(result.files).toContain("src/product-demo.jsx");
   expect(result.files).toContain("src/social-card.jsx");
   expect(
@@ -152,7 +151,6 @@ it("creates a blank React composition with its source configured for Studio", as
     compositionId: "video",
     dependenciesInstalled: false,
   });
-  expect(result.files).not.toContain("project.json");
   expect(JSON.parse(writes.join(""))).toEqual(result);
   expect(await readdir(result.directory)).not.toContain("node_modules");
   expect(
@@ -161,14 +159,4 @@ it("creates a blank React composition with its source configured for Studio", as
   expect(
     await readFile(join(result.directory, "src/main.jsx"), "utf8"),
   ).toContain("startVelocast([video])");
-});
-
-it("keeps the structured editor as an explicit template", async () => {
-  const result = await createProject(join(await temporary(), "structured"), {
-    template: "editable-project",
-  });
-  expect(result.files).toContain("project.json");
-  expect(
-    await readFile(join(result.directory, "velocast.config.ts"), "utf8"),
-  ).toContain('inputPropsFile: "project.json"');
 });

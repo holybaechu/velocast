@@ -33,9 +33,31 @@ Browser frame-check tests also need Chrome, Chromium, or Edge. Set
 `VELOCAST_BROWSER_BINARY` to the executable if it is not discovered automatically.
 
 Downloadable native releases are currently blocked in the
-[release manifest](release/velocast-release.json). Use a local build, or set
-`VELOCAST_RENDERER_BINARY` to an existing renderer. `pnpm velocast doctor` reports
-missing runtime requirements.
+[release manifest](release/velocast-release.json). A complete local runtime bundle
+can be installed without Rust or renderer environment variables:
+
+```sh
+velocast setup --from /absolute/path/velocast-native.tar.gz --sha256 <trusted-sha256>
+velocast doctor
+```
+
+Get the bundle and its hash from a trusted builder. This explicitly trusts that
+local archive; it is not a signed public release. Setup verifies its hash,
+platform, version, and inventory before selecting the managed installation.
+It remains usable offline after the archive is removed. `versions --json`
+distinguishes this installation from public release availability. On Windows,
+produce a bundle from a built checkout with the Visual Studio build tools available:
+
+```sh
+pnpm electron:package --renderer <renderer.exe> --electron packages/electron-host/node_modules/electron/dist --output <new-absolute-runtime-directory>
+pnpm release:package-native win32-x64 <absolute-runtime-directory> <absolute-output.tar.gz>
+```
+
+Keep those build artifacts outside the checkout. The packager records the SHA-256
+hash used by setup.
+
+A local Cargo build or `VELOCAST_RENDERER_BINARY` also works during development.
+`doctor --json` reports the selected runtime and its capabilities.
 
 For an external project using a bare local renderer executable, also set
 `VELOCAST_ELECTRON_HOST_SCRIPT` to this checkout's absolute
@@ -129,43 +151,33 @@ audio/video timing. Assets belong in `public/assets` and use paths such as
 `assets/shot.png` in source.
 
 Saved edits and displayed builds are separate states. Wait for the completed
-build before inspecting or exporting the change. Undo/redo retains 50 edits per
-source file in the running server; external file edits invalidate that history.
-A stale edit must be reloaded and reapplied. Playback, selection, zoom, and ranges
-are session settings.
+build before inspecting or exporting the change. Undo/redo retains 50 source
+versions in `.velocast/source-history`, including observed external edits, across
+server restarts. Add `.velocast/` to your project's ignore file. Playback,
+selection, zoom, and ranges are session settings.
 
-## Optional structured projects
+Writes check the current source revision and serialize cooperating writers.
+Interrupted edits keep recoverable copies; Studio shows **Recover edit** only
+when needed. Recovery preserves an externally recreated source file. A stale
+edit must be reloaded and reapplied. Keep normal version control as well:
+arbitrary editors holding old file handles do not participate in this lock.
+The local filesystem must support hard links; unsupported filesystems fail
+before replacement. A recovery interrupted while holding `recovery.lock` needs
+manual attention: preserve the reported recovery directory, confirm that its
+recorded process has stopped, then remove only that lock and retry recovery.
 
-`--template editable-project` provides a JSON editor for scenes, text, shapes,
-images, video, and audio. Its `project.json` is the saved source.
-`config.inputPropsFile` selects it for Studio, inspect, check, frame, and render;
-`--input-props-file` overrides that default. Paths in config are relative to the
-config file; paths on the command line are relative to the working directory.
+If an interrupted edit prevents the starter's initial build, run `velocast studio`
+directly against the last completed build, recover, then restart `npm run studio`.
+If no build remains, stop the project processes and preserve the history directory.
+Its `pending.json` identifies the missing source and retained `<transaction>.source`
+file; copy those retained bytes back only when the destination is absent, rebuild,
+then use **Recover edit** to finish the journal. Preserve any existing destination.
 
-The public `VideoProject` types and `parseVideoProject` validator live in
-[the core project module](packages/core/src/video-project.ts). The document has
-assets and compositions; each composition contains scenes and layers with stable
-IDs. Scenes are nonoverlapping cuts. Layer timing is relative to its scene, or to
-the composition when `sceneId` is omitted. Array order sets visual stacking.
-Geometry uses composition pixels. Colors use six- or eight-digit hex values.
-Audio and video layers support source trim, gain, and fades. Video assets declare
-`hasAudio`; importing a video discovers this automatically, and silent video
-never requests audio decoding. Image layers show a fixed first/default image,
-including animated formats; use a video layer for animation.
-
-`defineProjectCompositions` from `@velocast/react` renders that document:
-
-```jsx
-import { startVelocast, defineProjectCompositions } from "@velocast/react";
-import project from "../project.json";
-startVelocast(defineProjectCompositions(project));
-```
-
-Studio saves property changes to the JSON file. Import media copies files into
-`public/assets`; replacing an asset changes the selected layer's reference.
-Imported files remain on disk after undo so redo can restore those references.
-This editor supports cuts and fades. Use React source for custom animation and
-layouts; Studio does not convert arbitrary React or GSAP into project layers.
+Custom inputs remain ordinary code-owned JSON. `config.inputPropsFile` supplies
+Studio and command defaults; `--input-props-file` overrides it. Config paths are
+relative to the config file, command paths to the working directory. Studio
+reads these inputs and refreshes completed snapshots; edit the file with your
+source editor or agent.
 
 ## Authoring model
 
@@ -275,34 +287,64 @@ the live parser. Use command-specific `--help` for details and `doctor --json` f
 runtime readiness. JSON commands exit nonzero on failure and provide a structured
 report on stdout; diagnostics may also appear on stderr.
 
-For a reusable running Studio, start `studio --json` and read
-`GET /api/capabilities` at its URL. The loopback HTTP interface accepts JSON:
+To connect an existing MCP-capable agent, start Studio and open **Connect agent**.
+Copy its command and arguments into your agent's MCP server configuration. The
+equivalent terminal command is:
 
-| Operation                                                                  | Request / result                                                                                                                           |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET /api/session`                                                         | Active immutable source version, snapshot URL, inputs, and saved file revision                                                             |
-| `GET /api/changes`                                                         | Current source revision hint                                                                                                               |
-| `GET /api/code?compositionId=...`                                          | Source file, revision, elements, supported fields and read-only reasons; disabled without a source mapping                                 |
-| `POST /api/code`                                                           | `{compositionId, expectedSourceVersion, expectedRevision, edits:[{id,field,value}]}`; atomic literal edits in one file                     |
-| `POST /api/code/history`                                                   | `{compositionId, expectedSourceVersion, expectedRevision, action:"undo" or "redo"}`                                                        |
-| `GET /api/inputs`                                                          | Current saved input object, path, and revision; disabled without an explicit file                                                          |
-| `POST /api/inputs`                                                         | `{expectedSourceVersion, expectedRevision, inputProps}`; saves a JSON object                                                               |
-| `GET /api/history`                                                         | Shared undo/redo availability                                                                                                              |
-| `POST /api/history`                                                        | `{action:"undo" or "redo", expectedSourceVersion, expectedRevision}`                                                                       |
-| `POST /api/assets?name=...&expectedSourceVersion=...&expectedRevision=...` | Raw binary media; returns updated saved project inputs                                                                                     |
-| `POST /api/prepare-refresh`                                                | `{expectedSourceVersion}`; candidate snapshot for validation                                                                               |
-| `POST /api/commit-refresh` or `/api/discard-refresh`                       | `{expectedSourceVersion, candidateSessionId}`; accepts or releases the candidate                                                           |
-| `POST /api/jobs`                                                           | `{compositionId, expectedSourceVersion, frame}` or `{compositionId, expectedSourceVersion, range:{start,end}}`; returns HTTP 202 and a job |
-| `GET /api/jobs` or `/api/jobs/:id`                                         | Session job history or one job                                                                                                             |
-| `POST /api/jobs/:id/cancel`                                                | Cancels and waits for owned work to stop                                                                                                   |
+```sh
+velocast mcp --url http://127.0.0.1:3000
+```
+
+Use the actual Studio URL; `studio --port 3000` keeps that port stable. The MCP
+process uses stdio and leaves Studio running when disconnected. It adds no model
+or chat service. Enable it only for trusted local projects: source code runs
+with the same permissions as the project's existing build and renderer.
+
+An agent's normal sequence is:
+
+1. Discover tools and call `studio_context` to select an explicit browser tab.
+2. Read `studio_source` for editable fields, source revision, and recovery state.
+   Request `includeSource` only for whole-file work.
+3. Use `studio_edit` for supported literals or `studio_replace_source` for a
+   mapped file. Other project files remain editable with the agent's own tools.
+4. Wait for the project watcher and Studio to accept the completed build. Read
+   fresh context after a conflict. Dirty drafts and build errors remain visible.
+5. Use `studio_control` to select, seek, play, pause, or switch composition.
+   Controls require the explicit tab and current revisions and wait for its
+   acknowledgement. Pause tolerates playback advancing the state revision.
+   If the browser blocks sound, click Play once in Studio to enable audio, then retry.
+6. Call `studio_frame` at a paused, ready frame to inspect its PNG. It reports the
+   displayed build and dirty state, and reuses a completed matching frame export.
+7. Start `studio_render`, then use `studio_job` to wait for completion or cancel.
+   Supply the tab and revision to require its clean, export-ready state.
+
+The same behavior is available over loopback HTTP. Start `studio --json`, then
+read `GET /api/capabilities` at its URL for request limits and current operations:
+
+| Operation                                            | Request / result                                                                                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/session`                                   | Active immutable source version, snapshot URL, inputs, and saved file revision                                                             |
+| `GET /api/changes`                                   | Current source revision hint                                                                                                               |
+| `GET /api/code?compositionId=...`                    | Source file, revision, elements, supported fields and read-only reasons; disabled without a source mapping                                 |
+| `POST /api/code`                                     | `{compositionId, expectedSourceVersion, expectedRevision, edits:[{id,field,value}]}`; guarded literal edits in one file                    |
+| `POST /api/code/history`                             | `{compositionId, expectedSourceVersion, expectedRevision, action:"undo" or "redo"}`                                                        |
+| `GET /api/inputs`                                    | Current saved input object, path, and revision; disabled without an explicit file                                                          |
+| `POST /api/code/replace`                             | `{compositionId, expectedSourceVersion, expectedRevision, source}`; replaces one mapped source file                                        |
+| `POST /api/code/recover`                             | `{compositionId, expectedSourceVersion}`; recovers a stopped interrupted write                                                             |
+| `GET /api/clients`                                   | Connected tabs, presented frames, selection, revisions, drafts, and errors                                                                 |
+| `POST /api/control`                                  | `{clientId, expectedRevision, expectedSourceVersion, action, ...}`; acknowledged browser control                                           |
+| `POST /api/prepare-refresh`                          | `{expectedSourceVersion}`; candidate snapshot for validation                                                                               |
+| `POST /api/commit-refresh` or `/api/discard-refresh` | `{expectedSourceVersion, candidateSessionId}`; accepts or releases the candidate                                                           |
+| `POST /api/jobs`                                     | `{compositionId, expectedSourceVersion, frame}` or `{compositionId, expectedSourceVersion, range:{start,end}}`; returns HTTP 202 and a job |
+| `GET /api/jobs` or `/api/jobs/:id`                   | Session job history or one job                                                                                                             |
+| `POST /api/jobs/:id/cancel`                          | Cancels and waits for owned work to stop                                                                                                   |
 
 Use `compositions --json` for composition metadata. Poll a submitted job until
 `succeeded`, `failed`, or `cancelled`; intermediate states are `running` and
 `cancelling`. Success includes `result.outputPath` and `result.url`; failure
 includes `error.code` and `error.message`. Jobs survive HTTP disconnection.
 The server serializes exports, retains 100 job records, and limits request bodies
-and editable inputs to 1 MiB. Media import accepts up to 256 MiB; the capability
-response lists supported file extensions. Stale versions or input revisions return HTTP 409:
+and source-edit requests to 1 MiB. Stale versions or source revisions return HTTP 409:
 read the current state, preserve other edits, and retry deliberately.
 
 After a source edit, rebuild and check that the prepared session's
@@ -324,11 +366,11 @@ Update project scripts to `velocast studio`. The public server entry is
 New `product-demo` and `blank` projects use React source. Existing React/GSAP
 projects continue to render through their authoring APIs. For supported React
 source editing, add `Layer` boundaries, `studio.sources` mappings, and the Vite
-plugin shown above. Existing
-JSON projects continue using `defineProjectCompositions` and `inputPropsFile`;
-new ones use `--template editable-project`. Specialized
-content utilities and installation helpers are removed; available commands are
-listed by `velocast capabilities --json`.
+plugin shown above. The structured project schema, JSON renderer/template,
+mutable input form, media-import editor, and their HTTP mutations are removed.
+Migrate those projects to React compositions using `Layer`, `StillImage`, and
+`createMediaTimeline`; keep assets in `public/assets`. Custom `inputPropsFile`
+remains supported as read-only Studio input.
 
 ## Project layout
 
@@ -337,7 +379,7 @@ listed by `velocast capabilities --json`.
 | `apps/playground`                             | Example compositions                                    |
 | `packages/core`, `react`, `gsap`              | Composition authoring and frame timing                  |
 | `packages/cli`                                | Commands, project loading, rendering, and runtime setup |
-| `packages/studio`                             | Scene/layer editor, playback and export                 |
+| `packages/studio`                             | Source inspection, direct edits, playback and export    |
 | `packages/remotion-compat`, `remotion-source` | Remotion compatibility and project integration          |
 | `packages/electron-host`                      | Browser capture and media processing                    |
 | `crates`                                      | Rust protocol, rendering policy, and renderer           |
@@ -345,7 +387,7 @@ listed by `velocast capabilities --json`.
 | `scripts`, `release`                          | Build, verification, and release tooling and manifests  |
 
 CLI internals are grouped into `authoring`, `project`, `render`, `runtime`,
-`studio`, and `media`, with tests beside the implementation. `commands.ts` defines
+`studio`, `mcp`, and `media`, with tests beside the implementation. `commands.ts` defines
 the public package exports; `cli.ts` parses command-line arguments.
 
 ## Development

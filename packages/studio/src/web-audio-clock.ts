@@ -253,12 +253,31 @@ function makeClock(
       }
       if (playing || position === playbackEnd) return;
       const request = ++revision;
-      await context.resume();
+      // Browser autoplay policy may leave resume() pending until a human gesture.
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          context.resume(),
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "studio.audio_suspended: Audio did not start. Click Play in Studio to enable sound, then retry.",
+                  ),
+                ),
+              2000,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
       assertOpen();
       if (request !== revision) throw cancelled();
       if (context.state !== "running")
         throw new Error(
-          "studio.audio_suspended: resume audio from a user playback gesture",
+          "studio.audio_suspended: Click Play in Studio to enable sound, then retry.",
         );
       schedule();
     },

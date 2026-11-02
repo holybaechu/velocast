@@ -1,4 +1,3 @@
-import { parseVideoProject } from "@velocast/core";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -67,7 +66,6 @@ it("creates and builds React demo and social compositions with real local audio"
   roots.push(root);
   const result = await createProject(join(root, "video"));
   expect(result.template).toBe("product-demo");
-  expect(result.files).not.toContain("project.json");
   expect(result.files).toContain("src/social-card.jsx");
   await exec(
     process.execPath,
@@ -100,7 +98,6 @@ it("creates and builds React demo and social compositions with real local audio"
   expect(TEMPLATE_CATALOG.map((entry) => entry.id)).toEqual([
     "product-demo",
     "blank",
-    "editable-project",
   ]);
 }, 30_000);
 
@@ -110,22 +107,8 @@ it("builds the blank project without media setup", async () => {
   const result = await createProject(join(root, "video"), {
     template: "blank",
   });
-  expect(result.files).not.toContain("project.json");
   await buildProject(root, result.directory, { video: "src/video.jsx" });
   expect(
     await readFile(join(result.directory, "dist/index.html"), "utf8"),
   ).toContain('type="module"');
-}, 30_000);
-
-it("builds the optional structured project with its saved document", async () => {
-  const root = await mkdtemp(join(tmpdir(), "velocast-structured-build-"));
-  roots.push(root);
-  const result = await createProject(join(root, "video"), {
-    template: "editable-project",
-  });
-  const project = parseVideoProject(
-    JSON.parse(await readFile(join(result.directory, "project.json"), "utf8")),
-  );
-  expect(project.compositions[0]!.scenes).toHaveLength(3);
-  await buildProject(root, result.directory);
 }, 30_000);

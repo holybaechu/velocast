@@ -29,8 +29,6 @@ export type {
   StudioSessionDescriptor,
   StudioOutputRequest,
   StudioOutputJob,
-  StudioInputs,
-  StudioHistory,
   HttpStudioApiOptions,
 } from "./studio-api.js";
 export { StudioApp } from "./studio-app.js";

@@ -6,6 +6,7 @@ import { createStudioServer, type StudioJob } from "./studio-server.js";
 import { failedOutputResult } from "../render/output-result.js";
 import type { RustRenderJob } from "../render/render-command-job.js";
 import * as snapshotModule from "../project/input-snapshot.js";
+import type { StudioClientCommand, StudioClientState } from "@velocast/core";
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -74,6 +75,237 @@ async function finishedJob(
   });
   return job;
 }
+
+async function browserCommand(
+  url: string,
+  clientId: string,
+  state: StudioClientState,
+): Promise<StudioClientCommand> {
+  let command!: StudioClientCommand;
+  await vi.waitFor(async () => {
+    const response = await post(`${url}/api/clients/${clientId}`, { state });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.commands).toHaveLength(1);
+    command = body.commands[0];
+  });
+  return command;
+}
+
+it("targets explicit browser clients over HTTP and completes controls only after their acknowledgements", async () => {
+  const { cwd, config } = await fixture();
+  const server = await createStudioServer(config, {
+    pathOptions: { cwd, env: {} },
+  });
+  cleanup.push(server.close);
+  let state: StudioClientState = {
+    revision: 1,
+    sourceVersion: server.session().session.sourceVersion,
+    compositions: [composition],
+    compositionId: "scene",
+    frame: 0,
+    selectedElementId: "heading",
+    sourceRevision: "file-1",
+    dirty: false,
+    ready: true,
+    exportReady: true,
+    playing: false,
+  };
+  const otherState = { ...state, frame: 8 };
+  expect(
+    await (await post(server.url + "/api/clients/browser-a", { state })).json(),
+  ).toEqual({ commands: [] });
+  expect(
+    (await post(server.url + "/api/clients/browser-b", { state: otherState }))
+      .status,
+  ).toBe(200);
+  expect(await (await fetch(server.url + "/api/clients")).json()).toMatchObject(
+    {
+      clients: [
+        { clientId: "browser-a", frame: 0, sourceRevision: "file-1" },
+        { clientId: "browser-b", frame: 8 },
+      ],
+    },
+  );
+
+  const seekRequest = {
+    clientId: "browser-a",
+    expectedRevision: 1,
+    expectedSourceVersion: state.sourceVersion,
+    action: "seek",
+    frame: 17,
+  };
+  let completed = false;
+  const seeking = post(server.url + "/api/control", seekRequest).then(
+    (response) => {
+      completed = true;
+      return response;
+    },
+  );
+  const seek = await browserCommand(server.url, "browser-a", state);
+  expect(seek).toMatchObject({
+    action: "seek",
+    frame: 17,
+    expectedRevision: 1,
+    expectedSourceVersion: state.sourceVersion,
+  });
+  expect(completed).toBe(false);
+  // Another tab cannot consume or acknowledge this tab's request.
+  expect(
+    await (
+      await post(server.url + "/api/clients/browser-b", {
+        state: otherState,
+        acknowledgements: [{ id: seek.id, status: "succeeded" }],
+      })
+    ).json(),
+  ).toEqual({ commands: [] });
+  expect(completed).toBe(false);
+  state = { ...state, revision: 2, frame: 17 };
+  expect(
+    (
+      await post(server.url + "/api/clients/browser-a", {
+        state,
+        acknowledgements: [{ id: seek.id, status: "succeeded" }],
+      })
+    ).status,
+  ).toBe(200);
+  const sought = await seeking;
+  expect(sought.status).toBe(200);
+  expect(await sought.json()).toMatchObject({
+    clientId: "browser-a",
+    revision: 2,
+    frame: 17,
+  });
+
+  const stale = await post(server.url + "/api/control", seekRequest);
+  expect(stale.status).toBe(409);
+  expect(await stale.json()).toMatchObject({ code: "studio.client_stale" });
+  const staleSource = await post(server.url + "/api/control", {
+    ...seekRequest,
+    expectedRevision: 2,
+    expectedSourceVersion: "old-source",
+  });
+  expect(staleSource.status).toBe(409);
+  expect(await staleSource.json()).toMatchObject({
+    code: "snapshot.version_mismatch",
+  });
+  const conflictingHeartbeat = await post(
+    server.url + "/api/clients/browser-a",
+    { state: { ...state, frame: 25 } },
+  );
+  expect(conflictingHeartbeat.status).toBe(409);
+  expect(await conflictingHeartbeat.json()).toMatchObject({
+    code: "studio.client_stale",
+  });
+
+  const selecting = post(server.url + "/api/control", {
+    clientId: "browser-a",
+    expectedRevision: 2,
+    expectedSourceVersion: state.sourceVersion,
+    action: "select",
+    elementId: "caption",
+  });
+  const select = await browserCommand(server.url, "browser-a", state);
+  expect(select).toMatchObject({ action: "select", elementId: "caption" });
+  state = { ...state, revision: 3, selectedElementId: "caption" };
+  await post(server.url + "/api/clients/browser-a", {
+    state,
+    acknowledgements: [{ id: select.id, status: "succeeded" }],
+  });
+  expect(await (await selecting).json()).toMatchObject({
+    clientId: "browser-a",
+    selectedElementId: "caption",
+    frame: 17,
+    revision: 3,
+  });
+
+  const rejected = post(server.url + "/api/control", {
+    clientId: "browser-a",
+    expectedRevision: 3,
+    expectedSourceVersion: state.sourceVersion,
+    action: "select",
+    elementId: "missing",
+  });
+  const missing = await browserCommand(server.url, "browser-a", state);
+  await post(server.url + "/api/clients/browser-a", {
+    state,
+    acknowledgements: [
+      {
+        id: missing.id,
+        status: "failed",
+        error: "studio.element_missing: No source element named missing",
+      },
+    ],
+  });
+  const failure = await rejected;
+  expect(failure.status).toBe(409);
+  expect(await failure.json()).toMatchObject({
+    code: "studio.client_command_failed",
+    message: "studio.element_missing: No source element named missing",
+  });
+});
+
+it.each(["disconnect", "shutdown"] as const)(
+  "settles an outstanding HTTP control on browser %s",
+  async (operation) => {
+    const { cwd, config } = await fixture();
+    const server = await createStudioServer(config, {
+      pathOptions: { cwd, env: {} },
+    });
+    cleanup.push(server.close);
+    const state: StudioClientState = {
+      revision: 1,
+      sourceVersion: server.session().session.sourceVersion,
+      compositions: [composition],
+      compositionId: "scene",
+      frame: 0,
+      dirty: false,
+      ready: true,
+      exportReady: true,
+      playing: false,
+    };
+    await post(server.url + "/api/clients/browser-a", { state });
+    const request = {
+      clientId: "browser-a",
+      expectedRevision: 1,
+      expectedSourceVersion: state.sourceVersion,
+      action: "seek",
+      frame: 12,
+    };
+    const pending = post(server.url + "/api/control", request);
+    // Attach rejection handling before shutdown can close the HTTP connection.
+    const settled = Promise.allSettled([pending]);
+    await browserCommand(server.url, "browser-a", state);
+    if (operation === "disconnect") {
+      expect(
+        (
+          await fetch(server.url + "/api/clients/browser-a", {
+            method: "DELETE",
+            headers: { Origin: server.url },
+          })
+        ).status,
+      ).toBe(200);
+      const response = await pending;
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        code: "studio.client_disconnected",
+      });
+      expect(await (await fetch(server.url + "/api/clients")).json()).toEqual({
+        clients: [],
+      });
+      expect((await post(server.url + "/api/control", request)).status).toBe(
+        409,
+      );
+    } else {
+      await server.close();
+      const [result] = await settled;
+      if (result!.status === "fulfilled")
+        expect(result!.value.status).toBe(503);
+      await expect(fetch(server.url + "/api/clients")).rejects.toThrow();
+    }
+    await settled;
+  },
+);
 
 it("keeps asynchronous output owned by the session and exposes its completed artifact", async () => {
   const { cwd, config } = await fixture();
@@ -280,54 +512,31 @@ it.each(["cancel", "close"])(
   },
 );
 
-it("persists explicitly selected input props, detects conflicting edits, and refreshes the same saved values", async () => {
+it("reads code-owned input props and refreshes their immutable snapshot after external edits", async () => {
   const { cwd, config } = await fixture();
   const path = join(cwd, "inputs.json");
-  await writeFile(path, '{"title":"original"}\n');
+  await writeFile(path, '{"title":"original"}');
   const server = await createStudioServer(config, {
     inputPropsFile: "inputs.json",
     pathOptions: { cwd, env: {} },
   });
   cleanup.push(server.close);
   const before = server.session();
-  const inputs = (await (await fetch(server.url + "/api/inputs")).json()) as {
-    enabled: boolean;
-    revision: string;
-  };
-  expect(inputs).toMatchObject({
+  expect(await (await fetch(server.url + "/api/inputs")).json()).toMatchObject({
     enabled: true,
     path,
     inputProps: { title: "original" },
   });
-  expect(before.inputPropsFile).toEqual({ path, revision: inputs.revision });
-  const save = {
-    expectedSourceVersion: before.session.sourceVersion,
-    expectedRevision: inputs.revision,
-    inputProps: { title: "from person", nested: { count: 2 } },
-  };
-  const receipt = (await (
-    await post(server.url + "/api/inputs", save)
-  ).json()) as { revision: string };
-  expect(receipt.revision).not.toBe(inputs.revision);
-  expect(JSON.parse(await readFile(path, "utf8"))).toEqual(save.inputProps);
-  expect(server.session()).toEqual(before);
-  expect(
-    (
-      (await (await fetch(server.url + "/api/changes")).json()) as {
-        revision: string;
-      }
-    ).revision,
-  ).not.toBe(before.sourceRevision);
-  expect((await post(server.url + "/api/inputs", save)).status).toBe(409);
-  await writeFile(path, '{"title":"from agent"}\n');
   expect(
     (
       await post(server.url + "/api/inputs", {
-        ...save,
-        expectedRevision: receipt.revision,
+        inputProps: { title: "unsupported" },
       })
     ).status,
-  ).toBe(409);
+  ).toBe(405);
+  expect(await readFile(path, "utf8")).toBe('{"title":"original"}');
+  await writeFile(path, '{"title":"from agent"}');
+  expect(server.session()).toEqual(before);
   const refreshed = await post(server.url + "/api/refresh", {
     expectedSourceVersion: before.session.sourceVersion,
   });
@@ -335,17 +544,9 @@ it("persists explicitly selected input props, detects conflicting edits, and ref
   expect(await refreshed.json()).toMatchObject({
     inputProps: { title: "from agent" },
   });
-  expect(
-    (
-      await post(server.url + "/api/inputs", {
-        ...save,
-        expectedRevision: receipt.revision,
-      })
-    ).status,
-  ).toBe(409);
 });
 
-it("rejects a prepared source superseded by a saved property edit", async () => {
+it("rejects a prepared source superseded by an external input edit", async () => {
   const { cwd, config } = await fixture();
   await writeFile(join(cwd, "inputs.json"), '{"title":"original"}');
   const server = await createStudioServer(config, {
@@ -359,11 +560,7 @@ it("rejects a prepared source superseded by a saved property edit", async () => 
       expectedSourceVersion: before.session.sourceVersion,
     })
   ).json()) as ReturnType<typeof server.session>;
-  await post(server.url + "/api/inputs", {
-    expectedSourceVersion: before.session.sourceVersion,
-    expectedRevision: before.inputPropsFile!.revision,
-    inputProps: { title: "changed" },
-  });
+  await writeFile(join(cwd, "inputs.json"), '{"title":"changed"}');
   const commit = await post(server.url + "/api/commit-refresh", {
     expectedSourceVersion: before.session.sourceVersion,
     candidateSessionId: candidate.session.sessionId,
@@ -373,32 +570,6 @@ it("rejects a prepared source superseded by a saved property edit", async () => 
     code: "studio.candidate_stale",
   });
   expect(server.session()).toEqual(before);
-});
-
-it("serializes simultaneous saved-property edits instead of losing either writer's update", async () => {
-  const { cwd, config } = await fixture();
-  const path = join(cwd, "inputs.json");
-  await writeFile(path, "{}");
-  const server = await createStudioServer(config, {
-    inputPropsFile: "inputs.json",
-    pathOptions: { cwd, env: {} },
-  });
-  cleanup.push(server.close);
-  const session = server.session();
-  const responses = await Promise.all(
-    ["person", "agent"].map((title) =>
-      post(server.url + "/api/inputs", {
-        expectedSourceVersion: session.session.sourceVersion,
-        expectedRevision: session.inputPropsFile!.revision,
-        inputProps: { title },
-      }),
-    ),
-  );
-  expect(responses.map(({ status }) => status).sort()).toEqual([200, 409]);
-  const winner = (await responses
-    .find(({ status }) => status === 200)!
-    .json()) as { inputProps: unknown };
-  expect(JSON.parse(await readFile(path, "utf8"))).toEqual(winner.inputProps);
 });
 
 it("advertises only explicit saved inputs and rejects generated or invalid props files", async () => {
@@ -414,8 +585,7 @@ it("advertises only explicit saved inputs and rejects generated or invalid props
     await (await fetch(server.url + "/api/capabilities")).json(),
   ).toMatchObject({
     apiVersion: 1,
-    inputs: { enabled: false },
-    operations: { saveInputs: null },
+    operations: { inputs: "GET /api/inputs", clients: "GET /api/clients" },
     limits: { concurrentOutputs: 1 },
   });
   expect(
@@ -426,7 +596,7 @@ it("advertises only explicit saved inputs and rejects generated or invalid props
         inputProps: {},
       })
     ).status,
-  ).toBe(400);
+  ).toBe(405);
   await writeFile(join(cwd, "dist/inputs.json"), "{}");
   await expect(
     createStudioServer(config, {
@@ -440,20 +610,10 @@ it("advertises only explicit saved inputs and rejects generated or invalid props
     pathOptions: { cwd, env: {} },
   });
   cleanup.push(editable.close);
-  const state = (await (await fetch(editable.url + "/api/inputs")).json()) as {
-    revision: string;
-  };
-  for (const inputProps of [[], null, "string"])
-    expect(
-      (
-        await post(editable.url + "/api/inputs", {
-          expectedSourceVersion: editable.session().session.sourceVersion,
-          expectedRevision: state.revision,
-          inputProps,
-        })
-      ).status,
-    ).toBe(400);
-  expect(await readFile(join(cwd, "inputs.json"), "utf8")).toBe("{}");
+  for (const value of [[], null, "string"]) {
+    await writeFile(join(cwd, "inputs.json"), JSON.stringify(value));
+    expect((await fetch(editable.url + "/api/inputs")).status).toBe(400);
+  }
 });
 
 it.each([

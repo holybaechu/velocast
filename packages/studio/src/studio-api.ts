@@ -1,5 +1,10 @@
 import { isRpcSession, type RpcSession } from "./rpc-wire.js";
-import type { CodeEdit, CodeSource } from "@velocast/core";
+import type {
+  CodeEdit,
+  CodeSource,
+  StudioClientCommand,
+  StudioHeartbeat,
+} from "@velocast/core";
 
 export interface StudioSessionDescriptor {
   readonly snapshotUrl: string;
@@ -13,18 +18,6 @@ export interface StudioSessionDescriptor {
     readonly path: string;
     readonly revision: string;
   };
-}
-
-export interface StudioInputs {
-  readonly enabled: boolean;
-  readonly path?: string;
-  readonly revision?: string;
-  readonly inputProps?: unknown;
-}
-
-export interface StudioHistory {
-  readonly canUndo: boolean;
-  readonly canRedo: boolean;
 }
 
 interface SavedSourceGuard {
@@ -52,6 +45,15 @@ export type StudioOutputRequest = {
 );
 
 export interface StudioApi {
+  agentConnection?(
+    signal?: AbortSignal,
+  ): Promise<{ command: string; args: string[] }>;
+  heartbeat?(
+    clientId: string,
+    heartbeat: StudioHeartbeat,
+    signal?: AbortSignal,
+  ): Promise<{ commands: StudioClientCommand[] }>;
+  disconnect?(clientId: string, signal?: AbortSignal): Promise<void>;
   getSession(signal?: AbortSignal): Promise<StudioSessionDescriptor>;
   refresh(
     expectedSourceVersion: string,
@@ -62,7 +64,6 @@ export interface StudioApi {
     signal?: AbortSignal,
     onProgress?: (job: StudioOutputJob) => void,
   ): Promise<unknown>;
-  getInputs?(signal?: AbortSignal): Promise<StudioInputs>;
   getCode?(compositionId: string, signal?: AbortSignal): Promise<CodeSource>;
   saveCode?(
     request: SavedSourceGuard & { compositionId: string; edits: CodeEdit[] },
@@ -75,23 +76,10 @@ export interface StudioApi {
     },
     signal?: AbortSignal,
   ): Promise<CodeSource>;
-  getHistory?(signal?: AbortSignal): Promise<StudioHistory>;
-  changeHistory?(
-    request: SavedSourceGuard & { action: "undo" | "redo" },
+  recoverCode?(
+    request: { compositionId: string; expectedSourceVersion: string },
     signal?: AbortSignal,
-  ): Promise<StudioInputs>;
-  importAsset?(
-    request: SavedSourceGuard & { name: string; data: Blob },
-    signal?: AbortSignal,
-  ): Promise<StudioInputs>;
-  saveInputs?(
-    request: {
-      expectedSourceVersion: string;
-      expectedRevision: string;
-      inputProps: unknown;
-    },
-    signal?: AbortSignal,
-  ): Promise<StudioInputs>;
+  ): Promise<CodeSource>;
   changes?(
     signal?: AbortSignal,
   ): Promise<{ enabled: boolean; revision: string }>;
@@ -174,24 +162,13 @@ function descriptor(value: unknown): StudioSessionDescriptor {
   });
 }
 
-function inputs(value: unknown): StudioInputs {
-  const body = record(value);
-  if (
-    typeof body.enabled !== "boolean" ||
-    (body.enabled &&
-      (typeof body.path !== "string" || typeof body.revision !== "string"))
-  )
-    throw new Error("studio.api_invalid: invalid saved inputs");
-  return body as unknown as StudioInputs;
-}
-
 function checkSavedRevision(request: SavedSourceGuard) {
   if (
     !request.expectedSourceVersion?.trim() ||
     !request.expectedRevision?.trim()
   )
     throw new Error(
-      "studio.inputs_invalid: source version and saved revision are required",
+      "studio.code_invalid: source version and saved revision are required",
     );
 }
 
@@ -205,8 +182,17 @@ function codeSource(value: unknown): CodeSource {
     typeof source.canRedo !== "boolean" ||
     (source.displayedRevision !== undefined &&
       typeof source.displayedRevision !== "string") ||
+    (source.recoveryRequired !== undefined &&
+      typeof source.recoveryRequired !== "boolean") ||
+    (source.recoveryPath !== undefined &&
+      typeof source.recoveryPath !== "string") ||
+    (source.syntaxError !== undefined &&
+      typeof source.syntaxError !== "string") ||
     (source.enabled &&
-      (typeof source.path !== "string" || typeof source.revision !== "string"))
+      (typeof source.path !== "string" ||
+        (source.recoveryRequired !== true &&
+          typeof source.revision !== "string"))) ||
+    (source.revision !== undefined && typeof source.revision !== "string")
   )
     throw new Error("studio.api_invalid: invalid code source");
   for (const item of source.elements) {
@@ -328,6 +314,80 @@ export class HttpStudioApi implements StudioApi {
 
   getSession(signal?: AbortSignal): Promise<StudioSessionDescriptor> {
     return this.sessionRequest("/api/session", undefined, signal);
+  }
+
+  async agentConnection(
+    signal?: AbortSignal,
+  ): Promise<{ command: string; args: string[] }> {
+    const value = record(
+      await this.jsonRequest("/api/agent-connection", undefined, signal),
+    );
+    if (
+      typeof value.command !== "string" ||
+      !value.command ||
+      !Array.isArray(value.args) ||
+      value.args.some((arg) => typeof arg !== "string")
+    )
+      throw new Error("studio.api_invalid: invalid agent connection");
+    return { command: value.command, args: value.args as string[] };
+  }
+
+  async heartbeat(
+    clientId: string,
+    heartbeat: StudioHeartbeat,
+    signal?: AbortSignal,
+  ): Promise<{ commands: StudioClientCommand[] }> {
+    const value = record(
+      await this.jsonRequest(
+        `/api/clients/${encodeURIComponent(clientId)}`,
+        heartbeat,
+        signal,
+      ),
+    );
+    if (!Array.isArray(value.commands))
+      throw new Error("studio.api_invalid: invalid client commands");
+    const commands = value.commands.map((item) => {
+      const command = record(item);
+      if (
+        typeof command.id !== "string" ||
+        !command.id ||
+        !Number.isSafeInteger(command.expectedRevision) ||
+        Number(command.expectedRevision) < 1 ||
+        typeof command.expectedSourceVersion !== "string" ||
+        !(
+          (command.action === "seek" &&
+            Number.isSafeInteger(command.frame) &&
+            Number(command.frame) >= 0) ||
+          (command.action === "select" &&
+            typeof command.elementId === "string" &&
+            !!command.elementId) ||
+          command.action === "play" ||
+          command.action === "pause" ||
+          (command.action === "composition" &&
+            typeof command.compositionId === "string" &&
+            !!command.compositionId)
+        )
+      )
+        throw new Error("studio.api_invalid: invalid client command");
+      return command as unknown as StudioClientCommand;
+    });
+    return { commands };
+  }
+
+  async disconnect(clientId: string, signal?: AbortSignal): Promise<void> {
+    const response = await this.request(
+      new URL(`/api/clients/${encodeURIComponent(clientId)}`, this.baseUrl),
+      {
+        method: "DELETE",
+        credentials: "same-origin",
+        signal,
+        keepalive: true,
+      },
+    );
+    if (!response.ok)
+      throw new Error(
+        `studio.api_http_${response.status}: ${await errorMessage(response)}`,
+      );
   }
 
   async changes(
@@ -474,10 +534,6 @@ export class HttpStudioApi implements StudioApi {
     );
   }
 
-  async getInputs(signal?: AbortSignal): Promise<StudioInputs> {
-    return inputs(await this.jsonRequest("/api/inputs", undefined, signal));
-  }
-
   async getCode(
     compositionId: string,
     signal?: AbortSignal,
@@ -536,67 +592,17 @@ export class HttpStudioApi implements StudioApi {
     );
   }
 
-  async getHistory(signal?: AbortSignal): Promise<StudioHistory> {
-    const value = record(
-      await this.jsonRequest("/api/history", undefined, signal),
-    );
-    if (
-      typeof value.canUndo !== "boolean" ||
-      typeof value.canRedo !== "boolean"
-    )
-      throw new Error("studio.api_invalid: invalid history");
-    return { canUndo: value.canUndo, canRedo: value.canRedo };
-  }
-
-  async changeHistory(
-    request: SavedSourceGuard & { action: "undo" | "redo" },
+  async recoverCode(
+    request: { compositionId: string; expectedSourceVersion: string },
     signal?: AbortSignal,
-  ): Promise<StudioInputs> {
-    checkSavedRevision(request);
-    if (request.action !== "undo" && request.action !== "redo")
-      throw new Error("studio.history_action: choose undo or redo");
-    return inputs(await this.jsonRequest("/api/history", request, signal));
-  }
-
-  async importAsset(
-    request: SavedSourceGuard & { name: string; data: Blob },
-    signal?: AbortSignal,
-  ): Promise<StudioInputs> {
-    checkSavedRevision(request);
-    if (!request.name.trim() || request.data.size === 0)
+  ): Promise<CodeSource> {
+    if (!request.compositionId.trim() || !request.expectedSourceVersion.trim())
       throw new Error(
-        "studio.asset_invalid: choose a named, nonempty media file",
+        "studio.code_invalid: composition and source version are required",
       );
-    const query = new URLSearchParams({
-      name: request.name,
-      expectedSourceVersion: request.expectedSourceVersion,
-      expectedRevision: request.expectedRevision,
-    });
-    const response = await this.request(
-      new URL(`/api/assets?${query}`, this.baseUrl),
-      {
-        method: "POST",
-        cache: "no-store",
-        credentials: "same-origin",
-        headers: { "content-type": "application/octet-stream" },
-        body: request.data,
-        signal,
-      },
+    return codeSource(
+      await this.jsonRequest("/api/code/recover", request, signal),
     );
-    return inputs(await this.readResponse(response, signal));
-  }
-
-  async saveInputs(
-    request: {
-      expectedSourceVersion: string;
-      expectedRevision: string;
-      inputProps: unknown;
-    },
-    signal?: AbortSignal,
-  ): Promise<StudioInputs> {
-    checkSavedRevision(request);
-    record(request.inputProps);
-    return inputs(await this.jsonRequest("/api/inputs", request, signal));
   }
 
   private async sessionRequest(

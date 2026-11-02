@@ -3,6 +3,69 @@ import { HttpStudioApi } from "./studio-api.js";
 
 const session = { sessionId: "session-1", sourceVersion: "source-1" };
 
+it("accepts interrupted-edit recovery state without a current source revision", async () => {
+  const source = {
+    enabled: true,
+    compositionId: "demo",
+    path: "src/demo.jsx",
+    recoveryRequired: true,
+    recoveryPath: ".velocast/source-history/demo",
+    elements: [],
+    canUndo: false,
+    canRedo: false,
+  };
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValue(Response.json(source));
+  const api = new HttpStudioApi({ baseUrl: "http://127.0.0.1:90", fetch });
+  expect(await api.getCode("demo")).toEqual(source);
+});
+
+it("loads the installed agent command and sends browser context and acknowledgements to its own endpoint", async () => {
+  const connection = {
+    command: "C:/Node/node.exe",
+    args: ["C:/Velocast/bin.js", "mcp", "--url", "http://127.0.0.1:90"],
+  };
+  const command = {
+    id: "seek-1",
+    action: "seek",
+    frame: 12,
+    expectedRevision: 1,
+    expectedSourceVersion: "source-1",
+  };
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValueOnce(Response.json(connection))
+    .mockResolvedValueOnce(Response.json({ commands: [command] }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  const api = new HttpStudioApi({ baseUrl: "http://127.0.0.1:90", fetch });
+  expect(await api.agentConnection()).toEqual(connection);
+  const heartbeat = {
+    state: {
+      revision: 1,
+      sourceVersion: "source-1",
+      compositions: [],
+      frame: 2,
+      dirty: false,
+      ready: true,
+      exportReady: true,
+      playing: false,
+    },
+  };
+  expect(await api.heartbeat("tab-1", heartbeat)).toEqual({
+    commands: [command],
+  });
+  await api.disconnect("tab-1");
+  expect(String(fetch.mock.calls[1]![0])).toBe(
+    "http://127.0.0.1:90/api/clients/tab-1",
+  );
+  expect(JSON.parse(String(fetch.mock.calls[1]![1]!.body))).toEqual(heartbeat);
+  expect(fetch.mock.calls[2]![1]).toMatchObject({
+    method: "DELETE",
+    keepalive: true,
+  });
+});
+
 it("preserves frozen build receipts and rejects invalid receipt maps", async () => {
   const fetch = vi
     .fn<typeof globalThis.fetch>()
@@ -63,6 +126,10 @@ it("discovers source fields and shares source guards for code edits and history"
     edits: [{ id: "title", field: "text", value: "Edited" }],
   });
   await api.changeCodeHistory({ ...guard, action: "undo" });
+  await api.recoverCode({
+    compositionId: "demo",
+    expectedSourceVersion: "source-1",
+  });
   expect(String(fetch.mock.calls[0]![0])).toBe(
     "http://127.0.0.1:90/api/code?compositionId=demo",
   );
@@ -73,68 +140,13 @@ it("discovers source fields and shares source guards for code edits and history"
   expect(String(fetch.mock.calls[2]![0])).toBe(
     "http://127.0.0.1:90/api/code/history",
   );
-});
-
-it("shares source guards for history and binary media imports", async () => {
-  const saved = {
-    enabled: true,
-    path: "project.json",
-    revision: "revision-2",
-    inputProps: { name: "Demo" },
-  };
-  const fetch = vi
-    .fn<typeof globalThis.fetch>()
-    .mockResolvedValueOnce(Response.json({ canUndo: true, canRedo: false }))
-    .mockResolvedValueOnce(Response.json(saved))
-    .mockResolvedValueOnce(Response.json(saved));
-  const api = new HttpStudioApi({ baseUrl: "http://127.0.0.1:90/", fetch });
-  expect(await api.getHistory()).toEqual({ canUndo: true, canRedo: false });
-  const guard = {
+  expect(String(fetch.mock.calls[3]![0])).toBe(
+    "http://127.0.0.1:90/api/code/recover",
+  );
+  expect(JSON.parse(String(fetch.mock.calls[3]![1]?.body))).toEqual({
+    compositionId: "demo",
     expectedSourceVersion: "source-1",
-    expectedRevision: "revision-1",
-  };
-  expect(await api.changeHistory({ ...guard, action: "undo" })).toEqual(saved);
-  const data = new Blob(["image"], { type: "image/png" });
-  expect(
-    await api.importAsset({ ...guard, name: "Product image.png", data }),
-  ).toEqual(saved);
-  expect(JSON.parse(String(fetch.mock.calls[1]![1]?.body))).toEqual({
-    ...guard,
-    action: "undo",
   });
-  const upload = fetch.mock.calls[2]!;
-  expect(new URL(String(upload[0])).searchParams.get("name")).toBe(
-    "Product image.png",
-  );
-  expect(new URL(String(upload[0])).searchParams.get("expectedRevision")).toBe(
-    "revision-1",
-  );
-  expect(upload[1]?.body).toBe(data);
-  expect(upload[1]?.headers).toEqual({
-    "content-type": "application/octet-stream",
-  });
-});
-
-it("rejects unusable history responses and preserves import failures", async () => {
-  const fetch = vi
-    .fn<typeof globalThis.fetch>()
-    .mockResolvedValueOnce(Response.json({ canUndo: "yes", canRedo: false }))
-    .mockResolvedValueOnce(
-      Response.json(
-        { code: "studio.inputs_conflict", message: "Reload the saved project" },
-        { status: 409 },
-      ),
-    );
-  const api = new HttpStudioApi({ baseUrl: "http://127.0.0.1:90/", fetch });
-  await expect(api.getHistory()).rejects.toThrow("invalid history");
-  await expect(
-    api.importAsset({
-      expectedSourceVersion: "source",
-      expectedRevision: "revision",
-      name: "file.png",
-      data: new Blob(["file"]),
-    }),
-  ).rejects.toThrow("studio.inputs_conflict: Reload the saved project");
 });
 
 it("waits for owned output jobs and returns the completed artifact with source guards", async () => {
@@ -425,55 +437,3 @@ it.each(["succeeded", "failed"] as const)(
     );
   },
 );
-
-it("saves input objects with both source and persisted-file revision guards", async () => {
-  const fetch = vi
-    .fn<typeof globalThis.fetch>()
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          snapshotUrl: "http://127.0.0.1:91/",
-          session,
-          inputProps: { title: "Saved" },
-          inputPropsFile: {
-            path: "C:/video/inputs.json",
-            revision: "revision-1",
-          },
-        }),
-      ),
-    )
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          enabled: true,
-          path: "C:/video/inputs.json",
-          revision: "revision-2",
-          inputProps: { title: "Updated" },
-        }),
-      ),
-    )
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          code: "studio.inputs_conflict",
-          message: "Saved inputs changed; reload before saving",
-        }),
-        { status: 409 },
-      ),
-    );
-  const api = new HttpStudioApi({ fetch });
-  expect((await api.getSession()).inputPropsFile).toEqual({
-    path: "C:/video/inputs.json",
-    revision: "revision-1",
-  });
-  const request = {
-    expectedSourceVersion: "source-1",
-    expectedRevision: "revision-1",
-    inputProps: { title: "Updated" },
-  };
-  expect((await api.saveInputs(request)).revision).toBe("revision-2");
-  expect(JSON.parse(String(fetch.mock.calls[1]![1]?.body))).toEqual(request);
-  await expect(api.saveInputs(request)).rejects.toThrow(
-    "studio.inputs_conflict",
-  );
-});

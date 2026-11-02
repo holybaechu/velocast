@@ -378,20 +378,21 @@ it("restores exact source bytes through history, rejects stale writes, and diagn
   });
   expect(conflict.status).toBe(409);
   expect(await f.get()).toMatchObject({
-    canUndo: false,
+    canUndo: true,
     canRedo: false,
     elements: [{ fields: { text: { value: "External" } } }],
   });
   await writeFile(f.path, "export const broken = <");
   const invalid = await fetch(f.server.url + "/api/code?compositionId=demo");
-  expect(invalid.status).toBe(400);
+  expect(invalid.status).toBe(200);
   expect(await invalid.json()).toMatchObject({
-    code: "studio.code_syntax",
-    message: expect.stringContaining("demo.tsx:1"),
+    syntaxError: expect.stringContaining("demo.tsx:1"),
+    canUndo: true,
+    elements: [],
   });
   await writeFile(f.path, original);
   expect(await f.get()).toMatchObject({
-    canUndo: false,
+    canUndo: true,
     canRedo: false,
     elements: [{ fields: { text: { value: "Original" } } }],
   });

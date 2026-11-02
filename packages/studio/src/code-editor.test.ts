@@ -48,6 +48,7 @@ function editor(initialSource = source) {
   );
   const save = vi.fn(),
     seek = vi.fn();
+  const recover = vi.fn();
   const app = new CodeEditor({
     inspector: inspector!,
     timeline: timeline!,
@@ -56,6 +57,7 @@ function editor(initialSource = source) {
     actions: actions!,
     save,
     seek,
+    recover,
     history: vi.fn(),
     draft: vi.fn(),
     select: vi.fn(),
@@ -78,8 +80,99 @@ function editor(initialSource = source) {
     composition,
     save,
     seek,
+    recover,
+    actions: actions!,
+    media: media!,
   };
 }
+
+it("blocks ordinary edits during interrupted publication and exposes explicit recovery with retained bytes", () => {
+  const f = editor({
+    ...source,
+    canUndo: true,
+    recoveryRequired: true,
+    recoveryPath: ".velocast/source-history/demo/retained.jsx",
+  });
+  expect(
+    f.inspector.querySelector<HTMLInputElement>('[data-code-field="x"]')!
+      .disabled,
+  ).toBe(true);
+  expect(f.app.canChangeHistory("undo")).toBe(false);
+  expect(f.media.textContent).toContain("retained.jsx");
+  f.actions.querySelector<HTMLButtonElement>("[data-code-recover]")!.click();
+  expect(f.recover).toHaveBeenCalledOnce();
+  f.app.update(source, f.composition, 20, false, "source-1");
+  expect(f.actions.querySelector("[data-code-recover]")).toBeNull();
+  expect(
+    f.inspector.querySelector<HTMLInputElement>('[data-code-field="x"]')!
+      .disabled,
+  ).toBe(false);
+  f.app.dispose();
+});
+
+it("retains a local draft when another writer needs recovery and requires explicit discard", () => {
+  const f = editor();
+  const field = f.inspector.querySelector<HTMLInputElement>(
+    '[data-code-field="x"]',
+  )!;
+  field.value = "87";
+  field.dispatchEvent(new Event("input"));
+  f.app.update(
+    { ...source, revision: "file-2", recoveryRequired: true },
+    f.composition,
+    20,
+    false,
+    "source-1",
+  );
+  expect(f.app.hasDraft).toBe(true);
+  expect(
+    f.inspector.querySelector<HTMLInputElement>('[data-code-field="x"]')!.value,
+  ).toBe("87");
+  expect(
+    f.actions.querySelector<HTMLButtonElement>("[data-code-recover]")!.disabled,
+  ).toBe(true);
+  f.inspector.querySelector<HTMLButtonElement>("[data-code-discard]")!.click();
+  expect(f.app.hasDraft).toBe(false);
+  expect(
+    f.actions.querySelector<HTMLButtonElement>("[data-code-recover]")!.disabled,
+  ).toBe(false);
+  f.app.dispose();
+});
+
+it("keeps a local draft visible after invalid external code and prevents saving it over that source", () => {
+  const f = editor();
+  const field = f.inspector.querySelector<HTMLInputElement>(
+    '[data-code-field="x"]',
+  )!;
+  field.value = "87";
+  field.dispatchEvent(new Event("input"));
+  f.app.update(
+    {
+      ...source,
+      revision: "file-2",
+      syntaxError: "Demo.tsx:4: Unexpected token",
+      elements: [],
+      canUndo: true,
+    },
+    f.composition,
+    20,
+    false,
+    "source-1",
+  );
+  expect(f.app.hasDraft).toBe(true);
+  const retained = f.inspector.querySelector<HTMLInputElement>(
+    '[data-code-field="x"]',
+  )!;
+  expect(retained.value).toBe("87");
+  expect(retained.disabled).toBe(true);
+  expect(
+    f.inspector.querySelector<HTMLButtonElement>("[data-code-save]")!.disabled,
+  ).toBe(true);
+  f.inspector.querySelector<HTMLButtonElement>("[data-code-discard]")!.click();
+  expect(f.app.canChangeHistory("undo")).toBe(true);
+  expect(f.inspector.textContent).toContain("syntax error");
+  f.app.dispose();
+});
 
 it("selects a visual layer first and preserves the user's selection on refresh", () => {
   const withMusic: CodeSource = {

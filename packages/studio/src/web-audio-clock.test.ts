@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { StudioController } from "./controller.js";
 import { prepareWebAudioClock } from "./web-audio-clock.js";
 
@@ -359,6 +359,74 @@ it("rejects invalid boundaries without disturbing playback and reports blocked r
   await expect(clock.play()).rejects.toThrow("studio.audio_suspended");
   expect(fake.sources).toHaveLength(0);
   await clock.dispose();
+});
+
+it("bounds blocked browser audio startup, keeps the paused frame usable, and permits activated playback", async () => {
+  vi.useFakeTimers();
+  const fake = device();
+  fake.context.state = "suspended";
+  const blocked = deferred<void>();
+  fake.resumeWith(() => blocked.promise);
+  const controller = new StudioController({
+    transport: {
+      initialize: async () => {},
+      seekFrame: async (frame) => frame,
+      dispose: async () => {},
+    },
+    scheduler: { now: () => 0, schedule: () => () => {} },
+    prepareAudio: (audioPlan) => prepareWebAudioClock(audioPlan, fake.options),
+  });
+  try {
+    await controller.refresh(
+      {
+        session: { sessionId: "session", sourceVersion: "source" },
+        composition: {
+          id: "audio",
+          width: 320,
+          height: 180,
+          fps: 30,
+          durationFrames: 30,
+        },
+        audioPlan: plan(),
+      },
+      6,
+    );
+    let error: unknown;
+    const play = controller.play().catch((cause) => {
+      error = cause;
+    });
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Click Play in Studio");
+    await play;
+    expect(controller.getState()).toMatchObject({
+      phase: "ready",
+      presentedFrame: 6,
+      playing: false,
+    });
+    expect(fake.sources).toHaveLength(0);
+    // Browser activation can release the old resume promise; it must not start old audio.
+    fake.context.state = "running";
+    blocked.resolve();
+    await Promise.resolve();
+    expect(fake.sources).toHaveLength(0);
+    await controller.play();
+    expect(controller.getState()).toMatchObject({
+      phase: "playing",
+      presentedFrame: 6,
+    });
+    expect(fake.sources).toHaveLength(1);
+    await controller.pause();
+    expect(controller.getState()).toMatchObject({
+      phase: "ready",
+      presentedFrame: 6,
+      playing: false,
+    });
+  } finally {
+    await controller.dispose();
+    vi.useRealTimers();
+  }
+  expect(fake.closes()).toBe(1);
 });
 
 it("cleans up preparation failures and bounds retained decoded buffers", async () => {

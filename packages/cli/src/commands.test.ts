@@ -36,6 +36,30 @@ afterEach(() => {
 });
 
 describe("doctorCommand", () => {
+  it("leads with ready when rendering works without a hardware-only guarantee", async () => {
+    const writes: string[] = [];
+    await doctorCommand(
+      {},
+      {
+        write: (value) => writes.push(value),
+        probe: () =>
+          doctorProbe({
+            rendererBinary: "installed/velocast-renderer.exe",
+            requiredGpuBackends: [
+              {
+                backend: "webcodecs",
+                available: false,
+                reason: "hardware-only guarantee unavailable",
+              },
+            ],
+          }),
+      },
+    );
+    expect(writes.join("")).toContain("Renderer: ready");
+    expect(writes.join("")).toContain("Hardware-only encoding: unavailable");
+    expect(writes.join("")).not.toContain("Diagnostics:");
+  });
+
   function doctorProbe(overrides: Partial<DoctorProbeInput>): DoctorProbeInput {
     return {
       platform: "win32",
@@ -205,7 +229,7 @@ describe("doctorCommand", () => {
 
     const output = writes.join("");
     expect(output).toContain("Velocast doctor (win32/x64)");
-    expect(output).toContain("Required GPU: available");
+    expect(output).toContain("Hardware-only encoding: available");
     expect(output).toContain("Backend: webcodecs");
     expect(output).toContain("WebCodecs runtime: available");
   });
@@ -237,7 +261,7 @@ describe("doctorCommand", () => {
     );
 
     const output = writes.join("");
-    expect(output).toContain("Required GPU: available");
+    expect(output).toContain("Hardware-only encoding: available");
     expect(output).toContain("Backend candidates: webcodecs, webcodecs");
     expect(output).not.toContain("Backend: webcodecs");
   });
@@ -316,7 +340,7 @@ describe("doctorCommand", () => {
     );
 
     const output = writes.join("");
-    expect(output).toContain("Required GPU: unavailable");
+    expect(output).toContain("Hardware-only encoding: unavailable");
     expect(output).toContain("Reason: GPU device unavailable");
     expect(output).toContain("Diagnostics:");
     expect(output).toContain(

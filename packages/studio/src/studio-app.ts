@@ -1,12 +1,11 @@
 import {
-  isVideoProject,
   normalizeAudioPlan,
-  parseVideoProject,
-  type VideoProject,
   type AudioPlan,
   type CompositionManifest,
   type CodeEdit,
   type CodeSource,
+  type StudioClientState,
+  type StudioClientCommand,
 } from "@velocast/core";
 import { StudioController } from "./controller.js";
 import {
@@ -20,7 +19,6 @@ import {
   type StudioApi,
   type StudioOutputRequest,
   type StudioSessionDescriptor,
-  type StudioInputs,
 } from "./studio-api.js";
 import type { AudioPlanClock, StudioSource, StudioState } from "./types.js";
 import { prepareWebAudioClock } from "./web-audio-clock.js";
@@ -36,18 +34,16 @@ import {
   Image,
   Pause,
   Play,
+  Plug,
   RefreshCw,
-  RotateCcw,
-  Save,
   SkipBack,
   SkipForward,
   SlidersHorizontal,
   X,
 } from "lucide";
 import { icon } from "./studio-icons.js";
-import { InputPropertiesForm } from "./input-properties-form.js";
-import { ProjectEditor } from "./project-editor.js";
 import { CodeEditor } from "./code-editor.js";
+import { StudioClientConnection } from "./studio-client.js";
 
 export interface StudioAppOptions {
   readonly root: HTMLElement;
@@ -106,11 +102,7 @@ export class StudioApp {
   private readonly play: HTMLButtonElement;
   private readonly seek: HTMLInputElement;
   private readonly exactFrame: HTMLInputElement;
-  private readonly inputsEditor: HTMLTextAreaElement;
-  private readonly inputsForm: InputPropertiesForm;
-  private readonly inputsStatus: HTMLElement;
-  private readonly saveInputs: HTMLButtonElement;
-  private readonly reloadInputs: HTMLButtonElement;
+  private readonly codeStatus: HTMLElement;
   private readonly cancelOutputButton: HTMLButtonElement;
   private readonly rangeStart: HTMLInputElement;
   private readonly rangeEnd: HTMLInputElement;
@@ -120,8 +112,6 @@ export class StudioApp {
   private readonly rangeOutput: HTMLButtonElement;
   private readonly frameReadout: HTMLElement;
   private readonly status: HTMLElement;
-  private projectEditor?: ProjectEditor;
-  private project?: VideoProject;
   private codeEditor?: CodeEditor;
   private codeSource?: CodeSource;
   private codeReadEpoch = 0;
@@ -131,7 +121,6 @@ export class StudioApp {
   >();
   private codeMessage?: string;
   private codeError = false;
-  private historyEpoch = 0;
   private readonly error: HTMLElement;
   private readonly output: HTMLElement;
   private readonly resize?: ResizeObserver;
@@ -144,19 +133,16 @@ export class StudioApp {
   private outputOperation?: AbortController;
   private outputEpoch = 0;
   private outputWork?: Promise<void>;
-  private inputsOperation?: AbortController;
-  private savedInputs?: { path: string; revision: string; text: string };
-  private inputsConflict = false;
-  private inputsMessage?: string;
-  private pendingInputs?: { path: string; revision: string };
+  private editOperation?: AbortController;
   private outputCancelMessage?: string;
   private disposed = false;
   private readonly lifetime = new AbortController();
   private readonly refreshGate = new SourceRefreshGate();
   private refreshTimer?: number;
   private readonly loads = new Set<Promise<SourceLoadResult>>();
-  private readonly inputWorks = new Set<Promise<void>>();
+  private readonly editWorks = new Set<Promise<void>>();
   private preparedAudio?: { sessionId: string; clock: AudioPlanClock };
+  private client?: StudioClientConnection;
 
   constructor(private readonly options: StudioAppOptions) {
     this.view = options.window ?? options.root.ownerDocument.defaultView!;
@@ -165,15 +151,24 @@ export class StudioApp {
     options.root.classList.add("studio-app");
     options.root.innerHTML = `
       <header class="app-header">
-        <h1>${icon(Clapperboard)} Velocast Studio</h1>
-        <div class="project-actions" data-project-actions hidden></div>
+        <h1 aria-label="Velocast Studio">${icon(Clapperboard)} Velocast Studio</h1>
+        <div class="code-actions" data-code-actions hidden></div>
+        <details class="agent-connection" data-agent-connection>
+          <summary data-agent-summary>${icon(Plug)} Connect agent</summary>
+          <div class="agent-connection-content">
+            <p>Add this MCP server to your agent. Keep Studio open.</p>
+            <pre data-agent-config>Open to load connection settings.</pre>
+            <p class="help-text" data-agent-client></p>
+            <p class="help-text" data-agent-status role="status"></p>
+          </div>
+        </details>
         <button class="primary" data-show-export type="button">${icon(Download)} Export</button>
       </header>
       <main class="workspace">
         <nav class="library" aria-label="Compositions">
           <div class="panel-heading">Compositions <span data-composition-count></span></div>
           <div class="composition-list" data-composition-list></div>
-          <div class="project-media" data-project-media hidden></div>
+          <div class="code-media" data-code-media hidden></div>
         </nav>
         <section class="monitor" aria-label="Composition viewer">
           <div class="monitor-topline">
@@ -181,7 +176,7 @@ export class StudioApp {
             <label class="composition-picker"><span class="sr-only">Composition</span><select data-composition aria-label="Composition"></select></label>
             <span class="composition-info" data-composition-info></span>
           </div>
-          <div class="viewport" data-stage><div class="empty-state">Opening composition…</div><div class="project-canvas" data-project-canvas hidden></div></div>
+          <div class="viewport" data-stage><div class="empty-state">Opening composition…</div><div class="code-canvas" data-code-canvas hidden></div></div>
         </section>
         <section class="timeline" aria-label="Playback timeline">
           <label class="scrubber"><span class="sr-only">Current frame</span><input data-seek type="range" min="0" max="0" value="0" disabled></label>
@@ -210,7 +205,7 @@ export class StudioApp {
               </div>
             </details>
           </div>
-          <div class="project-timeline" data-project-timeline hidden></div>
+          <div class="code-timeline" data-code-timeline hidden></div>
         </section>
         <aside class="inspector" aria-label="Composition settings">
           <div class="inspector-tabs" role="tablist" aria-label="Inspector">
@@ -218,13 +213,9 @@ export class StudioApp {
             <button id="studio-tab-export" data-inspector-tab="export" role="tab" aria-controls="studio-panel-export" aria-selected="false" tabindex="-1" type="button">${icon(Download)} Export</button>
           </div>
           <div class="inspector-content">
-            <section class="inspector-panel inputs-panel" id="studio-panel-properties" data-inspector-panel="properties" role="tabpanel" aria-labelledby="studio-tab-properties">
-              <div class="properties-form" data-properties-form></div>
-              <div data-project-inspector hidden></div>
-              <p class="inputs-status" id="inputs-status" data-inputs-status role="status">No saved input file selected.</p>
-              <button class="primary save-inputs" data-save-inputs type="button" disabled>${icon(Save)} Save inputs</button>
-              <textarea data-inputs hidden aria-hidden="true" tabindex="-1"></textarea>
-              <button data-reload-inputs type="button" hidden disabled>${icon(RotateCcw)} Reload saved</button>
+            <section class="inspector-panel" id="studio-panel-properties" data-inspector-panel="properties" role="tabpanel" aria-labelledby="studio-tab-properties">
+              <div data-code-inspector hidden></div>
+              <p class="code-status" data-code-status role="status">Edit this composition in your source editor.</p>
             </section>
             <section class="inspector-panel" id="studio-panel-export" data-inspector-panel="export" role="tabpanel" aria-labelledby="studio-tab-export" hidden>
               <h2>Export video</h2>
@@ -250,18 +241,7 @@ export class StudioApp {
     this.play = required(options.root, "[data-play]");
     this.seek = required(options.root, "[data-seek]");
     this.exactFrame = required(options.root, "[data-exact-frame]");
-    this.inputsEditor = required(options.root, "[data-inputs]");
-    this.inputsForm = new InputPropertiesForm(
-      required(options.root, "[data-properties-form]"),
-      (text) => {
-        if (text !== undefined) this.inputsEditor.value = text;
-        this.inputsMessage = undefined;
-        this.renderInputs();
-      },
-    );
-    this.inputsStatus = required(options.root, "[data-inputs-status]");
-    this.saveInputs = required(options.root, "[data-save-inputs]");
-    this.reloadInputs = required(options.root, "[data-reload-inputs]");
+    this.codeStatus = required(options.root, "[data-code-status]");
     this.cancelOutputButton = required(options.root, "[data-cancel-output]");
     this.rangeStart = required(options.root, "[data-range-start]");
     this.rangeEnd = required(options.root, "[data-range-end]");
@@ -308,6 +288,28 @@ export class StudioApp {
   }
 
   async start(): Promise<void> {
+    if (this.api.heartbeat && this.api.disconnect && !this.client) {
+      this.client = new StudioClientConnection({
+        api: {
+          heartbeat: this.api.heartbeat.bind(this.api),
+          disconnect: this.api.disconnect.bind(this.api),
+        },
+        getState: () => this.clientState(),
+        control: (command) => this.controlClient(command),
+        status: (connected, error) => {
+          required(this.options.root, "[data-agent-status]").textContent =
+            connected
+              ? "This tab is available to connected agents."
+              : `Studio connection interrupted; reconnecting… ${error ?? ""}`;
+          required(this.options.root, "[data-agent-summary]").innerHTML =
+            `${icon(Plug)} ${connected ? "Connect agent" : "Agent offline"}`;
+        },
+      });
+      this.options.root.setAttribute("data-client-id", this.client.clientId);
+      required(this.options.root, "[data-agent-client]").textContent =
+        `Tab: ${this.client.clientId}`;
+      this.client.start();
+    }
     await this.load(false);
     this.scheduleRefresh();
   }
@@ -315,21 +317,29 @@ export class StudioApp {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    const disconnected = this.client?.dispose();
     this.lifetime.abort();
     this.view.clearTimeout(this.refreshTimer);
     this.operation?.abort();
     this.outputOperation?.abort();
-    this.inputsOperation?.abort();
+    this.editOperation?.abort();
     this.resize?.disconnect();
-    this.projectEditor?.dispose();
     this.codeEditor?.dispose();
     await this.controller.dispose();
     await Promise.allSettled([...this.loads]);
-    await Promise.allSettled([...this.inputWorks]);
+    await Promise.allSettled([...this.editWorks]);
     await this.outputWork;
+    await disconnected;
   }
 
   private bindEvents(): void {
+    required<HTMLDetailsElement>(
+      this.options.root,
+      "[data-agent-connection]",
+    ).addEventListener("toggle", (event) => {
+      if ((event.currentTarget as HTMLDetailsElement).open)
+        void this.showAgentConnection();
+    });
     required(this.options.root, "[data-show-export]").addEventListener(
       "click",
       () => this.selectInspector("export", true),
@@ -383,17 +393,6 @@ export class StudioApp {
           void this.action(this.navigateFrame(direction));
         },
       );
-    this.inputsEditor.addEventListener("input", () => {
-      this.inputsMessage = undefined;
-      this.inputsForm.acceptJson();
-      this.renderInputs();
-    });
-    this.saveInputs.addEventListener("click", () =>
-      this.trackInput(this.persistInputs()),
-    );
-    this.reloadInputs.addEventListener("click", () =>
-      this.trackInput(this.reloadSavedInputs()),
-    );
     this.cancelOutputButton.addEventListener(
       "click",
       () => void this.cancelOutput("Output cancelled.", false),
@@ -431,7 +430,7 @@ export class StudioApp {
       (event) => {
         const target = event.target as HTMLElement | null;
         if (
-          (this.projectEditor || this.codeEditor) &&
+          this.codeEditor &&
           (event.ctrlKey || event.metaKey) &&
           !event.altKey &&
           !target?.isContentEditable &&
@@ -442,9 +441,7 @@ export class StudioApp {
           const action =
             event.shiftKey || event.key.toLowerCase() === "y" ? "redo" : "undo";
           if (this.codeEditor?.canChangeHistory(action))
-            this.trackInput(this.changeCodeHistory(action));
-          else if (this.projectEditor?.canChangeHistory(action))
-            this.trackInput(this.changeProjectHistory(action));
+            this.trackEdit(this.changeCodeHistory(action));
           return;
         }
         if (
@@ -578,8 +575,6 @@ export class StudioApp {
         committed = true;
       }
       this.snapshot = next;
-      this.syncInputs(next);
-      this.trackInput(this.refreshHistory());
       required(this.options.root, "[data-refresh-mode]").textContent =
         next.autoRefresh === false || !next.sourceRevision
           ? "manual refresh"
@@ -608,14 +603,6 @@ export class StudioApp {
       }
       if (automatic && previousState.playing) await this.controller.play();
       await this.refreshCode();
-      if (
-        this.pendingInputs &&
-        next.inputPropsFile?.path === this.pendingInputs.path &&
-        next.inputPropsFile.revision === this.pendingInputs.revision
-      ) {
-        this.pendingInputs = undefined;
-        this.inputsMessage = "Saved and applied";
-      }
       return "loaded";
     } catch (error) {
       if (candidate && !committed) {
@@ -645,11 +632,6 @@ export class StudioApp {
       ) {
         this.status.textContent = "Waiting for active work to finish";
         return "retry";
-      }
-      if (this.pendingInputs && !isAbort(error)) {
-        this.pendingInputs = undefined;
-        this.inputsMessage =
-          "Saved, but the studio could not load these changes. Fix the source and refresh.";
       }
       if (this.codeSource?.enabled && !isAbort(error)) {
         this.recordCodeFailure(
@@ -758,127 +740,22 @@ export class StudioApp {
     void this.action(this.controller.seek(frame));
   }
 
-  private syncInputs(snapshot: StudioSessionDescriptor): void {
-    const file = snapshot.inputPropsFile;
-    if (!file || !this.api.saveInputs || !this.api.getInputs) {
-      this.savedInputs = undefined;
-      this.renderInputs();
-      return;
-    }
-    const next = {
-      ...file,
-      text: JSON.stringify(snapshot.inputProps ?? {}, null, 2),
-    };
-    const dirty =
-      this.savedInputs &&
-      (this.inputsEditor.value !== this.savedInputs.text ||
-        this.inputsForm.hasInvalidDraft ||
-        this.projectEditor?.hasDraft);
-    if (dirty || this.inputsConflict) {
-      if (
-        this.savedInputs?.revision !== next.revision ||
-        this.savedInputs.path !== next.path
-      )
-        this.inputsConflict = true;
-    } else {
-      this.savedInputs = next;
-      this.inputsEditor.value = next.text;
-    }
-    this.renderInputs();
-  }
-
-  private renderInputs(): void {
-    const saved = this.savedInputs;
-    const dirty = !!saved && this.inputsEditor.value !== saved.text;
-    this.project = undefined;
-    if (saved) {
-      try {
-        const value: unknown = JSON.parse(this.inputsEditor.value);
-        if (isVideoProject(value)) this.project = parseVideoProject(value);
-      } catch {
-        /* Keep an invalid draft available for explicit reload. */
-      }
-    }
-    this.inputsForm.sync(
-      this.project ? "{}" : this.inputsEditor.value,
-      !saved || !!this.inputsOperation,
-    );
+  private renderProperties(): void {
     if (this.codeSource?.enabled) {
-      this.renderCodeInputs();
+      this.renderCodeProperties();
       return;
     }
-    if (this.codeEditor) {
-      this.codeEditor.dispose();
-      this.codeEditor = undefined;
-    }
+    this.codeEditor?.dispose();
+    this.codeEditor = undefined;
     this.options.root.setAttribute("data-code-editor", "false");
-    required<HTMLElement>(this.options.root, "[data-properties-form]").hidden =
-      !saved || !!this.project;
-    this.options.root.setAttribute(
-      "data-editable-project",
-      String(!!this.project),
-    );
     for (const part of ["inspector", "timeline", "media", "actions", "canvas"])
-      required<HTMLElement>(
-        this.options.root,
-        `[data-project-${part}]`,
-      ).hidden = !this.project;
-    if (this.project && !this.projectEditor) {
-      this.projectEditor = new ProjectEditor({
-        inspector: required(this.options.root, "[data-project-inspector]"),
-        timeline: required(this.options.root, "[data-project-timeline]"),
-        media: required(this.options.root, "[data-project-media]"),
-        actions: required(this.options.root, "[data-project-actions]"),
-        canvas: required(this.options.root, "[data-project-canvas]"),
-        change: (project) => {
-          this.inputsEditor.value = JSON.stringify(project, null, 2);
-          this.inputsMessage = undefined;
-          this.trackInput(this.persistInputs());
-        },
-        seek: (frame) => {
-          void this.action(this.seekProjectFrame(frame));
-        },
-        history: (action) => this.trackInput(this.changeProjectHistory(action)),
-        importAsset: (file) => this.trackInput(this.importProjectAsset(file)),
-        select: () => this.selectInspector("properties"),
-        draft: () => this.renderInputs(),
-      });
-    }
-    this.saveInputs.hidden =
-      !saved || (!!this.project && (!dirty || !!this.inputsOperation));
-    this.saveInputs.innerHTML = `${icon(Save)} ${this.project ? "Retry save" : "Save inputs"}`;
-    this.reloadInputs.hidden =
-      !this.inputsConflict && !this.inputsMessage?.includes("could not load");
-    this.inputsEditor.disabled = !saved || !!this.inputsOperation;
-    this.saveInputs.disabled =
-      !saved ||
-      !dirty ||
-      !this.inputsForm.valid ||
-      this.inputsConflict ||
-      !!this.inputsOperation ||
-      !!this.operation;
-    this.reloadInputs.disabled =
-      !saved || !!this.inputsOperation || !!this.operation;
-    this.refresh.disabled = !!this.operation || !!this.inputsOperation;
-    this.composition.disabled = !!this.operation || !!this.inputsOperation;
-    for (const button of this.compositionItems.values())
-      button.disabled = this.composition.disabled;
-    this.inputsStatus.textContent = !saved
-      ? "No editable properties. Open Studio with an input file to enable them."
-      : this.inputsConflict
-        ? "Saved inputs changed in another editor. Your draft is kept. Reload saved to continue."
-        : this.inputsOperation
-          ? "Saving…"
-          : !this.inputsForm.valid
-            ? "Finish editing the invalid property before saving."
-            : dirty || (this.project && this.projectEditor?.hasDraft)
-              ? "Unsaved changes"
-              : (this.inputsMessage ??
-                (this.project ? "All changes saved" : "Saved"));
-    this.renderProject();
+      required<HTMLElement>(this.options.root, `[data-code-${part}]`).hidden =
+        true;
+    this.codeStatus.textContent =
+      "Edit this composition in your source editor.";
   }
 
-  private renderProject(): void {
+  private renderCode(): void {
     const state = this.controller.getState();
     if (this.codeSource?.enabled && this.codeEditor && state.source) {
       this.codeEditor.update(
@@ -886,64 +763,51 @@ export class StudioApp {
         state.source.composition,
         state.presentedFrame ?? 0,
         !!this.operation ||
-          !!this.inputsOperation ||
-          this.codeReceiptMissing() ||
+          !!this.editOperation ||
+          (this.codeReceiptMissing() && !this.codeSource.syntaxError) ||
           !!state.playing,
         state.source.session.sourceVersion,
       );
       if (this.codeReceiptMissing()) {
         const discard = required<HTMLElement>(
           this.options.root,
-          "[data-project-inspector]",
+          "[data-code-inspector]",
         ).querySelector<HTMLButtonElement>("[data-code-discard]");
         if (discard)
-          discard.disabled = !!this.operation || !!this.inputsOperation;
+          discard.disabled = !!this.operation || !!this.editOperation;
       }
       return;
     }
-    if (!this.project || !this.projectEditor) return;
-    this.projectEditor.update(
-      this.project,
-      state.source?.composition.id ?? this.project.compositions[0]?.id ?? "",
-      state.presentedFrame ?? 0,
-      !!this.operation ||
-        !!this.inputsOperation ||
-        this.inputsConflict ||
-        !!state.playing,
-    );
   }
 
-  private renderCodeInputs(): void {
+  private renderCodeProperties(): void {
     this.options.root.setAttribute("data-code-editor", "true");
-    this.projectEditor?.dispose();
-    this.projectEditor = undefined;
-    required<HTMLElement>(this.options.root, "[data-properties-form]").hidden =
-      true;
-    this.options.root.setAttribute("data-editable-project", "true");
     for (const part of ["inspector", "timeline", "media", "actions", "canvas"])
-      required<HTMLElement>(
-        this.options.root,
-        `[data-project-${part}]`,
-      ).hidden = part === "canvas" && (!!this.codePending || this.codeError);
+      required<HTMLElement>(this.options.root, `[data-code-${part}]`).hidden =
+        part === "canvas" && (!!this.codePending || this.codeError);
     if (!this.codeEditor)
       this.codeEditor = new CodeEditor({
-        inspector: required(this.options.root, "[data-project-inspector]"),
-        timeline: required(this.options.root, "[data-project-timeline]"),
-        canvas: required(this.options.root, "[data-project-canvas]"),
-        media: required(this.options.root, "[data-project-media]"),
-        actions: required(this.options.root, "[data-project-actions]"),
+        inspector: required(this.options.root, "[data-code-inspector]"),
+        timeline: required(this.options.root, "[data-code-timeline]"),
+        canvas: required(this.options.root, "[data-code-canvas]"),
+        media: required(this.options.root, "[data-code-media]"),
+        actions: required(this.options.root, "[data-code-actions]"),
         save: (edits, revision) =>
-          this.trackInput(this.saveCode(edits, revision)),
-        history: (action) => this.trackInput(this.changeCodeHistory(action)),
+          this.trackEdit(this.saveCode(edits, revision)),
+        history: (action) => this.trackEdit(this.changeCodeHistory(action)),
+        recover: () => this.trackEdit(this.recoverCode()),
         seek: (frame) => {
-          void this.action(this.seekProjectFrame(frame));
+          void this.action(this.seekLayerFrame(frame));
         },
         draft: () => {
           this.syncCodeState();
-          this.renderInputs();
+          this.renderProperties();
           this.render(this.controller.getState());
         },
-        select: () => this.selectInspector("properties"),
+        select: () => {
+          this.selectInspector("properties");
+          this.client?.changed();
+        },
         inspect: async (id, signal) => {
           const inspected = await this.transport.inspect(
             `[data-velocast-layer="${CSS.escape(id)}"]`,
@@ -957,14 +821,12 @@ export class StudioApp {
           return inspected.bounds;
         },
       });
-    this.saveInputs.hidden = true;
-    this.reloadInputs.hidden = true;
-    this.refresh.disabled = !!this.operation || !!this.inputsOperation;
+    this.refresh.disabled = !!this.operation || !!this.editOperation;
     this.composition.disabled = this.refresh.disabled;
     for (const button of this.compositionItems.values())
       button.disabled = this.composition.disabled;
-    this.renderProject();
-    this.inputsStatus.textContent = this.inputsOperation
+    this.renderCode();
+    this.codeStatus.textContent = this.editOperation
       ? "Saving source…"
       : this.codeEditor.hasDraft
         ? "Unsaved source changes"
@@ -977,7 +839,7 @@ export class StudioApp {
       (!!this.codeSource?.enabled &&
         (!!this.codeEditor?.hasDraft ||
           !!this.codeEditor?.conflicted ||
-          !!this.inputsOperation ||
+          !!this.editOperation ||
           !!this.codePending ||
           this.controller.getState().phase === "error"))
     );
@@ -1027,7 +889,16 @@ export class StudioApp {
       return;
     }
     const failure = this.codeFailures.get(source.compositionId);
-    if (this.codeReceiptMissing()) {
+    if (source.recoveryRequired) {
+      this.codeError = true;
+      this.codeMessage =
+        "A source edit was interrupted. Recover it before editing or exporting.";
+    } else if (source.syntaxError) {
+      this.codeError = true;
+      this.codeMessage =
+        "Fix the source syntax error in your editor or use Undo.";
+      this.showError(new Error(source.syntaxError));
+    } else if (this.codeReceiptMissing()) {
       this.codeError = false;
       this.codeMessage =
         "Link source builds with studioSourcePlugin in vite.config, then rebuild to enable source editing and export.";
@@ -1071,7 +942,7 @@ export class StudioApp {
         return;
       this.codeSource = source;
       this.syncCodeState();
-      this.renderInputs();
+      this.renderProperties();
       this.render(this.controller.getState());
     } catch (error) {
       if (epoch === this.codeReadEpoch && !this.disposed && !isAbort(error)) {
@@ -1080,7 +951,7 @@ export class StudioApp {
           "Cannot read the source. Fix the error in your source editor.",
         );
         this.showError(asError(error));
-        this.renderInputs();
+        this.renderProperties();
         this.render(this.controller.getState());
       }
     }
@@ -1088,44 +959,55 @@ export class StudioApp {
 
   private saveCode(edits: CodeEdit[], revision: string): Promise<void> {
     if (!this.api.saveCode) return Promise.resolve();
-    return this.mutateCode(revision, (guard, signal) =>
-      this.api.saveCode!({ ...guard, edits }, signal),
+    return this.mutateCode((guard, signal) =>
+      this.api.saveCode!(
+        { ...guard, expectedRevision: revision, edits },
+        signal,
+      ),
     );
   }
 
   private changeCodeHistory(action: "undo" | "redo"): Promise<void> {
     if (!this.api.changeCodeHistory || !this.codeSource?.revision)
       return Promise.resolve();
-    return this.mutateCode(this.codeSource.revision, (guard, signal) =>
-      this.api.changeCodeHistory!({ ...guard, action }, signal),
+    const expectedRevision = this.codeSource.revision;
+    return this.mutateCode(
+      (guard, signal) =>
+        this.api.changeCodeHistory!(
+          { ...guard, expectedRevision, action },
+          signal,
+        ),
+      "history",
     );
   }
 
   private async mutateCode(
-    revision: string,
     apply: (
       guard: {
         compositionId: string;
-        expectedRevision: string;
         expectedSourceVersion: string;
       },
       signal: AbortSignal,
     ) => Promise<CodeSource>,
+    action: "edit" | "history" | "recover" = "edit",
   ): Promise<void> {
     const displayed = this.controller.getState().source;
     if (
       !displayed ||
       !this.codeSource?.enabled ||
-      this.codeReceiptMissing() ||
+      (action === "edit" &&
+        (this.codeReceiptMissing() || this.codeSource.syntaxError)) ||
+      (action !== "recover" && this.codeSource.recoveryRequired) ||
+      (action === "recover" && this.codeEditor?.hasDraft) ||
       this.operation ||
-      this.inputsOperation ||
+      this.editOperation ||
       this.disposed
     )
       return;
     const operation = new AbortController();
-    this.inputsOperation = operation;
+    this.editOperation = operation;
     this.clearError();
-    this.renderInputs();
+    this.renderProperties();
     this.render(this.controller.getState());
     try {
       await this.cancelOutput("Output cancelled before saving source.");
@@ -1133,7 +1015,6 @@ export class StudioApp {
       const source = await apply(
         {
           compositionId: displayed.composition.id,
-          expectedRevision: revision,
           expectedSourceVersion: displayed.session.sourceVersion,
         },
         operation.signal,
@@ -1157,13 +1038,23 @@ export class StudioApp {
         await this.refreshCode();
       }
     } finally {
-      if (this.inputsOperation === operation) this.inputsOperation = undefined;
-      this.renderInputs();
+      if (this.editOperation === operation) this.editOperation = undefined;
+      this.renderProperties();
       this.render(this.controller.getState());
     }
   }
 
-  private async seekProjectFrame(frame: number): Promise<void> {
+  private recoverCode(): Promise<void> {
+    if (!this.api.recoverCode || !this.codeSource?.recoveryRequired)
+      return Promise.resolve();
+    return this.mutateCode(
+      ({ compositionId, expectedSourceVersion }, signal) =>
+        this.api.recoverCode!({ compositionId, expectedSourceVersion }, signal),
+      "recover",
+    );
+  }
+
+  private async seekLayerFrame(frame: number): Promise<void> {
     await this.controller.pause();
     const state = this.controller.getState();
     if (!state.source) return;
@@ -1175,206 +1066,12 @@ export class StudioApp {
     await this.controller.seek(frame);
   }
 
-  private async refreshHistory(): Promise<void> {
-    if (!this.project || !this.api.getHistory) return;
-    const epoch = ++this.historyEpoch;
-    try {
-      const history = await this.api.getHistory(this.lifetime.signal);
-      if (epoch === this.historyEpoch && !this.disposed)
-        this.projectEditor?.setHistory(history);
-    } catch (error) {
-      if (epoch === this.historyEpoch && !this.disposed && !isAbort(error))
-        this.projectEditor?.setHistory({ canUndo: false, canRedo: false });
-    }
-  }
-
-  private changeProjectHistory(action: "undo" | "redo"): Promise<void> {
-    if (!this.api.changeHistory) return Promise.resolve();
-    return this.applyProjectOperation((guard, signal) =>
-      this.api.changeHistory!({ ...guard, action }, signal),
-    );
-  }
-
-  private importProjectAsset(file: File): Promise<void> {
-    if (!this.api.importAsset) return Promise.resolve();
-    return this.applyProjectOperation((guard, signal) =>
-      this.api.importAsset!({ ...guard, name: file.name, data: file }, signal),
-    );
-  }
-
-  private async applyProjectOperation(
-    apply: (
-      guard: { expectedSourceVersion: string; expectedRevision: string },
-      signal: AbortSignal,
-    ) => Promise<StudioInputs>,
-  ): Promise<void> {
-    const version = this.snapshot?.session.sourceVersion;
-    if (
-      !version ||
-      !this.savedInputs ||
-      !this.project ||
-      this.operation ||
-      this.inputsOperation ||
-      this.inputsConflict ||
-      this.disposed
-    )
-      return;
-    const operation = new AbortController();
-    this.inputsOperation = operation;
-    this.clearError();
-    this.renderInputs();
-    try {
-      await this.cancelOutput("Output cancelled before changing the project.");
-      operation.signal.throwIfAborted();
-      this.acceptInputs(
-        await apply(
-          {
-            expectedSourceVersion: version,
-            expectedRevision: this.savedInputs.revision,
-          },
-          operation.signal,
-        ),
-      );
-      const loaded = await this.load(true);
-      this.inputsMessage = this.inputRefreshMessage(
-        loaded,
-        "All changes saved",
-        "Saved, but the studio could not load these changes. Fix the source and refresh.",
-      );
-    } catch (error) {
-      if (!isAbort(error)) {
-        if (asError(error).message.includes("409")) this.inputsConflict = true;
-        this.showError(asError(error));
-      }
-    } finally {
-      if (this.inputsOperation === operation) this.inputsOperation = undefined;
-      this.renderInputs();
-      this.render(this.controller.getState());
-      await this.refreshHistory();
-    }
-  }
-
-  private trackInput(work: Promise<void>): void {
-    this.inputWorks.add(work);
+  private trackEdit(work: Promise<void>): void {
+    this.editWorks.add(work);
     void work.then(
-      () => this.inputWorks.delete(work),
-      () => this.inputWorks.delete(work),
+      () => this.editWorks.delete(work),
+      () => this.editWorks.delete(work),
     );
-  }
-
-  private acceptInputs(inputs: StudioInputs): void {
-    if (!inputs.enabled || !inputs.path || !inputs.revision)
-      throw new Error(
-        "studio.inputs_disabled: this session has no editable input file",
-      );
-    const text = JSON.stringify(inputs.inputProps ?? {}, null, 2);
-    this.savedInputs = { path: inputs.path, revision: inputs.revision, text };
-    this.inputsEditor.value = text;
-    this.inputsForm.acceptJson();
-    this.projectEditor?.discardDraft();
-    this.inputsConflict = false;
-  }
-
-  private inputRefreshMessage(
-    result: SourceLoadResult,
-    success: string | undefined,
-    failure: string,
-  ): string | undefined {
-    this.pendingInputs =
-      result === "retry" && this.savedInputs
-        ? { path: this.savedInputs.path, revision: this.savedInputs.revision }
-        : undefined;
-    return result === "retry"
-      ? "Saved; waiting for completed build"
-      : result === "loaded"
-        ? success
-        : failure;
-  }
-
-  private async persistInputs(): Promise<void> {
-    const saved = this.savedInputs;
-    const version = this.snapshot?.session.sourceVersion;
-    if (
-      !saved ||
-      !version ||
-      !this.api.saveInputs ||
-      this.inputsOperation ||
-      this.inputsConflict ||
-      this.disposed
-    )
-      return;
-    this.clearError();
-    let inputProps: unknown;
-    try {
-      inputProps = JSON.parse(this.inputsEditor.value);
-      if (
-        !inputProps ||
-        typeof inputProps !== "object" ||
-        Array.isArray(inputProps)
-      )
-        throw new Error(
-          'Use a JSON object, for example {"title": "My video"}.',
-        );
-    } catch (error) {
-      this.showError(
-        new Error(`studio.inputs_invalid: ${asError(error).message}`),
-      );
-      return;
-    }
-    const operation = new AbortController();
-    this.inputsOperation = operation;
-    this.renderInputs();
-    try {
-      await this.cancelOutput("Output cancelled before saving inputs.");
-      operation.signal.throwIfAborted();
-      const inputs = await this.api.saveInputs(
-        {
-          expectedSourceVersion: version,
-          expectedRevision: saved.revision,
-          inputProps,
-        },
-        operation.signal,
-      );
-      this.acceptInputs(inputs);
-      const loaded = await this.load(true);
-      this.inputsMessage = this.inputRefreshMessage(
-        loaded,
-        "Saved and applied",
-        "Saved, but the studio could not load these inputs. Fix them and save again.",
-      );
-    } catch (error) {
-      if (!isAbort(error)) {
-        if (asError(error).message.includes("409")) this.inputsConflict = true;
-        this.showError(asError(error));
-      }
-    } finally {
-      if (this.inputsOperation === operation) this.inputsOperation = undefined;
-      this.renderInputs();
-      this.render(this.controller.getState());
-    }
-  }
-
-  private async reloadSavedInputs(): Promise<void> {
-    if (!this.api.getInputs || this.inputsOperation || this.disposed) return;
-    const operation = new AbortController();
-    this.inputsOperation = operation;
-    this.clearError();
-    this.renderInputs();
-    try {
-      this.acceptInputs(await this.api.getInputs(operation.signal));
-      const loaded = await this.load(true);
-      this.inputsMessage = this.inputRefreshMessage(
-        loaded,
-        undefined,
-        "Saved inputs loaded into the editor. Fix the studio error and save again.",
-      );
-    } catch (error) {
-      if (!isAbort(error)) this.showError(asError(error));
-    } finally {
-      if (this.inputsOperation === operation) this.inputsOperation = undefined;
-      this.renderInputs();
-      this.render(this.controller.getState());
-    }
   }
 
   private async pollSource(): Promise<void> {
@@ -1384,7 +1081,7 @@ export class StudioApp {
       !this.disposed &&
       !this.operation &&
       !this.outputOperation &&
-      !this.inputsOperation &&
+      !this.editOperation &&
       this.snapshot === snapshot &&
       this.controller.getState().source === source;
     try {
@@ -1662,9 +1359,7 @@ export class StudioApp {
       );
       if (!this.operation) this.composition.value = source.composition.id;
       required(this.options.root, "[data-selected-composition]").textContent =
-        this.project?.compositions.find(
-          (item) => item.id === source.composition.id,
-        )?.name ?? source.composition.id;
+        source.composition.id;
       required(this.options.root, "[data-composition-info]").textContent =
         `${source.composition.width} × ${source.composition.height} · ${source.composition.fps} fps · ${(source.composition.durationFrames / source.composition.fps).toFixed(1)}s`;
       required(this.options.root, "[data-export-info]").textContent =
@@ -1675,17 +1370,18 @@ export class StudioApp {
         this.options.root,
         `[data-${direction}-frame]`,
       ).disabled = !ready || !!this.operation;
+    const outputReady = ready && ["ready", "playing"].includes(state.phase);
     this.frameOutput.disabled =
-      !ready ||
+      !outputReady ||
       !!this.outputOperation ||
       !!this.operation ||
-      !!this.inputsOperation ||
+      !!this.editOperation ||
       this.codeOutputBlocked();
     this.rangeOutput.disabled =
-      !ready ||
+      !outputReady ||
       !!this.outputOperation ||
       !!this.operation ||
-      !!this.inputsOperation ||
+      !!this.editOperation ||
       this.codeOutputBlocked();
     this.videoOutput.disabled = this.rangeOutput.disabled;
     const codeExportState = required<HTMLElement>(
@@ -1702,8 +1398,135 @@ export class StudioApp {
           : "Waiting for the saved source to appear in the viewer.";
     if (state.error) this.showError(state.error);
     this.updateFrameReadout();
-    this.renderProject();
+    this.renderCode();
     this.fitIframe();
+    this.client?.changed();
+  }
+
+  private clientState(): Omit<StudioClientState, "revision"> {
+    const state = this.controller.getState();
+    const error =
+      (this.error.hidden ? undefined : this.error.textContent || undefined) ??
+      (this.codeError ? this.codeMessage : undefined);
+    return {
+      sourceVersion: state.source?.session.sourceVersion ?? "",
+      compositions: this.compositions.map(
+        ({ id, width, height, fps, durationFrames }) => ({
+          id,
+          width,
+          height,
+          fps,
+          durationFrames,
+        }),
+      ),
+      compositionId: state.source?.composition.id,
+      frame: state.presentedFrame,
+      selectedElementId: this.codeEditor?.selection,
+      sourceRevision:
+        this.codeReceipt() ??
+        (this.snapshot?.session.sourceVersion ===
+        state.source?.session.sourceVersion
+          ? this.snapshot?.sourceRevision
+          : undefined),
+      dirty: !!this.codeEditor?.hasDraft,
+      ready:
+        !!state.source &&
+        state.presentedFrame !== undefined &&
+        ["ready", "playing"].includes(state.phase) &&
+        !this.operation &&
+        !this.editOperation,
+      exportReady: !this.videoOutput.disabled && !!state.source,
+      playing: !!state.playing,
+      error: error?.slice(0, 4000),
+    };
+  }
+
+  private async controlClient(command: StudioClientCommand): Promise<void> {
+    const state = this.clientState();
+    if (
+      (!state.ready && !(command.action === "pause" && state.playing)) ||
+      this.disposed
+    )
+      throw new Error(
+        "studio.client_not_ready: Wait for the current operation to finish.",
+      );
+    if (command.action === "play" || command.action === "pause") {
+      await (command.action === "play"
+        ? this.controller.play()
+        : this.controller.pause());
+      const current = this.clientState();
+      if (
+        !current.ready ||
+        current.sourceVersion !== state.sourceVersion ||
+        current.playing !== (command.action === "play")
+      )
+        throw new Error(
+          current.error ??
+            "studio.client_interrupted: Playback did not reach the requested state.",
+        );
+    } else if (command.action === "seek") {
+      const composition = this.controller.getState().source!.composition;
+      if (command.frame >= composition.durationFrames)
+        throw new Error(
+          `studio.frame_invalid: Frame must be within [0, ${composition.durationFrames}).`,
+        );
+      await this.seekLayerFrame(command.frame);
+      const current = this.clientState();
+      if (
+        !current.ready ||
+        current.sourceVersion !== state.sourceVersion ||
+        current.compositionId !== state.compositionId ||
+        current.frame !== command.frame
+      )
+        throw new Error(
+          "studio.client_interrupted: The requested frame was not presented. Read the current state and retry.",
+        );
+    } else if (command.action === "select") {
+      if (!this.codeEditor)
+        throw new Error(
+          "studio.source_unavailable: This composition has no inspectable source elements.",
+        );
+      this.codeEditor.selectElement(command.elementId);
+    } else if (command.action === "composition") {
+      if (state.dirty)
+        throw new Error(
+          "studio.client_dirty: Save or discard this tab's edits before switching compositions.",
+        );
+      if (!this.compositions.some(({ id }) => id === command.compositionId))
+        throw new Error(
+          `studio.composition_missing: No composition named ${command.compositionId}`,
+        );
+      await this.selectComposition(command.compositionId);
+      const current = this.clientState();
+      if (
+        !current.ready ||
+        current.sourceVersion !== state.sourceVersion ||
+        current.compositionId !== command.compositionId
+      )
+        throw new Error(
+          current.error ??
+            "studio.client_interrupted: The requested composition was not loaded. Read the current state and retry.",
+        );
+    }
+  }
+
+  private async showAgentConnection(): Promise<void> {
+    const config = required(this.options.root, "[data-agent-config]");
+    if (!this.api.agentConnection) {
+      config.textContent =
+        "Agent connections require the Velocast Studio server.";
+      return;
+    }
+    try {
+      const connection = await this.api.agentConnection(this.lifetime.signal);
+      config.textContent = JSON.stringify(
+        { mcpServers: { velocast: connection } },
+        null,
+        2,
+      );
+    } catch (error) {
+      if (!this.disposed) config.textContent = asError(error).message;
+    }
   }
 
   private updateFrameReadout(): void {
@@ -1718,10 +1541,7 @@ export class StudioApp {
       ...this.compositions.map((composition) =>
         Object.assign(this.options.root.ownerDocument.createElement("option"), {
           value: composition.id,
-          textContent:
-            this.project?.compositions.find(
-              (item) => item.id === composition.id,
-            )?.name ?? composition.id,
+          textContent: composition.id,
           selected: composition.id === selected,
         }),
       ),
@@ -1740,9 +1560,7 @@ export class StudioApp {
           String(composition.id === selected),
         );
         const title = this.options.root.ownerDocument.createElement("span");
-        title.textContent =
-          this.project?.compositions.find((item) => item.id === composition.id)
-            ?.name ?? composition.id;
+        title.textContent = composition.id;
         const detail = this.options.root.ownerDocument.createElement("small");
         detail.textContent = `${(composition.durationFrames / composition.fps).toFixed(1)}s · ${composition.fps} fps`;
         const mark = this.options.root.ownerDocument.createElement("span");
@@ -1776,13 +1594,6 @@ export class StudioApp {
       transform: `translate(-50%, -50%) scale(${Math.max(0.01, scale)})`,
     });
     const actualScale = Math.max(0.01, scale);
-    this.projectEditor?.fit(
-      source.composition.width,
-      source.composition.height,
-      actualScale,
-      (this.stage.clientWidth - source.composition.width * actualScale) / 2,
-      (this.stage.clientHeight - source.composition.height * actualScale) / 2,
-    );
     this.codeEditor?.fit(
       source.composition.width,
       source.composition.height,
@@ -1793,19 +1604,21 @@ export class StudioApp {
   }
 
   private setBusy(busy: boolean): void {
-    this.refresh.disabled = busy || !!this.inputsOperation;
-    this.composition.disabled = busy || !!this.inputsOperation;
-    this.renderInputs();
+    this.refresh.disabled = busy || !!this.editOperation;
+    this.composition.disabled = busy || !!this.editOperation;
+    this.renderProperties();
     this.render(this.controller.getState());
   }
 
   private clearError(): void {
     this.error.hidden = true;
     this.error.textContent = "";
+    this.client?.changed();
   }
 
   private showError(error: Error): void {
     this.error.hidden = false;
     this.error.textContent = error.message;
+    this.client?.changed();
   }
 }

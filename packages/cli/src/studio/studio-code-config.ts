@@ -1,10 +1,23 @@
-import { lstatSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { Config } from "@velocast/core";
 import { isObjectRecord } from "../internal/validation.js";
 
 type StudioConfig = NonNullable<Config["studio"]>;
 const roots = new WeakMap<StudioConfig, string>();
+
+export function sourceHistoryDirectory(root: string, path: string): string {
+  const key = relative(root, path).replaceAll("\\", "/");
+  return join(
+    root,
+    ".velocast",
+    "source-history",
+    createHash("sha256")
+      .update(process.platform === "win32" ? key.toLowerCase() : key)
+      .digest("hex"),
+  );
+}
 
 export class StudioCodeError extends Error {
   constructor(
@@ -16,7 +29,36 @@ export class StudioCodeError extends Error {
   }
 }
 
-export function checkCodePath(root: string, path: string): void {
+function hasPendingRecovery(root: string, path: string): boolean {
+  try {
+    const directory = sourceHistoryDirectory(root, path);
+    let current = root;
+    for (const part of relative(root, directory).split(/[\\/]/)) {
+      current = join(current, part);
+      const info = lstatSync(current);
+      if (!info.isDirectory() || info.isSymbolicLink()) return false;
+    }
+    const pending = join(directory, "pending.json");
+    const info = lstatSync(pending);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 2 * 1024 * 1024)
+      return false;
+    const value = JSON.parse(readFileSync(pending, "utf8"));
+    return (
+      value.version === 1 &&
+      value.source === relative(root, path) &&
+      typeof value.transaction === "string" &&
+      /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/.test(value.transaction)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function checkCodePath(
+  root: string,
+  path: string,
+  allowPendingRecovery = false,
+): void {
   const name = relative(root, path);
   if (
     !name ||
@@ -37,7 +79,19 @@ export function checkCodePath(root: string, path: string): void {
       throw new Error("the configured project directory changed");
     for (const [index, part] of segments.entries()) {
       current = join(current, part);
-      const info = lstatSync(current);
+      let info;
+      try {
+        info = lstatSync(current);
+      } catch (error) {
+        if (
+          (error as NodeJS.ErrnoException).code === "ENOENT" &&
+          index === segments.length - 1 &&
+          allowPendingRecovery &&
+          hasPendingRecovery(root, path)
+        )
+          return;
+        throw error;
+      }
       if (
         info.isSymbolicLink() ||
         (index === segments.length - 1 ? !info.isFile() : !info.isDirectory())
@@ -85,7 +139,7 @@ export function normalizeStudioConfig(
         `studio.sources.${id}: expected a JS, JSX, TS or TSX source file`,
       );
     const path = resolve(root, name);
-    checkCodePath(root, path);
+    checkCodePath(root, path, true);
     const key = process.platform === "win32" ? path.toLowerCase() : path;
     if (seen.has(key))
       throw new StudioCodeError(

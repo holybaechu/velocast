@@ -225,7 +225,7 @@ it("invalid clock positions are visible and close resources without another comm
   await controller.dispose();
 });
 
-it("reports blocked audio resume and preserves its cause after cleanup", async () => {
+it("reports blocked audio resume while keeping the paused frame available for retry", async () => {
   const original = new Error("resume denied");
   const clock = scheduler();
   const audio = audioClock();
@@ -238,11 +238,23 @@ it("reports blocked audio resume and preserves its cause after cleanup", async (
   });
   await controller.refresh(audioSource());
   await expect(controller.play()).rejects.toMatchObject({ cause: original });
-  expect(controller.getState().phase).toBe("error");
+  expect(controller.getState()).toMatchObject({
+    phase: "ready",
+    playing: false,
+    presentedFrame: 0,
+    error: { cause: original },
+  });
+  expect(audio.port.dispose).not.toHaveBeenCalled();
+  expect(port.dispose).not.toHaveBeenCalled();
+  expect(clock.callbacks.size).toBe(0);
+  await controller.play();
+  expect(controller.getState()).toMatchObject({
+    phase: "playing",
+    error: undefined,
+  });
+  await controller.dispose();
   expect(audio.port.dispose).toHaveBeenCalledOnce();
   expect(port.dispose).toHaveBeenCalledOnce();
-  expect(clock.callbacks.size).toBe(0);
-  await controller.dispose();
 });
 
 it("pause can cancel an unresolved audio resume and joins disposal before replacement", async () => {

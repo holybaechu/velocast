@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { StudioApp } from "./studio-app.js";
-import { BROWSER_PROTOCOL_VERSION, type CodeSource } from "@velocast/core";
+import {
+  BROWSER_PROTOCOL_VERSION,
+  type CodeSource,
+  type StudioHeartbeat,
+  type StudioClientCommand,
+} from "@velocast/core";
 import type { StudioApi, StudioSessionDescriptor } from "./studio-api.js";
 import type { RpcRequest } from "./rpc-wire.js";
 
@@ -259,19 +264,6 @@ function workspace(initialInputs: unknown = { title: "Saved" }) {
     prepareRefresh: async () => (candidate = descriptor()),
     commitRefresh: async () => (active = candidate!),
     discardRefresh: async () => active,
-    getInputs: async () => ({
-      enabled: true,
-      path: "C:/video/inputs.json",
-      revision: `revision-${revision}`,
-      inputProps: saved,
-    }),
-    saveInputs: async (request) => {
-      if (request.expectedRevision !== `revision-${revision}`)
-        throw new Error("studio.api_http_409: studio.inputs_conflict");
-      saved = request.inputProps;
-      revision++;
-      return api.getInputs!();
-    },
     output: async () => ({ outputPath: "frame.png" }),
   };
   const app = new StudioApp({
@@ -282,78 +274,193 @@ function workspace(initialInputs: unknown = { title: "Saved" }) {
   apps.push(app);
   const control = <T extends HTMLElement = HTMLElement>(selector: string) =>
     controls.get(selector)! as T;
-  const edit = (text: string) => {
-    const input = control<HTMLTextAreaElement>("[data-inputs]");
-    input.value = text;
-    input.dispatchEvent(new Event("input"));
+  const changeInputs = (inputProps: unknown) => {
+    saved = inputProps;
+    revision++;
   };
-  const properties = () =>
-    new Map(
-      Array.from(control("[data-properties-form]").children).flatMap((label) =>
-        Array.from(label.children)
-          .filter((child) => child.getAttribute("data-input-prop") !== null)
-          .map(
-            (child) =>
-              [
-                child.getAttribute("data-input-prop")!,
-                child as HTMLInputElement,
-              ] as const,
-          ),
-      ),
-    );
-  return { app, api, view, control, edit, soughtFrames, properties };
+  return { app, api, view, control, soughtFrames, changeInputs };
 }
 
-it("keeps an unsaved human draft when an agent changes saved inputs and requires an explicit reload", async () => {
+it("shares this tab's presented frame and acknowledges explicit agent seek and composition changes", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = workspace();
+    const sent: StudioHeartbeat[] = [];
+    let command: StudioClientCommand | undefined;
+    f.api.heartbeat = async (_id, value) => {
+      sent.push(value);
+      const commands = command ? [command] : [];
+      command = undefined;
+      return { commands };
+    };
+    f.api.disconnect = async () => {};
+    await f.app.start();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sent.at(-1)!.state).toMatchObject({
+      compositionId: "scene",
+      frame: 0,
+      ready: true,
+      exportReady: true,
+      sourceVersion: "source-1",
+      dirty: false,
+    });
+    command = {
+      id: "seek",
+      action: "seek",
+      frame: 17,
+      expectedRevision: sent.at(-1)!.state.revision,
+      expectedSourceVersion: "source-1",
+    };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sent.at(-1)).toMatchObject({
+      state: { frame: 17 },
+      acknowledgements: [{ id: "seek", status: "succeeded" }],
+    });
+    expect(f.control<HTMLInputElement>("[data-exact-frame]").value).toBe("17");
+    command = {
+      id: "composition",
+      action: "composition",
+      compositionId: "other",
+      expectedRevision: sent.at(-1)!.state.revision,
+      expectedSourceVersion: "source-1",
+    };
+    await vi.advanceTimersByTimeAsync(1010);
+    expect(sent.at(-1)).toMatchObject({
+      state: { compositionId: "other", frame: 0 },
+      acknowledgements: [{ id: "composition", status: "succeeded" }],
+    });
+    command = {
+      id: "play",
+      action: "play",
+      expectedRevision: sent.at(-1)!.state.revision,
+      expectedSourceVersion: "source-1",
+    };
+    await vi.advanceTimersByTimeAsync(1010);
+    expect(sent.at(-1)).toMatchObject({
+      state: { playing: true },
+      acknowledgements: [{ id: "play", status: "succeeded" }],
+    });
+    command = {
+      id: "pause",
+      action: "pause",
+      expectedRevision: sent.at(-1)!.state.revision,
+      expectedSourceVersion: "source-1",
+    };
+    await vi.advanceTimersByTimeAsync(1010);
+    expect(sent.at(-1)).toMatchObject({
+      state: { playing: false, ready: true },
+      acknowledgements: [{ id: "pause", status: "succeeded" }],
+    });
+    expect(sent.at(-1)!.state.frame).toBeGreaterThan(0);
+    f.changeInputs({ title: "bad" });
+    f.control<HTMLButtonElement>("[data-refresh]").click();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sent.at(-1)!.state).toMatchObject({
+      sourceVersion: "source-1",
+      error: expect.stringContaining("bad title"),
+    });
+    await f.app.dispose();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("recovers an interrupted source edit explicitly and enables exports only after recovery", async () => {
   const f = workspace();
-  await f.app.start();
-  expect(f.control("[data-error]").textContent).toBe("");
-  f.edit('{"title":"Human draft"}');
-  expect(f.control("[data-inputs-status]").textContent).toContain(
-    "Unsaved changes",
-  );
-  await f.api.saveInputs!({
-    expectedSourceVersion: "source-1",
-    expectedRevision: "revision-1",
-    inputProps: { title: "Agent edit" },
+  let source: CodeSource = {
+    enabled: true,
+    compositionId: "scene",
+    path: "src/Scene.tsx",
+    recoveryRequired: true,
+    recoveryPath: ".velocast/source-history/scene",
+    canUndo: true,
+    canRedo: false,
+    elements: [],
+  };
+  f.api.getCode = async () => source;
+  const getSession = f.api.getSession;
+  f.api.getSession = async () => ({
+    ...(await getSession()),
+    codeRevisions: { scene: "file-1" },
   });
-  f.control("[data-refresh]").click();
-  await vi.waitFor(() =>
-    expect(f.control("[data-inputs-status]").textContent).toContain(
-      "Your draft is kept",
-    ),
+  f.api.recoverCode = vi.fn(
+    async () =>
+      (source = { ...source, revision: "file-1", recoveryRequired: false }),
   );
-  expect(f.control<HTMLTextAreaElement>("[data-inputs]").value).toBe(
-    '{"title":"Human draft"}',
-  );
-  expect(f.control<HTMLButtonElement>("[data-save-inputs]").disabled).toBe(
+  await f.app.start();
+  expect(f.control<HTMLButtonElement>("[data-output-video]").disabled).toBe(
     true,
   );
-  expect(f.control("[data-inputs-status]").textContent).toContain(
-    "Your draft is kept",
-  );
-  f.control("[data-reload-inputs]").click();
+  f.control("[data-code-actions]")
+    .querySelector<HTMLButtonElement>("[data-code-recover]")!
+    .click();
   await vi.waitFor(() =>
-    expect(f.control<HTMLTextAreaElement>("[data-inputs]").value).toContain(
-      "Agent edit",
-    ),
-  );
-  await vi.waitFor(() =>
-    expect(f.control<HTMLButtonElement>("[data-reload-inputs]").disabled).toBe(
+    expect(f.control<HTMLButtonElement>("[data-output-video]").disabled).toBe(
       false,
     ),
   );
-  f.edit('{"title":"Combined edit"}');
-  f.control("[data-save-inputs]").click();
+  expect(f.api.recoverCode).toHaveBeenCalledWith(
+    { compositionId: "scene", expectedSourceVersion: "source-1" },
+    expect.any(AbortSignal),
+  );
+  expect(f.control("[data-code-status]").textContent).toBe(
+    "Saved and displayed",
+  );
+});
+
+it("shows saved source syntax errors and permits undo to restore a valid displayed revision", async () => {
+  const f = workspace();
+  let source: CodeSource = {
+    enabled: true,
+    compositionId: "scene",
+    path: "src/Scene.tsx",
+    revision: "file-2",
+    syntaxError: "src/Scene.tsx:4: Unexpected token",
+    canUndo: true,
+    canRedo: false,
+    elements: [],
+  };
+  f.api.getCode = async () => source;
+  const getSession = f.api.getSession;
+  f.api.getSession = async () => ({
+    ...(await getSession()),
+    codeRevisions: { scene: "file-1" },
+  });
+  f.api.changeCodeHistory = vi.fn(
+    async () =>
+      (source = {
+        ...source,
+        syntaxError: undefined,
+        revision: "file-1",
+        canUndo: false,
+        canRedo: true,
+      }),
+  );
+  await f.app.start();
+  expect(f.control("[data-error]").textContent).toContain("src/Scene.tsx:4");
+  expect(f.control<HTMLButtonElement>("[data-output-video]").disabled).toBe(
+    true,
+  );
+  const undo = f
+    .control("[data-code-actions]")
+    .querySelector<HTMLButtonElement>('[data-code-history="undo"]')!;
+  expect(undo.disabled).toBe(false);
+  undo.click();
   await vi.waitFor(() =>
-    expect(f.control("[data-inputs-status]").textContent).toContain(
-      "Saved and applied",
+    expect(f.control<HTMLButtonElement>("[data-output-video]").disabled).toBe(
+      false,
     ),
   );
-  expect((await f.api.getInputs!()).inputProps).toEqual({
-    title: "Combined edit",
-  });
-  expect((await f.api.getInputs!()).revision).toBe("revision-3");
+  expect(f.api.changeCodeHistory).toHaveBeenCalledWith(
+    {
+      action: "undo",
+      compositionId: "scene",
+      expectedSourceVersion: "source-1",
+      expectedRevision: "file-2",
+    },
+    expect.any(AbortSignal),
+  );
+  expect(f.control("[data-error]").hidden).toBe(true);
 });
 
 it.each(["Edited source", "bad"])(
@@ -414,24 +521,18 @@ it.each(["Edited source", "bad"])(
             },
           ],
         };
-        await f.api.saveInputs!({
-          expectedSourceVersion: "source-1",
-          expectedRevision: "revision-1",
-          inputProps: { title },
-        });
+        f.changeInputs({ title });
         return source;
       });
       f.api.saveCode = save;
       await f.app.start();
-      const inspector = f.control("[data-project-inspector]");
+      const inspector = f.control("[data-code-inspector]");
       const field = inspector.querySelector<HTMLTextAreaElement>(
         '[data-code-field="text"]',
       )!;
       field.value = title;
       field.dispatchEvent(new Event("input"));
-      expect(f.control("[data-inputs-status]").textContent).toContain(
-        "Unsaved",
-      );
+      expect(f.control("[data-code-status]").textContent).toContain("Unsaved");
       expect(f.control<HTMLButtonElement>("[data-output-video]").disabled).toBe(
         true,
       );
@@ -446,7 +547,7 @@ it.each(["Edited source", "bad"])(
         },
         expect.any(AbortSignal),
       );
-      expect(f.control("[data-inputs-status]").textContent).toContain(
+      expect(f.control("[data-code-status]").textContent).toContain(
         "waiting for completed build",
       );
       expect(f.control<HTMLButtonElement>("[data-output-video]").disabled).toBe(
@@ -454,7 +555,7 @@ it.each(["Edited source", "bad"])(
       );
       await vi.advanceTimersByTimeAsync(1500);
       if (title === "bad") {
-        expect(f.control("[data-inputs-status]").textContent).toContain(
+        expect(f.control("[data-code-status]").textContent).toContain(
           "could not be displayed",
         );
         expect(f.control("[data-error]").textContent).toContain("inputs.title");
@@ -462,7 +563,7 @@ it.each(["Edited source", "bad"])(
           f.control<HTMLButtonElement>("[data-output-video]").disabled,
         ).toBe(true);
       } else {
-        expect(f.control("[data-inputs-status]").textContent).toBe(
+        expect(f.control("[data-code-status]").textContent).toBe(
           "Saved and displayed",
         );
         expect(
@@ -518,7 +619,7 @@ it("keeps rejected literal-edit errors visible until the invalid draft is discar
     );
   };
   await f.app.start();
-  const inspector = f.control("[data-project-inspector]");
+  const inspector = f.control("[data-code-inspector]");
   const duration = inspector.querySelector<HTMLInputElement>(
     '[data-code-field="durationFrames"]',
   )!;
@@ -563,11 +664,11 @@ it.each(["file-1", undefined])(
     expect(f.control<HTMLButtonElement>("[data-output-video]").disabled).toBe(
       true,
     );
-    expect(f.control("[data-inputs-status]").textContent).toContain(
+    expect(f.control("[data-code-status]").textContent).toContain(
       receipt ? "waiting for completed build" : "studioSourcePlugin",
     );
     const text = f
-      .control("[data-project-inspector]")
+      .control("[data-code-inspector]")
       .querySelector<HTMLInputElement>('[data-code-field="text"]')!;
     expect(text.disabled).toBe(!receipt);
   },
@@ -603,7 +704,7 @@ it("accepts a comment-only source revision only when its completed build receipt
       true,
     );
     await vi.advanceTimersByTimeAsync(750);
-    expect(f.control("[data-inputs-status]").textContent).toBe(
+    expect(f.control("[data-code-status]").textContent).toBe(
       "Saved and displayed",
     );
     expect(f.control<HTMLButtonElement>("[data-output-video]").disabled).toBe(
@@ -674,7 +775,7 @@ it.each(["pending", "failed"])(
     expect(f.control<HTMLButtonElement>("[data-output-video]").disabled).toBe(
       true,
     );
-    expect(f.control("[data-inputs-status]").textContent).toContain(
+    expect(f.control("[data-code-status]").textContent).toContain(
       phase === "failed"
         ? "could not be displayed"
         : "waiting for completed build",
@@ -712,66 +813,11 @@ it.each(["refresh_busy", "output_busy", "build_in_progress"])(
         .mockImplementation(prepareRefresh);
       f.api.prepareRefresh = prepare;
       await f.app.start();
-      f.edit('{"title":"Human draft"}');
       await vi.advanceTimersByTimeAsync(1500);
       expect(prepare).toHaveBeenCalledTimes(1);
       expect(f.control("[data-error]").textContent).toBe("");
       await vi.advanceTimersByTimeAsync(1500);
       expect(prepare).toHaveBeenCalledTimes(2);
-      expect(f.control<HTMLTextAreaElement>("[data-inputs]").value).toBe(
-        '{"title":"Human draft"}',
-      );
-      await f.app.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  },
-);
-
-it.each(["Saved during build", "bad"])(
-  "keeps a successful save pending during compilation and reports its eventual load result: %s",
-  async (title) => {
-    vi.useFakeTimers();
-    try {
-      const f = workspace();
-      const getSession = f.api.getSession;
-      f.api.getSession = async () => ({
-        ...(await getSession()),
-        sourceRevision: "build-1",
-      });
-      f.api.changes = async () => ({ enabled: true, revision: "build-2" });
-      const prepareRefresh = f.api.prepareRefresh!;
-      f.api.prepareRefresh = vi
-        .fn()
-        .mockRejectedValueOnce(
-          new Error(
-            "studio.api_http_409: studio.build_in_progress: waiting for compilation",
-          ),
-        )
-        .mockImplementation(prepareRefresh);
-      await f.app.start();
-      f.edit(JSON.stringify({ title }));
-      f.control("[data-save-inputs]").click();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(f.control("[data-inputs-status]").textContent).toBe(
-        "Saved; waiting for completed build",
-      );
-      expect(f.control("[data-error]").textContent).toBe("");
-      expect(f.control("[data-reload-inputs]").hidden).toBe(true);
-      expect((await f.api.getInputs!()).inputProps).toEqual({ title });
-      await vi.advanceTimersByTimeAsync(1500);
-      if (title === "bad") {
-        expect(f.control("[data-inputs-status]").textContent).toContain(
-          "could not load",
-        );
-        expect(f.control("[data-error]").textContent).toContain("inputs.title");
-        expect(f.control("[data-reload-inputs]").hidden).toBe(false);
-      } else {
-        expect(f.control("[data-inputs-status]").textContent).toBe(
-          "Saved and applied",
-        );
-        expect(f.control("[data-reload-inputs]").hidden).toBe(true);
-      }
       await f.app.dispose();
     } finally {
       vi.useRealTimers();
@@ -832,26 +878,21 @@ it("keeps composition navigation and the compact selector on the same selected c
   expect(items[0]!.getAttribute("aria-pressed")).toBe("true");
 });
 
-it("retains the working studio after saved inputs fail composition validation and can recover", async () => {
+it("retains the displayed frame after an external input change fails validation and recovers", async () => {
   const f = workspace();
   await f.app.start();
-  f.edit('{"title":"bad"}');
-  f.control("[data-save-inputs]").click();
+  f.changeInputs({ title: "bad" });
+  f.control("[data-refresh]").click();
   await vi.waitFor(() =>
-    expect(f.control("[data-inputs-status]").textContent).toContain(
-      "could not load",
-    ),
+    expect(f.control("[data-error]").textContent).toContain("inputs.title"),
   );
-  expect((await f.api.getInputs!()).inputProps).toEqual({ title: "bad" });
   expect(f.control("[data-selected-composition]").textContent).toBe("scene");
-  expect(f.control("[data-error]").textContent).toContain("inputs.title");
-  f.edit('{"title":"Recovered"}');
-  f.control("[data-save-inputs]").click();
+  f.changeInputs({ title: "Recovered" });
+  f.control("[data-refresh]").click();
   await vi.waitFor(() =>
-    expect(f.control("[data-inputs-status]").textContent).toContain(
-      "Saved and applied",
-    ),
+    expect(f.control("[data-status]").textContent).toBe("Frame ready"),
   );
+  expect(f.control("[data-error]").textContent).toBe("");
 });
 
 it("seeks exact frames and window bounds while leaving editing shortcuts alone", async () => {
@@ -980,156 +1021,6 @@ it("shows the published artifact when a user cancellation loses the publication 
   expect(f.control<HTMLButtonElement>("[data-cancel-output]").hidden).toBe(
     true,
   );
-});
-
-it.each(["save", "reload"])(
-  "enables exports when the %s input operation finishes",
-  async (operation) => {
-    const f = workspace();
-    await f.app.start();
-    if (operation === "save") f.edit('{"title":"Ready to export"}');
-    f.control(
-      operation === "save" ? "[data-save-inputs]" : "[data-reload-inputs]",
-    ).click();
-    await vi.waitFor(() =>
-      expect(
-        f.control<HTMLButtonElement>("[data-reload-inputs]").disabled,
-      ).toBe(false),
-    );
-    expect(f.control("[data-status]").textContent).toBe("Frame ready");
-    expect(f.control<HTMLButtonElement>("[data-output-frame]").disabled).toBe(
-      false,
-    );
-    expect(f.control<HTMLButtonElement>("[data-output-range]").disabled).toBe(
-      false,
-    );
-  },
-);
-
-it("edits primitive properties through the same JSON draft and preserves nested values when saved", async () => {
-  const f = workspace({
-    title: "Saved",
-    accentColor: "#123456",
-    count: 2.5,
-    enabled: true,
-    nested: { items: [1, 2] },
-    array: ["keep"],
-  });
-  await f.app.start();
-  const fields = f.properties();
-  expect([...fields.keys()]).toEqual([
-    "title",
-    "accentColor",
-    "count",
-    "enabled",
-  ]);
-  expect(fields.get("accentColor")!.type).toBe("color");
-  expect(fields.get("count")!.type).toBe("number");
-  expect(fields.get("enabled")!.checked).toBe(true);
-  fields.get("title")!.value = "From the form";
-  fields.get("title")!.dispatchEvent(new Event("input"));
-  fields.get("count")!.value = "";
-  fields.get("count")!.dispatchEvent(new Event("input"));
-  expect(f.control<HTMLButtonElement>("[data-save-inputs]").disabled).toBe(
-    true,
-  );
-  expect(
-    JSON.parse(f.control<HTMLTextAreaElement>("[data-inputs]").value).count,
-  ).toBe(2.5);
-  expect(fields.get("count")!.value).toBe("");
-  fields.get("title")!.value = "From the form";
-  fields.get("title")!.dispatchEvent(new Event("input"));
-  expect(fields.get("count")!.value).toBe("");
-  expect(f.control<HTMLButtonElement>("[data-save-inputs]").disabled).toBe(
-    true,
-  );
-  fields.get("count")!.value = "7.25";
-  fields.get("count")!.dispatchEvent(new Event("input"));
-  fields.get("enabled")!.checked = false;
-  fields.get("enabled")!.dispatchEvent(new Event("input"));
-  fields.get("accentColor")!.value = "#abcdef";
-  fields.get("accentColor")!.dispatchEvent(new Event("input"));
-  const expected = {
-    title: "From the form",
-    accentColor: "#abcdef",
-    count: 7.25,
-    enabled: false,
-    nested: { items: [1, 2] },
-    array: ["keep"],
-  };
-  expect(
-    JSON.parse(f.control<HTMLTextAreaElement>("[data-inputs]").value),
-  ).toEqual(expected);
-  f.control("[data-save-inputs]").click();
-  await vi.waitFor(() =>
-    expect(f.control("[data-inputs-status]").textContent).toBe(
-      "Saved and applied",
-    ),
-  );
-  expect((await f.api.getInputs!()).inputProps).toEqual(expected);
-});
-
-it("keeps a text control while typing long or hex text, and synchronizes valid raw JSON without losing an invalid draft", async () => {
-  const f = workspace();
-  await f.app.start();
-  const title = f.properties().get("title")!;
-  title.value = "a".repeat(110);
-  title.dispatchEvent(new Event("input"));
-  expect(f.properties().get("title")).toBe(title);
-  title.value = "#123456";
-  title.dispatchEvent(new Event("input"));
-  expect(f.properties().get("title")).toBe(title);
-  expect(title.type).toBe("text");
-  f.edit("{");
-  expect(title.disabled).toBe(true);
-  expect(f.control<HTMLTextAreaElement>("[data-inputs]").value).toBe("{");
-  expect(f.control<HTMLButtonElement>("[data-save-inputs]").disabled).toBe(
-    true,
-  );
-  title.value = "must not replace JSON";
-  title.dispatchEvent(new Event("input"));
-  expect(f.control<HTMLTextAreaElement>("[data-inputs]").value).toBe("{");
-  f.edit('{"title":"Raw edit","nested":{"enabled":true}}');
-  expect(f.properties().get("title")!.value).toBe("Raw edit");
-  expect(f.properties().get("title")!.disabled).toBe(false);
-  const input = f.control<HTMLInputElement>("[data-exact-frame]");
-  input.value = "12";
-  input.dispatchEvent(new Event("change"));
-  await vi.waitFor(() =>
-    expect(f.control("[data-frame]").textContent).toContain("0012"),
-  );
-  expect(f.properties().get("title")!.value).toBe("Raw edit");
-  expect(
-    JSON.parse(f.control<HTMLTextAreaElement>("[data-inputs]").value).nested,
-  ).toEqual({ enabled: true });
-});
-
-it("keeps an incomplete numeric draft when another editor refreshes saved inputs", async () => {
-  const f = workspace({ count: 2, title: "Saved" });
-  await f.app.start();
-  const count = f.properties().get("count")!;
-  count.value = "";
-  count.dispatchEvent(new Event("input"));
-  await f.api.saveInputs!({
-    expectedSourceVersion: "source-1",
-    expectedRevision: "revision-1",
-    inputProps: { count: 3, title: "Agent edit" },
-  });
-  f.control("[data-refresh]").click();
-  await vi.waitFor(() =>
-    expect(f.control("[data-inputs-status]").textContent).toContain(
-      "Your draft is kept",
-    ),
-  );
-  expect(count.value).toBe("");
-  expect(f.control("[data-inputs-status]").textContent).toContain(
-    "Your draft is kept",
-  );
-  expect(f.control<HTMLButtonElement>("[data-save-inputs]").disabled).toBe(
-    true,
-  );
-  f.control("[data-reload-inputs]").click();
-  await vi.waitFor(() => expect(count.value).toBe("3"));
 });
 
 it("exports the complete composition independently of the playback range", async () => {

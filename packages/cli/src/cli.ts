@@ -8,6 +8,7 @@ import {
 } from "./authoring/frame-check.js";
 import { templatesCommand } from "./authoring/template-catalog.js";
 import { capabilitiesReport } from "./project/capabilities.js";
+import { mcpCommand, type McpOptions } from "./mcp/mcp-command.js";
 import {
   MediaVerificationError,
   verifyMediaCommand,
@@ -51,6 +52,7 @@ export interface CliDependencies {
   versionsCommand?: typeof versionsCommand;
   checkFramesCommand?: typeof checkFramesCommand;
   templatesCommand?: typeof templatesCommand;
+  mcpCommand?: typeof mcpCommand;
 }
 
 interface RenderOptions extends RenderCommandOptions {
@@ -91,7 +93,7 @@ export async function runCli(
       process.stdout.write(
         options.json
           ? `${JSON.stringify(report, null, 2)}\n`
-          : `Author editable video projects or React, GSAP and JavaScript compositions. Frames start at 0; range ends are exclusive.\n\n${report.commands.map((command) => `${command.usage}\n  ${command.description}`).join("\n")}\n\nUse capabilities --json for contracts and examples; doctor --json checks this host.\n`,
+          : `Author React, GSAP and JavaScript compositions. Frames start at 0; range ends are exclusive.\n\n${report.commands.map((command) => `${command.usage}\n  ${command.description}`).join("\n")}\n\nUse capabilities --json for contracts and examples; doctor --json checks this host.\n`,
       );
     });
   cli
@@ -117,7 +119,7 @@ export async function runCli(
   cli
     .command(
       "studio",
-      "Open Velocast Studio to author scenes, layers and media",
+      "Open Velocast Studio to inspect, adjust and export compositions",
     )
     .option("--config <path>", "Config path", { default: "velocast.config.ts" })
     .option("--port <number>", "Loopback UI port (0 selects a free port)", {
@@ -140,6 +142,15 @@ export async function runCli(
     .action(async (options: StudioCommandOptions & { config: string }) => {
       const config = await loadConfig(options.config);
       await (dependencies.studioCommand ?? studioCommand)(config, options);
+    });
+  cli
+    .command(
+      "mcp",
+      "Connect an existing agent to a running Studio over MCP stdio",
+    )
+    .option("--url <url>", "Studio loopback URL shown by studio --json")
+    .action(async (options: McpOptions) => {
+      await (dependencies.mcpCommand ?? mcpCommand)(options);
     });
   let structuredRequest: Partial<RustRenderJob> | undefined;
   const remember = (
@@ -229,19 +240,15 @@ export async function runCli(
       "init <directory>",
       "Create a video project without installing dependencies",
     )
-    .option(
-      "--template <id>",
-      "Starter template: product-demo, blank, or editable-project",
-      {
-        default: "product-demo",
-      },
-    )
+    .option("--template <id>", "Starter template: product-demo or blank", {
+      default: "product-demo",
+    })
     .option("--json", "Print the created project as JSON")
     .action(
       async (
         directory: string,
         options: JsonOptions & {
-          template: "product-demo" | "blank" | "editable-project";
+          template: "product-demo" | "blank";
         },
       ) => {
         await (dependencies.initCommand ?? initCommand)(directory, {
@@ -297,11 +304,22 @@ export async function runCli(
     );
 
   cli
-    .command("setup", "Download and verify the native runtime for this host")
+    .command("setup", "Install and verify the native runtime for this host")
+    .option(
+      "--from <archive>",
+      "Install a complete trusted local runtime archive",
+    )
+    .option("--sha256 <hash>", "Expected SHA-256 of the trusted local archive")
     .option("--json", "Print machine-readable JSON")
-    .action(async (options: JsonOptions) => {
-      await (dependencies.setupCommand ?? setupCommand)({ json: options.json });
-    });
+    .action(
+      async (options: JsonOptions & { from?: string; sha256?: string }) => {
+        await (dependencies.setupCommand ?? setupCommand)({
+          json: options.json,
+          ...(options.from !== undefined ? { from: options.from } : {}),
+          ...(options.sha256 !== undefined ? { sha256: options.sha256 } : {}),
+        });
+      },
+    );
 
   cli
     .command("versions", "Show package, native, protocol and Electron versions")
