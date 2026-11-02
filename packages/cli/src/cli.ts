@@ -2,25 +2,26 @@ import { cac } from "cac";
 import type { Command } from "cac";
 import { loadConfigFromPath } from "./project/config-loader.js";
 import { initCommand } from "./authoring/init-command.js";
-import { auditCommand, type AgentAuditOptions } from "./authoring/agent-audit.js";
 import {
-  analyzeMusicCommand,
-  type AnalyzeMusicCommandOptions,
-} from "./authoring/music-analysis.js";
-import { installSkillCommand } from "./authoring/skill-install.js";
+  checkFramesCommand,
+  type FrameCheckOptions,
+} from "./authoring/frame-check.js";
 import { templatesCommand } from "./authoring/template-catalog.js";
+import { capabilitiesReport } from "./project/capabilities.js";
 import {
-  importTranscriptCommand,
-  type TranscriptImportOptions,
-} from "./authoring/timestamps.js";
+  MediaVerificationError,
+  verifyMediaCommand,
+  type VerifyMediaOptions,
+} from "./media/verify-command.js";
 import {
-  previewCommand,
-  type PreviewCommandOptions,
-} from "./preview/preview-command.js";
+  studioCommand,
+  type StudioCommandOptions,
+} from "./studio/studio-command.js";
 import {
   failedOutputResult,
   OutputFailureError,
   printOutputResult,
+  outputError,
 } from "./render/output-result.js";
 import { resolveCliOutputPath } from "./project/paths.js";
 import type { RustRenderJob } from "./render/render-command-job.js";
@@ -29,32 +30,27 @@ import {
   inspectCompositions,
   renderFrame,
   type InspectionCommandOptions,
-  probeCapture,
   renderComposition,
   renderUrl,
   setupCommand,
-  type ProbeCaptureCommandOptions,
   type RenderCommandOptions,
   versionsCommand,
 } from "./commands.js";
 
 export interface CliDependencies {
-  previewCommand?: typeof previewCommand;
+  verifyMediaCommand?: typeof verifyMediaCommand;
+  studioCommand?: typeof studioCommand;
   inspectCompositions?: typeof inspectCompositions;
   renderFrame?: typeof renderFrame;
   initCommand?: typeof initCommand;
   loadConfigFromPath?: typeof loadConfigFromPath;
   doctorCommand?: typeof doctorCommand;
-  probeCapture?: typeof probeCapture;
   renderComposition?: typeof renderComposition;
   renderUrl?: typeof renderUrl;
   setupCommand?: typeof setupCommand;
   versionsCommand?: typeof versionsCommand;
-  auditCommand?: typeof auditCommand;
-  analyzeMusicCommand?: typeof analyzeMusicCommand;
-  installSkillCommand?: typeof installSkillCommand;
+  checkFramesCommand?: typeof checkFramesCommand;
   templatesCommand?: typeof templatesCommand;
-  importTranscriptCommand?: typeof importTranscriptCommand;
 }
 
 interface RenderOptions extends RenderCommandOptions {
@@ -64,10 +60,6 @@ interface RenderOptions extends RenderCommandOptions {
 
 interface RenderUrlOptions extends RenderOptions {
   selector?: string;
-}
-
-interface ProbeOptions extends ProbeCaptureCommandOptions {
-  config: string;
 }
 
 interface JsonOptions {
@@ -89,7 +81,44 @@ export async function runCli(
   const cli = cac("velocast");
   const loadConfig = dependencies.loadConfigFromPath ?? loadConfigFromPath;
   cli
-    .command("preview", "Play, seek and inspect an immutable project version")
+    .command(
+      "capabilities",
+      "Discover commands, authoring contracts and workflow constraints",
+    )
+    .option("--json", "Print machine-readable capability metadata")
+    .action((options: JsonOptions) => {
+      const report = capabilitiesReport(cli.commands);
+      process.stdout.write(
+        options.json
+          ? `${JSON.stringify(report, null, 2)}\n`
+          : `Author editable video projects or React, GSAP and JavaScript compositions. Frames start at 0; range ends are exclusive.\n\n${report.commands.map((command) => `${command.usage}\n  ${command.description}`).join("\n")}\n\nUse capabilities --json for contracts and examples; doctor --json checks this host.\n`,
+      );
+    });
+  cli
+    .command(
+      "verify <input>",
+      "Check video metadata and timestamps against explicit expectations",
+    )
+    .option("--expect-frames <number>", "Expected encoded video frame count")
+    .option(
+      "--expect-fps <number>",
+      "Expected constant frame cadence starting at zero",
+    )
+    .option("--expect-width <number>", "Expected display width")
+    .option("--expect-height <number>", "Expected display height")
+    .option("--expect-audio", "Require an audio track")
+    .option("--json", "Print machine-readable verification results")
+    .action(async (input: string, options: VerifyMediaOptions) => {
+      await (dependencies.verifyMediaCommand ?? verifyMediaCommand)(
+        input,
+        options,
+      );
+    });
+  cli
+    .command(
+      "studio",
+      "Open Velocast Studio to author scenes, layers and media",
+    )
     .option("--config <path>", "Config path", { default: "velocast.config.ts" })
     .option("--port <number>", "Loopback UI port (0 selects a free port)", {
       default: 0,
@@ -108,9 +137,9 @@ export async function runCli(
       "Wait for manual Refresh source after a successful build",
     )
     .option("--json", "Print startup URL and session as JSON")
-    .action(async (options: PreviewCommandOptions & { config: string }) => {
+    .action(async (options: StudioCommandOptions & { config: string }) => {
       const config = await loadConfig(options.config);
-      await (dependencies.previewCommand ?? previewCommand)(config, options);
+      await (dependencies.studioCommand ?? studioCommand)(config, options);
     });
   let structuredRequest: Partial<RustRenderJob> | undefined;
   const remember = (
@@ -198,33 +227,28 @@ export async function runCli(
   cli
     .command(
       "init <directory>",
-      "Create a React project without installing dependencies",
+      "Create a video project without installing dependencies",
     )
-    .option("--template <id>", "Starter template: react-static or lyrics", {
-      default: "react-static",
-    })
     .option(
-      "--audio <path>",
-      "Local audio copied into a lyrics project and analyzed",
+      "--template <id>",
+      "Starter template: product-demo, blank, or editable-project",
+      {
+        default: "product-demo",
+      },
     )
-    .option("--lyrics <path>", "Supplied SRT, VTT, or JSON timed text")
     .option("--json", "Print the created project as JSON")
     .action(
       async (
         directory: string,
         options: JsonOptions & {
-          template: "react-static" | "lyrics";
-          audio?: string;
-          lyrics?: string;
+          template: "product-demo" | "blank" | "editable-project";
         },
       ) => {
         await (dependencies.initCommand ?? initCommand)(directory, {
           json: options.json,
-          ...(options.template === "react-static"
+          ...(options.template === "product-demo"
             ? {}
             : { template: options.template }),
-          ...(options.audio ? { audio: options.audio } : {}),
-          ...(options.lyrics ? { lyrics: options.lyrics } : {}),
         });
       },
     );
@@ -234,74 +258,6 @@ export async function runCli(
     .option("--json", "Print machine-readable JSON")
     .action((options: JsonOptions) => {
       (dependencies.templatesCommand ?? templatesCommand)(options);
-    });
-
-  cli
-    .command(
-      "skill <action> [directory]",
-      "Install the Velocast agent workflow into a project",
-    )
-    .option("--json", "Print the installed project path as JSON")
-    .action(
-      async (
-        action: string,
-        directory: string | undefined,
-        options: JsonOptions,
-      ) => {
-        if (action !== "install")
-          throw new Error("skill.invalid_action: expected 'install'");
-        await (dependencies.installSkillCommand ?? installSkillCommand)(
-          directory ?? ".",
-          options,
-        );
-      },
-    );
-
-  cli
-    .command(
-      "transcript <action> <input>",
-      "Validate SRT, VTT, or JSON timed text",
-    )
-    .option("--output <path>", "New normalized JSON output path")
-    .option("--format <format>", "Input format: srt, vtt, or json")
-    .option(
-      "--overwrite",
-      "Atomically replace an existing normalized JSON file",
-    )
-    .option("--json", "Print machine-readable JSON")
-    .action(
-      async (
-        action: string,
-        input: string,
-        options: TranscriptImportOptions,
-      ) => {
-        if (action !== "import")
-          throw new Error("transcript.invalid_action: expected 'import'");
-        if (!options.output) throw new Error("--output is required");
-        await (dependencies.importTranscriptCommand ?? importTranscriptCommand)(
-          input,
-          options,
-        );
-      },
-    );
-
-  cli
-    .command(
-      "analyze-audio <input>",
-      "Measure bounded RMS energy and onset candidates from local audio",
-    )
-    .option("--output <path>", "New analysis JSON output path")
-    .option("--max-duration <seconds>", "Maximum decoded duration", {
-      default: 900,
-    })
-    .option("--overwrite", "Atomically replace an existing analysis JSON file")
-    .option("--json", "Print machine-readable JSON")
-    .action(async (input: string, options: AnalyzeMusicCommandOptions) => {
-      if (!options.output) throw new Error("--output is required");
-      await (dependencies.analyzeMusicCommand ?? analyzeMusicCommand)(
-        input,
-        options,
-      );
     });
 
   cli
@@ -329,10 +285,10 @@ export async function runCli(
     .action(
       async (
         compositionId: string,
-        options: AgentAuditOptions & { config: string },
+        options: FrameCheckOptions & { config: string },
       ) => {
         const config = await loadConfig(options.config);
-        await (dependencies.auditCommand ?? auditCommand)(
+        await (dependencies.checkFramesCommand ?? checkFramesCommand)(
           config,
           compositionId,
           options,
@@ -377,25 +333,6 @@ export async function runCli(
     );
   });
 
-  cli
-    .command(
-      "probe-capture <compositionId>",
-      "Legacy capture probe (unsupported); use render --report",
-    )
-    .option("--config <path>", "Config path", { default: "velocast.config.ts" })
-    .option("--report <path>", "Write a renderer telemetry report to this path")
-    .option(
-      "--input-props-file <path>",
-      "JSON file containing composition input props",
-    )
-    .action(async (compositionId: string, options: ProbeOptions) => {
-      await (dependencies.probeCapture ?? probeCapture)(
-        {},
-        compositionId,
-        options,
-      );
-    });
-
   addCommonRenderOptions(
     cli
       .command("render-url <url>", "Render a URL and selector")
@@ -434,6 +371,12 @@ export async function runCli(
   cli.help();
   try {
     cli.parse(argv, { run: false });
+    if (!cli.matchedCommand && cli.args.length) {
+      const command = cli.args[0];
+      throw new Error(
+        `cli.unknown_command: unknown command ${JSON.stringify(command)}; use capabilities --json or --help`,
+      );
+    }
     await cli.runMatchedCommand();
   } catch (error) {
     if (
@@ -441,6 +384,29 @@ export async function runCli(
       !(error instanceof OutputFailureError && error.reported)
     )
       printOutputResult(failedOutputResult(structuredRequest, error), true);
+    else if (
+      !structuredRequest &&
+      argv.includes("--json") &&
+      !(error instanceof MediaVerificationError) &&
+      !(
+        error instanceof Error &&
+        error.message.startsWith("audit.assertions_failed:")
+      )
+    ) {
+      const detail = outputError(error);
+      process.stdout.write(
+        JSON.stringify({
+          apiVersion: 1,
+          status: "failure",
+          operation: cli.matchedCommandName ?? cli.args[0] ?? null,
+          error: {
+            ...detail,
+            code:
+              detail.code === "renderer.failed" ? "cli.failed" : detail.code,
+          },
+        }) + "\n",
+      );
+    }
     throw error;
   }
 }

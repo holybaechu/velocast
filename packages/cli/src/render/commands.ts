@@ -45,7 +45,6 @@ import {
 import {
   buildCompositionRenderCommandJobFromSource,
   buildUrlRenderCommandJob,
-  type ProbeCaptureCommandOptions,
   type RenderCommandOptions,
   type RustRenderJob,
 } from "./render-command-job.js";
@@ -54,7 +53,7 @@ export interface RendererRunDependencies {
   /** Source output transaction override. */
   renderSourceOutput?: typeof renderSourceOutput;
   executeNativeSourceJob?: typeof executeRendererJob;
-  /** Preview output must correspond to the exact authored version being inspected. */
+  /** Studio output must correspond to the exact authored version being inspected. */
   expectedSourceVersion?: string;
   signal?: AbortSignal;
   createMediaService?: typeof createVideoFrameHttp;
@@ -100,12 +99,6 @@ export type RenderRequest =
       selector: string;
       output: string;
       options?: RenderCommandOptions;
-    }
-  | {
-      kind: "capture-probe";
-      config: Config;
-      compositionId: string;
-      options?: ProbeCaptureCommandOptions;
     };
 
 export interface InspectionCommandOptions {
@@ -123,14 +116,10 @@ interface PreparedRendererJob {
   snapshotRoot?: string;
 }
 
-const captureProbeRetired =
-  "capture.probe_retired: use render --report to validate capture";
-
 export async function executeRendererJob(
   request: RenderRequest,
   dependencies: RendererRunDependencies = {},
 ): Promise<void> {
-  if (request.kind === "capture-probe") throw new Error(captureProbeRetired);
   const controller = new AbortController();
   const signal = dependencies.signal ?? controller.signal;
   const interrupt = () =>
@@ -257,7 +246,7 @@ async function executeRendererJobInContext(
       snapshot?.session.sourceVersion !== dependencies.expectedSourceVersion
     )
       throw new Error(
-        "snapshot.version_mismatch: authored source changed; refresh preview before requesting output",
+        "snapshot.version_mismatch: authored source changed; refresh studio before requesting output",
       );
     const acquisition =
       dependencies.runtimeAcquisition ??
@@ -412,8 +401,6 @@ function prepareRendererJob(
         snapshotRoot: source.snapshotRoot,
       };
     }
-    case "capture-probe":
-      throw new Error(captureProbeRetired);
     case "url": {
       if (
         request.options?.startFrame !== undefined ||
@@ -487,24 +474,6 @@ export async function renderComposition(
       config,
       compositionId,
       output,
-      options,
-    },
-    dependencies,
-  );
-}
-
-/** @deprecated Capture probes are retired; use render with a telemetry report. */
-export async function probeCapture(
-  config: Config,
-  compositionId: string,
-  options: ProbeCaptureCommandOptions = {},
-  dependencies: RendererRunDependencies = {},
-): Promise<void> {
-  await executeRendererJob(
-    {
-      kind: "capture-probe",
-      config,
-      compositionId,
       options,
     },
     dependencies,

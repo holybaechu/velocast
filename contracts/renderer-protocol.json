@@ -126,11 +126,6 @@
         "segments"
       ],
       "default": "auto"
-    },
-    "RenderCaptureProbe": {
-      "values": [
-        "accelerated_paint"
-      ]
     }
   },
   "wireUnions": {
@@ -229,7 +224,6 @@
         { "name": "acceleration", "type": "RendererAcceleration", "required": false, "default": "auto" },
         { "name": "concurrency", "type": "RendererConcurrency", "required": false, "nullable": true },
         { "name": "assembly_mode", "type": "RendererAssemblyMode", "required": false, "default": "auto" },
-        { "name": "capture_probe", "type": "RenderCaptureProbe", "required": false, "nullable": true },
         { "name": "report_path", "type": "string", "required": false, "nullable": true },
         { "name": "worker_report_path", "type": "string", "required": false, "nullable": true },
         { "name": "event_log_path", "type": "string", "required": false, "nullable": true },

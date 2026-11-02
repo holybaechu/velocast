@@ -91,7 +91,7 @@ function expectPackageSet(version) {
     `velocast-react-${version}.tgz`,
     `velocast-remotion-${version}.tgz`,
     `velocast-remotion-source-${version}.tgz`,
-    `velocast-preview-${version}.tgz`,
+    `velocast-studio-${version}.tgz`,
   ];
   assert.equal(validReleasePackageSet(packages, version), true);
   assert.equal(

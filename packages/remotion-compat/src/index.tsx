@@ -41,7 +41,7 @@ export interface RemotionCompositionOptions<Props extends object> extends Omit<
   /** Optional identity check binding this explicit manifest to unchanged registerRoot(). */
   readonly root?: ComponentType;
   readonly audio?: RemotionAudioSource<Props>;
-  /** Defaults to the immutable snapshot decoder used by preview and native renders. */
+  /** Defaults to the immutable snapshot decoder used by studio and native renders. */
   readonly getVideoFrame?: VideoFrameLoader;
 }
 

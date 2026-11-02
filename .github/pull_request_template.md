@@ -3,7 +3,7 @@ Keep the body proportional to the change. Summary and Validation are required;
 for small PRs, use just these two sections.
 Add Motivation or Changes only when the problem, tradeoffs, or implementation
 decisions need more explanation. Add Migration or Usage for compatibility and
-apply steps, or Preview when images help review visible changes.
+apply steps, or Screenshots when images help review visible changes.
 Replace these prompts with concrete details and remove unused sections.
 -->
 

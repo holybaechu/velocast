@@ -76,7 +76,7 @@ if (
 
 // Copy the repository scene and its browser dependencies to a self-contained
 // static snapshot. Extend the timeline for long runs while preserving the scene
-// and its deliberately stale initial frame-72 preview.
+// and its deliberately stale initial frame-72 studio.
 const source = join(output, "source");
 await mkdir(output, { recursive: false });
 const realHost =

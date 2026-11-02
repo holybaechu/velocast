@@ -40,7 +40,7 @@ const packages = [
   { name: "@velocast/react", filter: "./packages/react" },
   { name: "@velocast/remotion-source", filter: "./packages/remotion-source" },
   { name: "@velocast/remotion", filter: "./packages/remotion-compat" },
-  { name: "@velocast/preview", filter: "./packages/preview" },
+  { name: "@velocast/studio", filter: "./packages/studio" },
   { name: "velocast", filter: "./packages/cli" },
 ];
 const reports = [];

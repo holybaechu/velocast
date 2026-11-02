@@ -57,10 +57,6 @@ pub(crate) fn audio_codec(job: &RenderJob) -> anyhow::Result<&'static str> {
 }
 pub(crate) fn validate_job(job: &RenderJob) -> anyhow::Result<()> {
     ensure!(job.acceleration!=RendererAcceleration::Required,"encoder.hardware_guarantee_unsupported: WebCodecs exposes acceleration preferences; use auto or off");
-    ensure!(
-        job.capture_probe.is_none(),
-        "capture.probe_retired: use WebCodecs render validation"
-    );
     let codec = codec(job)?;
     let container = container(job)?;
     audio_codec(job)?;

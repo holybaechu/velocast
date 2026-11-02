@@ -20,7 +20,7 @@
   /**
    * @typedef {object} ProductHeroNamespace
    * @property {{ id: string, width: number, height: number, fps: number, durationFrames: number, target: string, maxConcurrency?: number }} productHeroComposition
-   * @property {number} productHeroPreviewFrame
+   * @property {number} productHeroStudioFrame
    * @property {(root?: ParentNode | null) => HTMLElement} resolveProductHeroTarget
    * @property {(gsapApi: GsapLike, target: HTMLElement) => GsapTimelineLike} createProductHeroTimeline
    */
@@ -72,14 +72,14 @@
     const {
       createProductHeroTimeline,
       productHeroComposition,
-      productHeroPreviewFrame,
+      productHeroStudioFrame,
       resolveProductHeroTarget,
     } = productHero;
     const target = resolveProductHeroTarget(options.root ?? document);
     const timeline = createProductHeroTimeline(gsapApi, target);
 
     timeline.totalTime(
-      productHeroPreviewFrame / productHeroComposition.fps,
+      productHeroStudioFrame / productHeroComposition.fps,
       false,
     );
 

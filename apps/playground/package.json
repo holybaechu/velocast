@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "node scripts/build.mjs",
     "lint": "eslint . --max-warnings 0 --global document --global window --global HTMLElement",
     "check-types": "tsc --noEmit",
     "test": "vitest run"

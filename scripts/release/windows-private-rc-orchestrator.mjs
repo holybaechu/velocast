@@ -328,7 +328,7 @@ export function validateManifest(manifest, executing = false) {
   for (const scope of ["npm", "pnpm"])
     if (!scopes.has(scope))
       throw new Error(`private_rc.package_manager_missing: ${scope}`);
-  for (const role of ["original-lyrics", "clip-caption-music"])
+  for (const role of ["text-motion", "clip-caption-music"])
     if (!videos.has(role)) throw new Error(`private_rc.video_missing: ${role}`);
   for (const negative of REQUIRED_NEGATIVES)
     if (!negatives.has(negative))

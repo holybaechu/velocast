@@ -4,6 +4,24 @@ export type {
   PreparedSource,
 } from "./source-adapter.js";
 export type {
+  CodeField,
+  CodeElement,
+  CodeSource,
+  CodeEdit,
+} from "./studio-code.js";
+export type {
+  VideoProject,
+  ProjectAsset,
+  ProjectComposition,
+  ProjectScene,
+  ProjectLayer,
+} from "./video-project.js";
+export {
+  parseVideoProject,
+  isVideoProject,
+  getProjectLayerRange,
+} from "./video-project.js";
+export type {
   CompositionDefinition,
   CompositionManifest,
   RenderContext,

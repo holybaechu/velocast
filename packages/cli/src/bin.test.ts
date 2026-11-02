@@ -185,7 +185,8 @@ export default ${JSON.stringify(config)};
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("render <compositionId>");
     expect(result.stdout).toContain("render-url <url>");
-    expect(result.stdout).toContain("probe-capture <compositionId>");
+    expect(result.stdout).toContain("capabilities");
+    expect(result.stdout).toContain("verify <input>");
     expect(result.stdout).toContain("init <directory>");
     expect(result.stderr).toBe("");
   });
@@ -289,6 +290,7 @@ export default ${JSON.stringify(config)};
           {
             cwd: packageRoot,
             encoding: "utf8",
+            env: { ...process.env, VELOCAST_RENDERER_BINARY: undefined },
           },
         );
       } finally {

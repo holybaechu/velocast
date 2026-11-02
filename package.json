@@ -25,7 +25,7 @@
     "release:private-rc": "node scripts/release/windows-private-rc-orchestrator.mjs",
     "release:prepare-private-rc": "node scripts/release/prepare-windows-private-rc-manifest.mjs",
     "release:sync-windows": "node scripts/release/sync-windows-runtime-declarations.mjs",
-    "verify:preview": "node scripts/verify/verify-competitive-preview.mjs",
+    "verify:studio": "node scripts/verify/verify-studio-source.mjs",
     "verify:authored-audio": "node scripts/verify/verify-authored-audio.mjs",
     "verify:web-audio-clock": "node scripts/verify/verify-web-audio-clock.mjs",
     "profile:renderer": "pwsh -NoProfile -File scripts/profiling/measure-renderer-resources.ps1",

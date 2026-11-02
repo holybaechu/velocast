@@ -61,7 +61,7 @@ function nativeSuccess(job: RustRenderJob) {
   writeFileSync(job.result_path!, JSON.stringify(result));
 }
 
-it("rejects changed preview source before acquiring or launching native and retains previous output", async () => {
+it("rejects changed studio source before acquiring or launching native and retains previous output", async () => {
   const { cwd, config } = fixture();
   const version = await createInputSnapshot({
     root: join(cwd, "dist"),

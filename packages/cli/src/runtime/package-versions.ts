@@ -9,7 +9,7 @@ const officialPackages = [
   "@velocast/core",
   "@velocast/gsap",
   "@velocast/react",
-  "@velocast/preview",
+  "@velocast/studio",
   "@velocast/remotion",
   "@velocast/remotion-source",
 ] as const;

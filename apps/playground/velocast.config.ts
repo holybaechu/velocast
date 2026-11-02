@@ -1,8 +1,9 @@
 import { defineConfig } from "@velocast/core";
 
 export default defineConfig({
-  entry: "index.html",
+  entry: "dist/index.html",
   renderer: {
+    snapshotRoot: "dist",
     binary: "auto",
     acceleration: "auto",
     concurrency: 1,

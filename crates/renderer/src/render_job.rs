@@ -656,14 +656,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn capture_probe_finishes_without_requiring_or_replacing_a_video() {
-        let root = test_directory("probe");
+    async fn inspection_finishes_without_requiring_or_replacing_a_video() {
+        let root = test_directory("inspection");
         let directory = root.join("workspace");
+        let output = root.join("existing.mp4");
         let temporary = directory.join("unused.mp4");
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        tokio::fs::write(&output, b"existing video").await.unwrap();
         let value = RenderJobResources::run(None, &temporary, &directory, async |_| Ok(42))
             .await
             .unwrap();
         assert_eq!(value, 42);
+        assert_eq!(tokio::fs::read(&output).await.unwrap(), b"existing video");
         assert!(!tokio::fs::try_exists(&directory).await.unwrap());
         tokio::fs::remove_dir_all(root).await.unwrap();
     }

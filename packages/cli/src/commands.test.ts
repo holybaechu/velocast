@@ -3,7 +3,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -11,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Config } from "@velocast/core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { RendererRuntimeResolver } from "./runtime/renderer-binary.js";
 import { RendererRuntimeAcquisition } from "./runtime/renderer-runtime.js";
 import { loadConfigFromPath } from "./project/config-loader.js";
@@ -19,7 +18,6 @@ import {
   doctorCommand,
   type DoctorProbeInput,
   executeRendererJob,
-  probeCapture,
   renderComposition,
   renderUrl,
   parseCliCodec,
@@ -758,46 +756,6 @@ describe("executeRendererJob", () => {
     expect(existsSync(join(cwd, "reports"))).toBe(true);
     expect(existsSync(join(cwd, ".velocast/tmp"))).toBe(false);
   });
-
-  it("rejects direct legacy probe requests before loading source or acquiring resources", async () => {
-    await expect(
-      executeRendererJob({
-        kind: "capture-probe",
-        config: { serve: { url: "http://127.0.0.1:4545" } },
-        compositionId: "product-hero",
-      }),
-    ).rejects.toThrow("capture.probe_retired");
-  });
-});
-
-describe("probeCapture", () => {
-  it.each([
-    {},
-    { report: "" },
-    { report: "report.json", inputPropsFile: "missing.json" },
-  ])(
-    "rejects legacy calls without resolving inputs or launching work (%j)",
-    async (options) => {
-      const acquire = vi.fn();
-      const runRenderer = vi.fn();
-      const cwd = mkTempDir("velocast-retired-probe-");
-      await expect(
-        probeCapture(
-          { entry: "missing.html", serve: { command: "must not start" } },
-          "hero",
-          options,
-          {
-            pathOptions: { cwd, env: {} },
-            runtimeAcquisition: { acquire },
-            runRenderer,
-          },
-        ),
-      ).rejects.toThrow("capture.probe_retired: use render --report");
-      expect(acquire).not.toHaveBeenCalled();
-      expect(runRenderer).not.toHaveBeenCalled();
-      expect(readdirSync(cwd)).toEqual([]);
-    },
-  );
 });
 
 describe("renderComposition", () => {

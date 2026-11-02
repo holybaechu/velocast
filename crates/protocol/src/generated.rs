@@ -82,12 +82,6 @@ pub enum RendererAssemblyMode {
     Segments,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RenderCaptureProbe {
-    AcceleratedPaint,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RendererConcurrency {
     Auto,
@@ -257,7 +251,6 @@ pub struct RenderJob {
     pub concurrency: Option<RendererConcurrency>,
     #[serde(default = "default_render_job_assembly_mode")]
     pub assembly_mode: RendererAssemblyMode,
-    pub capture_probe: Option<RenderCaptureProbe>,
     pub report_path: Option<String>,
     pub worker_report_path: Option<String>,
     pub event_log_path: Option<String>,
@@ -300,7 +293,6 @@ struct RawRenderJob {
     pub concurrency: Option<RendererConcurrency>,
     #[serde(default = "default_render_job_assembly_mode")]
     pub assembly_mode: RendererAssemblyMode,
-    pub capture_probe: Option<RenderCaptureProbe>,
     pub report_path: Option<String>,
     pub worker_report_path: Option<String>,
     pub event_log_path: Option<String>,
@@ -338,7 +330,6 @@ impl<'de> Deserialize<'de> for RenderJob {
             acceleration: raw.acceleration,
             concurrency: raw.concurrency,
             assembly_mode: raw.assembly_mode,
-            capture_probe: raw.capture_probe,
             report_path: raw.report_path,
             worker_report_path: raw.worker_report_path,
             event_log_path: raw.event_log_path,

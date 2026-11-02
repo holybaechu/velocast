@@ -294,7 +294,7 @@ function createFixture() {
   const kinds = [
     { id: "npm-install", kind: "install", scope: "npm" },
     { id: "pnpm-install", kind: "install", scope: "pnpm" },
-    { id: "lyrics", kind: "render", scope: "npm", videoRole: "original-lyrics" },
+    { id: "text", kind: "render", scope: "npm", videoRole: "text-motion" },
     { id: "media", kind: "render", scope: "pnpm", videoRole: "clip-caption-music" },
     ...[
       "corrupt-archive",

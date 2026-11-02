@@ -30,6 +30,19 @@ afterEach(() => {
 });
 
 describe("resolveCompositionRenderSource", () => {
+  it("resolves default saved inputs relative to the config independently of the invocation directory", () => {
+    const dir = mkTempDir();
+    expect(
+      normalizeConfigEntryFromConfigDir(
+        { inputPropsFile: "project.json" },
+        dir,
+      ),
+    ).toEqual({ inputPropsFile: join(dir, "project.json") });
+    expect(() =>
+      normalizeConfigEntryFromConfigDir({ inputPropsFile: " " }, dir),
+    ).toThrow("inputPropsFile must be a non-empty local path");
+  });
+
   it("resolves explicit snapshot roots from invocation context while leaving unmanaged inputs unversioned", () => {
     const dir = mkTempDir();
     const root = join(dir, "dist");

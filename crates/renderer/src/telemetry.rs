@@ -47,8 +47,6 @@ pub struct RenderTelemetry {
     pub webcodecs: Option<WebCodecsTelemetry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<AudioTelemetry>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub capture_probe: Option<String>,
     pub capture_backend: Option<String>,
     pub conversion_backend: Option<String>,
     pub encoder_backend: Option<String>,
@@ -104,7 +102,6 @@ impl RenderTelemetry {
             mode,
             webcodecs: None,
             audio: None,
-            capture_probe: None,
             capture_backend: None,
             conversion_backend: None,
             encoder_backend: None,

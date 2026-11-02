@@ -52,7 +52,7 @@
       "env": [
         "CHROME_PATH",
         "VELOCAST_BROWSER_BINARY",
-        "VELOCAST_PREVIEW_GATE_CLI"
+        "VELOCAST_STUDIO_GATE_CLI"
       ],
       "outputs": []
     }

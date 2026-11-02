@@ -1,4 +1,9 @@
 export { defineConfig } from "@velocast/core";
+export { verifyMediaCommand } from "./media/verify-command.js";
+export type {
+  VerifyMediaOptions,
+  VerifyMediaDependencies,
+} from "./media/verify-command.js";
 export {
   resolveCliInputPropsPath,
   resolveCliOutputPath,
@@ -45,10 +50,7 @@ export type {
   RendererRuntimeResolveBinaryOptions,
   ResolveRendererBinaryOptions,
 } from "./runtime/renderer-binary.js";
-export type {
-  ProbeCaptureCommandOptions,
-  RenderCommandOptions,
-} from "./render/render-command-job.js";
+export type { RenderCommandOptions } from "./render/render-command-job.js";
 
 export {
   parseCliAcceleration,
@@ -82,35 +84,17 @@ export type {
 } from "./project/serve-command.js";
 export { cleanupRenderOutputOnFailure } from "./render/render-output-cleanup.js";
 export {
-  auditCommand,
-  auditComposition,
-  validateAuditAssertions,
-} from "./authoring/agent-audit.js";
+  checkFramesCommand,
+  checkComposition,
+  validateFrameAssertions,
+} from "./authoring/frame-check.js";
 export type {
-  AgentAuditIssue,
-  AgentAuditOptions,
-  AgentAuditReport,
-  AuditAssertions,
-  AuditSelectorAssertion,
-} from "./authoring/agent-audit.js";
-export {
-  analyzeMusic,
-  analyzeMusicCommand,
-} from "./authoring/music-analysis.js";
-export type { MusicAnalysis } from "./authoring/music-analysis.js";
-export {
-  importTimedText,
-  importTranscriptCommand,
-  validateTimedTextCues,
-} from "./authoring/timestamps.js";
-export type {
-  TimedTextCue,
-  TimedTextDocument,
-} from "./authoring/timestamps.js";
-export {
-  installProjectSkill,
-  installSkillCommand,
-} from "./authoring/skill-install.js";
+  FrameCheckIssue,
+  FrameCheckOptions,
+  FrameCheckReport,
+  FrameAssertions,
+  FrameSelectorAssertion,
+} from "./authoring/frame-check.js";
 export {
   TEMPLATE_CATALOG,
   templatesCommand,
@@ -132,7 +116,6 @@ export {
   inspectCompositions,
   renderFrame,
   renderComposition,
-  probeCapture,
   renderUrl,
 } from "./render/commands.js";
 export type {

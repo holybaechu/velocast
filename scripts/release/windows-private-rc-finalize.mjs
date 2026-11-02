@@ -25,11 +25,11 @@ const requiredSteps = [
   "cached-setup",
   "offline-setup",
   "concurrent-setup",
-  "npm-original-lyrics",
+  "npm-text-motion",
   "pnpm-clip-caption-music",
   "software-preference",
-  "npm-original-lyrics-repeat",
-  "preview-browser",
+  "npm-text-motion-repeat",
+  "studio-browser",
   "corrupt-archive",
   "corrupt-cache",
   "version-mismatch",
@@ -41,14 +41,14 @@ for (const id of requiredSteps)
     throw new Error(`private RC step is incomplete: ${id}`);
 const videos = [
   {
-    role: "original-lyrics",
+    role: "text-motion",
     manager: "npm",
-    path: join(root, "evidence/npm-original-lyrics.mp4"),
+    path: join(root, "evidence/npm-text-motion.mp4"),
     frames: 240,
     fps: "60/1",
     audioRate: "48000",
     sourceRange: { startFrame: 820, endFrame: 1060 },
-    step: "npm-original-lyrics",
+    step: "npm-text-motion",
   },
   {
     role: "clip-caption-music",
@@ -64,9 +64,9 @@ const videos = [
 const videoEvidence = await Promise.all(videos.map((video) => verifyVideo(video)));
 const repeat = await verifyVideo({
   ...videos[0],
-  role: "original-lyrics-repeat",
-  path: join(root, "evidence/npm-original-lyrics-repeat.mp4"),
-  step: "npm-original-lyrics-repeat",
+  role: "text-motion-repeat",
+  path: join(root, "evidence/npm-text-motion-repeat.mp4"),
+  step: "npm-text-motion-repeat",
 });
 const software = await verifyVideo({
   ...videos[1],
@@ -120,9 +120,9 @@ const [firstFrames, repeatFrames] = await Promise.all([
 ]);
 if (firstFrames.frameCount !== videos[0].frames || repeatFrames.frameCount !== videos[0].frames ||
     JSON.stringify(firstFrames.hashes) !== JSON.stringify(repeatFrames.hashes))
-  throw new Error("original lyrics deterministic decoded frames differ");
+  throw new Error("text motion deterministic decoded frames differ");
 for (const name of [
-  "preview-browser.json",
+  "studio-browser.json",
   "negative-corrupt-archive.json",
   "negative-corrupt-cache.json",
   "negative-version-mismatch.json",
@@ -154,8 +154,8 @@ const output = {
     pnpmRender: true,
     deterministicRepeat: true,
     softwarePreference: true,
-    previewFrame: true,
-    previewRange: true,
+    studioFrame: true,
+    studioRange: true,
     sourceRefresh: true,
     corruptArchive: true,
     corruptCache: true,

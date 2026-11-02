@@ -71,9 +71,7 @@ async fn run_coordinator(job: RenderJob) -> anyhow::Result<()> {
     let temporary_output = parallel::temp_output_path_for(output, &directory);
     let mut report_attempted = false;
     let render_result = render_job::RenderJobResources::run(
-        (job.capture_probe.is_none()
-            && job.operation != velocast_protocol::RenderOperation::Inspect)
-            .then_some(output),
+        (job.operation != RenderOperation::Inspect).then_some(output),
         &temporary_output,
         &directory,
         async |resources| {

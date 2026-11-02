@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cubicBezier, Easing, interpolate } from "./index.js";
 
 describe("easing", () => {
-  it("uses cubic-bezier x inversion and composes lyric ease-out deterministically", () => {
+  it("uses cubic-bezier x inversion and composes text ease-out deterministically", () => {
     const linear = cubicBezier(0, 0, 1, 1);
     expect(linear(0.25)).toBeCloseTo(0.25, 12);
     expect(Easing.ease(0.5)).toBeCloseTo(0.31535681257253934, 7);
@@ -41,7 +41,7 @@ describe("easing", () => {
     );
   });
 
-  it("matches actual lyrics scroll numbers at the first transition", () => {
+  it("matches actual text scroll numbers at the first transition", () => {
     const options = {
       easing: Easing.out(Easing.ease),
       extrapolateLeft: "clamp",

@@ -11,13 +11,17 @@
   "main": "./dist/commands.js",
   "types": "./dist/commands.d.ts",
   "exports": {
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "default": "./dist/vite.js"
+    },
+    "./studio": {
+      "types": "./dist/studio.d.ts",
+      "default": "./dist/studio.js"
+    },
     "./source-output": {
       "types": "./dist/render/source-output.d.ts",
       "default": "./dist/render/source-output.js"
-    },
-    "./preview": {
-      "types": "./dist/preview/preview-server.d.ts",
-      "default": "./dist/preview/preview-server.js"
     },
     ".": {
       "types": "./dist/commands.d.ts",
@@ -40,10 +44,11 @@
   },
   "dependencies": {
     "@velocast/core": "workspace:0.1.0",
-    "@velocast/preview": "workspace:0.1.0",
+    "@velocast/studio": "workspace:0.1.0",
     "cac": "^7.0.0",
     "tar": "^7.5.22",
     "tsx": "^4.23.15",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
     "undici": "^8.10.2"
   },
   "publishConfig": {
@@ -53,7 +58,6 @@
     "@types/node": "26.6.2",
     "@typescript/native": "npm:typescript@7.0.2",
     "eslint": "^10.11.0",
-    "typescript": "npm:@typescript/typescript6@6.0.2",
     "vitest": "^5.0.1"
   },
   "engines": {

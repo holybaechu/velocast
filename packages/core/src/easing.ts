@@ -69,7 +69,7 @@ export function cubicBezier(
 }
 
 /**
- * Shared timing helpers. `ease` is (0.42,0,1,1), matching the pinned lyrics
+ * Shared timing helpers. `ease` is (0.42,0,1,1), matching the reference text transition
  * project's Remotion 4.0.244 control points, not CSS's differently named `ease`.
  * Our precise inversion is not a bit-identical emulation of that version's
  * approximation near flat endpoints; compatibility modules must account for it.

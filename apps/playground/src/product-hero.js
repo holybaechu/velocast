@@ -12,7 +12,7 @@
     maxConcurrency: 4,
   };
 
-  const productHeroPreviewFrame = 72;
+  const productHeroStudioFrame = 72;
 
   /**
    * @typedef {object} ProductHeroFrameMetrics
@@ -40,7 +40,7 @@
   /**
    * @typedef {object} ProductHeroNamespace
    * @property {typeof productHeroComposition} productHeroComposition
-   * @property {number} productHeroPreviewFrame
+   * @property {number} productHeroStudioFrame
    * @property {(frame: number) => ProductHeroFrameMetrics} productHeroFrameMetrics
    * @property {(root?: ParentNode | null) => HTMLElement} resolveProductHeroTarget
    * @property {(target: HTMLElement, frame: number) => void} renderProductHeroFrame
@@ -96,7 +96,7 @@
       throw new Error("product hero target was not mounted");
     }
 
-    renderProductHeroFrame(target, productHeroPreviewFrame);
+    renderProductHeroFrame(target, productHeroStudioFrame);
     return target;
   }
 
@@ -184,7 +184,7 @@
 
   scope.VelocastPlaygroundProductHero = {
     productHeroComposition,
-    productHeroPreviewFrame,
+    productHeroStudioFrame,
     productHeroFrameMetrics,
     resolveProductHeroTarget,
     renderProductHeroFrame,
