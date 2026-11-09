@@ -18,7 +18,7 @@
       "toolchain": "Visual Studio 2022 MSVC",
       "minimumHost": "Windows 10 1809",
       "runner": "windows-2022 x64",
-      "backend": "Electron capture with Mediabunny native software codecs or explicit Chromium WebCodecs",
+      "backend": "Electron native shared-texture capture with Chromium WebCodecs video and native audio/decode",
       "signing": "Authenticode required in release mode",
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
@@ -33,6 +33,7 @@
         "electron-host/media-session.cjs",
         "electron-host/media-settings.cjs",
         "electron-host/native-audio.cjs",
+        "electron-host/native-capture.cjs",
         "electron-host/native-media.cjs",
         "electron-host/native-prores.cjs",
         "electron-host/node_modules/@mediabunny/server/LICENSE",
@@ -144,9 +145,8 @@
         "validationStatus": "blocked",
         "minimumOsVersion": null,
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
           "electron_shared_texture"
         ],
         "conversionBackends": [
@@ -169,7 +169,7 @@
       "toolchain": "Native Windows ARM64 toolchain with Electron",
       "minimumHost": "Windows 11 ARM64",
       "runner": "required native win32-arm64 release runner",
-      "backend": "Electron capture with Mediabunny native software codecs or explicit Chromium WebCodecs",
+      "backend": "Electron native shared-texture capture with Chromium WebCodecs video and native audio/decode",
       "signing": "Authenticode required in release mode",
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
@@ -184,6 +184,7 @@
         "electron-host/media-session.cjs",
         "electron-host/media-settings.cjs",
         "electron-host/native-audio.cjs",
+        "electron-host/native-capture.cjs",
         "electron-host/native-media.cjs",
         "electron-host/native-prores.cjs",
         "electron-host/node_modules/@mediabunny/server/LICENSE",
@@ -215,9 +216,8 @@
         "validationStatus": "blocked",
         "minimumOsVersion": "10.0.22000",
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
           "electron_shared_texture"
         ],
         "conversionBackends": [
@@ -240,7 +240,7 @@
       "toolchain": "Native macOS toolchain with Electron",
       "minimumHost": "unproven; must be established by native validation",
       "runner": "required native darwin-x64 release runner",
-      "backend": "Electron capture with Mediabunny native software codecs or explicit Chromium WebCodecs",
+      "backend": "Electron native shared-texture capture with Chromium WebCodecs video and native audio/decode",
       "signing": "Developer ID signing, hardened runtime and notarization required in release mode",
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
@@ -255,6 +255,7 @@
         "electron-host/media-session.cjs",
         "electron-host/media-settings.cjs",
         "electron-host/native-audio.cjs",
+        "electron-host/native-capture.cjs",
         "electron-host/native-media.cjs",
         "electron-host/native-prores.cjs",
         "electron-host/node_modules/@mediabunny/server/LICENSE",
@@ -286,9 +287,8 @@
         "validationStatus": "blocked",
         "minimumOsVersion": null,
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
           "electron_shared_texture"
         ],
         "conversionBackends": [
@@ -311,7 +311,7 @@
       "toolchain": "Native macOS toolchain with Electron",
       "minimumHost": "macOS 11.0 baseline to be proven by native validation",
       "runner": "required native darwin-arm64 release runner",
-      "backend": "Electron capture with Mediabunny native software codecs or explicit Chromium WebCodecs",
+      "backend": "Electron native shared-texture capture with Chromium WebCodecs video and native audio/decode",
       "signing": "Developer ID signing, hardened runtime and notarization required in release mode",
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
@@ -326,6 +326,7 @@
         "electron-host/media-session.cjs",
         "electron-host/media-settings.cjs",
         "electron-host/native-audio.cjs",
+        "electron-host/native-capture.cjs",
         "electron-host/native-media.cjs",
         "electron-host/native-prores.cjs",
         "electron-host/node_modules/@mediabunny/server/LICENSE",
@@ -357,9 +358,8 @@
         "validationStatus": "blocked",
         "minimumOsVersion": "11.0",
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
           "electron_shared_texture"
         ],
         "conversionBackends": [
@@ -382,7 +382,7 @@
       "toolchain": "Native Linux toolchain with Electron",
       "minimumHost": "glibc baseline unproven; release job must record and enforce it",
       "runner": "required native linux-x64-gnu release runner",
-      "backend": "Electron capture with Mediabunny native software codecs or explicit Chromium WebCodecs",
+      "backend": "Electron native shared-texture capture with Chromium WebCodecs video and native audio/decode",
       "signing": "detached provenance and checksums required",
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
@@ -397,6 +397,7 @@
         "electron-host/media-session.cjs",
         "electron-host/media-settings.cjs",
         "electron-host/native-audio.cjs",
+        "electron-host/native-capture.cjs",
         "electron-host/native-media.cjs",
         "electron-host/native-prores.cjs",
         "electron-host/node_modules/@mediabunny/server/LICENSE",
@@ -428,9 +429,8 @@
         "validationStatus": "blocked",
         "minimumOsVersion": null,
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
           "electron_shared_texture"
         ],
         "conversionBackends": [
@@ -453,7 +453,7 @@
       "toolchain": "Native Linux toolchain with Electron",
       "minimumHost": "glibc baseline unproven; release job must record and enforce it",
       "runner": "required native linux-arm64-gnu release runner",
-      "backend": "Electron capture with Mediabunny native software codecs or explicit Chromium WebCodecs",
+      "backend": "Electron native shared-texture capture with Chromium WebCodecs video and native audio/decode",
       "signing": "detached provenance and checksums required",
       "runtimeFiles": [
         "electron-host/audio-codec.cjs",
@@ -468,6 +468,7 @@
         "electron-host/media-session.cjs",
         "electron-host/media-settings.cjs",
         "electron-host/native-audio.cjs",
+        "electron-host/native-capture.cjs",
         "electron-host/native-media.cjs",
         "electron-host/native-prores.cjs",
         "electron-host/node_modules/@mediabunny/server/LICENSE",
@@ -499,9 +500,8 @@
         "validationStatus": "blocked",
         "minimumOsVersion": null,
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
           "electron_shared_texture"
         ],
         "conversionBackends": [

@@ -320,13 +320,27 @@ async function checkAudio(video, expectedFrames) {
 await gate("inspect", async () => {
   await invoke(["inspect", "portable"]);
 });
+function unavailableCapture(result) {
+  return result.code !== 0 && result.value.status === "failure" &&
+    /^electron\.host_error: capture\.(compositor_unavailable: (disabled_software|unavailable_software)|shared_texture_unavailable|shared_texture_timeout: .+)$/.test(result.value.error?.message ?? "");
+}
+async function unsupportedStill(composition, frame, png) {
+  await writeFile(png, "previous completed output", { flag: "wx" });
+  const before = sha(await readFile(png));
+  const result = await invoke(["frame", composition, "--frame", String(frame), "--output", png], { allowFailure: true });
+  if (!unavailableCapture(result) || sha(await readFile(png)) !== before)
+    throw new Error(`Expected unavailable native still preserving output: ${result.stdout}`);
+  return { reason: result.value.error.message, previousOutputPreserved: true };
+}
 await gate("png-frame", async () => {
   const png = join(output, "frame-3.png");
+  if (captureExpectation === "unavailable") return unsupportedStill("portable", 3, png);
   await invoke(["frame", "portable", "--frame", "3", "--output", png]);
   await checkPixels(png, [3]);
 });
 await gate("png-offset-target", async () => {
   const png = join(output, "crop.png");
+  if (captureExpectation === "unavailable") return unsupportedStill("crop", 0, png);
   await invoke(["frame", "crop", "--frame", "0", "--output", png]);
   await checkPixels(png, [0], { exactStatic: true });
 });
@@ -363,11 +377,7 @@ if (captureExpectation === "unavailable") {
       },
     );
     if (
-      result.code === 0 ||
-      result.value.status !== "failure" ||
-      !/^electron\.host_error: capture\.compositor_unavailable: (disabled_software|unavailable_software)$/.test(
-        result.value.error?.message ?? "",
-      ) ||
+      !unavailableCapture(result) ||
       sha(await readFile(video)) !== before ||
       (await readFile(attempts, "utf8")).trim() !== "webcodecs"
     )

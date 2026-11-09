@@ -450,7 +450,9 @@ async function dispatch(command) {
       window.setContentSize(width, height);
       // Keep the logical viewport pinned to the requested composition geometry.
       await setSnapshotViewport(width, height);
-
+      // Settle the new native surface before authoring initializes canvas layers.
+      const texture = await captureNative(width, height);
+      texture.release();
       return {};
     }
     case "paint": {

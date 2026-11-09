@@ -48,6 +48,7 @@ sharedTexture.setSharedTextureReceiver(
             width: settings.width,
             height: settings.height,
             bytes: bytes.length,
+            pixelFormat: frame.format,
           };
         } else {
           const pixels = context.getImageData(

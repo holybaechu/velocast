@@ -18,6 +18,7 @@
     "electron-host/media-session.cjs",
     "electron-host/media-settings.cjs",
     "electron-host/native-audio.cjs",
+    "electron-host/native-capture.cjs",
     "electron-host/native-media.cjs",
     "electron-host/native-prores.cjs",
     "electron-host/node_modules/@mediabunny/server/LICENSE",

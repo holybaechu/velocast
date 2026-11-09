@@ -59,7 +59,7 @@ test("real software host survives repeated fresh processes", {
           assert.equal(unavailable.id, sequence);
         }
         assert.equal(unavailable.ok, false);
-        assert.match(unavailable.error, /^capture\.(compositor_unavailable|shared_texture_timeout):/);
+        assert.match(unavailable.error, /^capture\.(compositor_unavailable: (disabled_software|unavailable_software)|shared_texture_unavailable|shared_texture_timeout: .+)$/);
         assert.equal(fs.existsSync(path.join(directory, "frame.bgra")), false);
         await request({ method: "close" });
         return;
