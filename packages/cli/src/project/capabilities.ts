@@ -66,6 +66,14 @@ export function capabilitiesReport(commands: readonly Command[]) {
         "Jobs and URLs belong to the Studio server; completed output files survive shutdown",
     },
     agent: {
+      skill: {
+        name: "velocast",
+        install: "velocast skills install",
+        update: "velocast skills update",
+        directory: ".agents/skills/velocast",
+        scaffolding:
+          "init includes the packaged skill; updates preserve local modifications",
+      },
       transport: "MCP stdio using velocast mcp --url <Studio URL>",
       connection:
         "Connect agent in Studio supplies command and args for an existing MCP-capable agent",
@@ -75,6 +83,12 @@ export function capabilitiesReport(commands: readonly Command[]) {
         "Guarded literal or whole-file writes to explicitly mapped sources; durable undo and recovery",
       images:
         "studio_frame returns exact-frame PNG content, reusing completed matching jobs",
+      inspection:
+        "studio_inspect combines guarded source fields with resolved DOM bounds/styles and Layer hierarchy in an explicit paused tab",
+      animation:
+        "studio_animate sets, upserts keyframes or disables numeric Layer.animation tracks through guarded source writes and durable history",
+      confirmation:
+        "Source-write receipts distinguish saved, built and displayed; studio_wait_for_build follows one exact source revision without claiming a timeout was displayed",
       lifecycle:
         "MCP shutdown leaves the existing Studio and its exports running",
     },

@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { StudioClient, StudioClientCommand } from "@velocast/core";
+import type {
+  StudioClient,
+  StudioClientCommand,
+  StudioElementInspection,
+} from "@velocast/core";
 
 const id = z.string().min(1).max(256);
 const frame = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -36,6 +40,28 @@ const heartbeatSchema = z.strictObject({
         id,
         status: z.enum(["succeeded", "failed"]),
         error: z.string().max(4000).optional(),
+        inspection: z
+          .strictObject({
+            selector: z.string().max(2048),
+            tag: z.string().max(128),
+            text: z.string().max(500),
+            source: z.string().max(4000).optional(),
+            elementId: id.optional(),
+            parentElementId: id.optional(),
+            depth: frame.optional(),
+            childCount: frame.optional(),
+            matchCount: frame.optional(),
+            bounds: z.strictObject({
+              x: z.number().finite(),
+              y: z.number().finite(),
+              width: z.number().finite().nonnegative(),
+              height: z.number().finite().nonnegative(),
+            }),
+            styles: z
+              .record(z.string().max(128), z.string().max(4000))
+              .refine((value) => Object.keys(value).length <= 32),
+          })
+          .optional(),
       }),
     )
     .max(16)
@@ -51,6 +77,7 @@ const controlSchema = z.discriminatedUnion("action", [
   z.strictObject({ ...guard, action: z.literal("pause") }),
   z.strictObject({ ...guard, action: z.literal("seek"), frame }),
   z.strictObject({ ...guard, action: z.literal("select"), elementId: id }),
+  z.strictObject({ ...guard, action: z.literal("inspect"), elementId: id }),
   z.strictObject({
     ...guard,
     action: z.literal("composition"),
@@ -74,7 +101,10 @@ interface ClientEntry {
   seenAt: number;
   pending?: {
     command: StudioClientCommand;
-    finish(error?: StudioClientError): void;
+    finish(
+      error?: StudioClientError,
+      inspection?: StudioElementInspection,
+    ): void;
   };
 }
 
@@ -168,6 +198,28 @@ export class StudioClients {
     }
     for (const acknowledgement of acknowledgements ?? []) {
       if (entry.pending?.command.id === acknowledgement.id) {
+        const command = entry.pending.command;
+        if (
+          command.action === "inspect" &&
+          acknowledgement.status === "succeeded" &&
+          (!acknowledgement.inspection ||
+            acknowledgement.inspection.matchCount !== 1 ||
+            acknowledgement.inspection.elementId !== command.elementId ||
+            entry.client.revision !== command.expectedRevision ||
+            entry.client.sourceVersion !== command.expectedSourceVersion ||
+            !entry.client.ready ||
+            entry.client.playing ||
+            entry.client.dirty)
+        ) {
+          entry.pending.finish(
+            new StudioClientError(
+              409,
+              "studio.inspect_stale",
+              "Inspection did not acknowledge the same element, frame and source; read context and retry",
+            ),
+          );
+          continue;
+        }
         entry.pending.finish(
           acknowledgement.status === "failed"
             ? new StudioClientError(
@@ -176,6 +228,7 @@ export class StudioClients {
                 acknowledgement.error ?? "Browser rejected the command",
               )
             : undefined,
+          acknowledgement.inspection,
         );
       }
     }
@@ -184,7 +237,10 @@ export class StudioClients {
     };
   }
 
-  async control(value: unknown, signal?: AbortSignal): Promise<StudioClient> {
+  async control(
+    value: unknown,
+    signal?: AbortSignal,
+  ): Promise<StudioClient & { inspection?: StudioElementInspection }> {
     if (this.closed)
       throw new StudioClientError(503, "studio.client_closed", "Studio closed");
     const parsed = controlSchema.safeParse(value);
@@ -242,36 +298,47 @@ export class StudioClients {
         "Composition is not available in this browser",
       );
     signal?.throwIfAborted();
-    return new Promise<StudioClient>((resolve, reject) => {
-      const abort = () =>
-        finish(
-          new StudioClientError(
-            409,
-            "studio.client_cancelled",
-            "Browser command cancelled",
-          ),
-        );
-      const timer = setTimeout(
-        () =>
+    return new Promise<StudioClient & { inspection?: StudioElementInspection }>(
+      (resolve, reject) => {
+        const abort = () =>
           finish(
             new StudioClientError(
-              408,
-              "studio.client_timeout",
-              "Browser did not acknowledge the command; read context before retrying",
+              409,
+              "studio.client_cancelled",
+              "Browser command cancelled",
             ),
-          ),
-        8_000,
-      );
-      const finish = (error?: StudioClientError) => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
-        entry.pending = undefined;
-        if (error) reject(error);
-        else resolve(structuredClone(entry.client));
-      };
-      entry.pending = { command: { ...request, id: randomUUID() }, finish };
-      signal?.addEventListener("abort", abort, { once: true });
-    });
+          );
+        const timer = setTimeout(
+          () =>
+            finish(
+              new StudioClientError(
+                408,
+                "studio.client_timeout",
+                "Browser did not acknowledge the command; read context before retrying",
+              ),
+            ),
+          8_000,
+        );
+        const finish = (
+          error?: StudioClientError,
+          inspection?: StudioElementInspection,
+        ) => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", abort);
+          entry.pending = undefined;
+          if (error) reject(error);
+          else
+            resolve({
+              ...structuredClone(entry.client),
+              ...(inspection
+                ? { inspection: structuredClone(inspection) }
+                : {}),
+            });
+        };
+        entry.pending = { command: { ...request, id: randomUUID() }, finish };
+        signal?.addEventListener("abort", abort, { once: true });
+      },
+    );
   }
 
   disconnect(clientId: string): void {

@@ -24,6 +24,51 @@ function LocalFrame() {
   return <span>Frame {useCurrentFrame()}</span>;
 }
 
+it("seeks declarative keyframes on the layer's local clock in any frame order", async () => {
+  const protocol = registerReactComposition("animated", {
+    ...video,
+    component: () => (
+      <Layer
+        id="animated-title"
+        from={30}
+        durationFrames={60}
+        x={10}
+        animation={{
+          x: {
+            keyframes: [
+              { frame: 0, value: 10 },
+              { frame: 20, value: 90 },
+            ],
+          },
+          opacity: {
+            keyframes: [
+              { frame: 0, value: 0 },
+              { frame: 10, value: 1 },
+            ],
+          },
+        }}
+      >
+        <LocalFrame />
+      </Layer>
+    ),
+  });
+  for (const [frame, x, opacity] of [
+    [50, 90, 1],
+    [30, 10, 0],
+    [40, 50, 1],
+    [35, 30, 0.5],
+    [50, 90, 1],
+  ]) {
+    await protocol.seekFrame("animated", frame!);
+    const layer = document.querySelector<HTMLElement>(
+      '[data-velocast-layer="animated-title"]',
+    )!;
+    expect(layer.style.left).toBe(`${x}px`);
+    expect(Number(layer.style.opacity)).toBe(opacity);
+    expect(layer.textContent).toBe(`Frame ${frame! - 30}`);
+  }
+});
+
 it("keeps ordinary React children on a parent-relative clock with stable layer identity and layout", async () => {
   const protocol = registerReactComposition("scene", {
     ...video,
@@ -80,6 +125,32 @@ it("rejects invalid layer identity, geometry, and timing before publishing a fra
     [{ opacity: 1.1 }, "opacity"],
     [{ from: 0.5 }, "from"],
     [{ durationFrames: -1 }, "durationFrames"],
+    [
+      {
+        animation: {
+          opacity: {
+            keyframes: [
+              { frame: 0, value: 0 },
+              { frame: 10, value: 2 },
+            ],
+          },
+        },
+      },
+      "animation",
+    ],
+    [
+      {
+        animation: {
+          x: {
+            keyframes: [
+              { frame: 10, value: 0 },
+              { frame: 10, value: 20 },
+            ],
+          },
+        },
+      },
+      "animation",
+    ],
   ];
   try {
     for (const [props, field] of invalid) {
@@ -92,7 +163,11 @@ it("rejects invalid layer identity, geometry, and timing before publishing a fra
         ),
       });
       await expect(protocol.seekFrame(`invalid-${field}`, 0)).rejects.toThrow(
-        new RegExp(`VELOCAST_LAYER_INVALID.*${field}`),
+        new RegExp(
+          field === "animation"
+            ? "VELOCAST_LAYER_ANIMATION"
+            : `VELOCAST_LAYER_INVALID.*${field}`,
+        ),
       );
       await protocol.destroy();
       clearFrameAdaptersForTest();

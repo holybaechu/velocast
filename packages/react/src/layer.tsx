@@ -1,6 +1,8 @@
 import { useContext, type CSSProperties, type ReactNode } from "react";
 import { SequenceContext, useVideoConfig } from "./frame-state.js";
 import { Sequence } from "./sequence.js";
+import { evaluateLayerAnimation, type LayerAnimation } from "@velocast/core";
+import { useCurrentFrame } from "./frame-state.js";
 
 export interface LayerProps {
   readonly id: string;
@@ -15,6 +17,8 @@ export interface LayerProps {
   readonly height?: number;
   readonly rotation?: number;
   readonly opacity?: number;
+  /** Numeric keyframes on this layer's local frame clock; values clamp at the ends. */
+  readonly animation?: LayerAnimation;
   /** Applied last. Computed styles and ordinary React children remain authored code. */
   readonly style?: CSSProperties;
   readonly children?: ReactNode;
@@ -32,11 +36,13 @@ export function Layer({
   height,
   rotation = 0,
   opacity = 1,
+  animation,
   style,
   children,
 }: LayerProps) {
   const ancestors = useContext(SequenceContext);
   const config = useVideoConfig();
+  const animated = evaluateLayerAnimation(animation, useCurrentFrame() - from);
   if (typeof id !== "string" || !id.trim())
     invalid("id", "must be a nonempty stable string");
   if (name !== undefined && typeof name !== "string")
@@ -78,12 +84,12 @@ export function Layer({
         data-velocast-layer-name={name}
         style={{
           position: "absolute",
-          left: x,
-          top: y,
-          width,
-          height,
-          transform: `rotate(${rotation}deg)`,
-          opacity,
+          left: animated.x ?? x,
+          top: animated.y ?? y,
+          width: animated.width ?? width,
+          height: animated.height ?? height,
+          transform: `rotate(${animated.rotation ?? rotation}deg)`,
+          opacity: animated.opacity ?? opacity,
           ...style,
         }}
       >

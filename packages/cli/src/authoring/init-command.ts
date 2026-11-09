@@ -27,6 +27,7 @@ import {
   projectStarterFiles,
   type ProjectTemplate,
 } from "./templates/project.js";
+import { skillProjectFiles } from "./skills-command.js";
 export type { ProjectTemplate } from "./templates/project.js";
 export interface InitProjectResult {
   directory: string;
@@ -122,7 +123,15 @@ export async function createProject(
       `init.unknown_template: ${String(template)}; choose product-demo or blank`,
     );
   const selected = {
-    files: projectStarterFiles(template),
+    files: {
+      ...projectStarterFiles(template),
+      ...Object.fromEntries(
+        Object.entries(await skillProjectFiles()).map(([name, contents]) => [
+          `.agents/skills/velocast/${name}`,
+          contents,
+        ]),
+      ),
+    },
     version: 2,
     compositionId: template === "blank" ? "video" : "product-demo",
   };

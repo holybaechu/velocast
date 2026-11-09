@@ -77,6 +77,15 @@ render options.
 
 ## Create a video project
 
+For a coding agent, run `velocast skills install` in an existing video project,
+then reload its skills and ask it to make a video with `/velocast`. New projects
+include the same skill in `.agents/skills/velocast`. It covers local media,
+narration/captions, scene patterns, exact-frame inspection, Studio/MCP and recovery.
+`velocast skills --json` lists its packaged files. After updating the CLI, run
+`velocast skills update`; local edits stop an update before any files change.
+Use `--directory <skills-root>` to install a separate copy for comparison or an
+agent-specific location. Additional local files are retained.
+
 With a working CLI and runtime, create a project outside the framework checkout:
 
 ```sh
@@ -317,6 +326,29 @@ An agent's normal sequence is:
    displayed build and dirty state, and reuses a completed matching frame export.
 7. Start `studio_render`, then use `studio_job` to wait for completion or cancel.
    Supply the tab and revision to require its clean, export-ready state.
+
+For targeted visual work, `studio_inspect` reads one stable Layer ID in a paused,
+clean tab. It combines resolved text, styles, bounds and parent/child information
+with source values and editability reasons. It rejects duplicate rendered IDs and
+changed frames rather than returning an ambiguous inspection.
+
+`studio_animate` sets a `Layer.animation` track, inserts/replaces a keyframe, or
+disables a property track. Supported numeric properties are `x`, `y`, `width`,
+`height`, `rotation` and `opacity`. Keyframes use the Layer's local integer clock,
+clamp at their ends, and support `linear`, `easeIn`, `easeOut` and `easeInOut`.
+For example, `animation={{opacity: {keyframes: [{frame: 0, value: 0},
+{frame: 15, value: 1}], easing: "easeOut"}}}` fades in over its first 15 frames.
+Computed motion and style overrides remain code-owned. Animation edits use the
+same source revision guards and durable history as literal edits.
+
+Source write tools return a receipt distinguishing `saved`, `built` and
+`displayed`. Pass `clientId` and optional `waitMs` to wait for that explicit tab,
+or call `studio_wait_for_build` with the returned saved `revision`. A timeout
+reports the stage actually reached; the saved edit remains applied. `superseded`
+reports another source revision and `failed` reports syntax/recovery problems.
+Display confirmation checks build and browser revisions; inspect a frame to
+judge the pixels. No build command runs through MCP: the project's watcher still
+owns compilation.
 
 The same behavior is available over loopback HTTP. Start `studio --json`, then
 read `GET /api/capabilities` at its URL for request limits and current operations:

@@ -1441,7 +1441,9 @@ export class StudioApp {
     };
   }
 
-  private async controlClient(command: StudioClientCommand): Promise<void> {
+  private async controlClient(
+    command: StudioClientCommand,
+  ): Promise<import("@velocast/core").StudioElementInspection | void> {
     const state = this.clientState();
     if (
       (!state.ready && !(command.action === "pause" && state.playing)) ||
@@ -1481,6 +1483,30 @@ export class StudioApp {
         throw new Error(
           "studio.client_interrupted: The requested frame was not presented. Read the current state and retry.",
         );
+    } else if (command.action === "inspect") {
+      if (
+        state.playing ||
+        state.dirty ||
+        !state.exportReady ||
+        this.codePending
+      )
+        throw new Error(
+          "studio.inspect_not_ready: Pause, resolve drafts and wait for the saved build before inspection.",
+        );
+      const inspected = await this.transport.inspect(
+        `[data-velocast-layer="${CSS.escape(command.elementId)}"]`,
+        this.lifetime.signal,
+      );
+      if (inspected.matchCount !== 1)
+        throw new Error(
+          "studio.inspect_ambiguous: The Layer ID must identify exactly one rendered element.",
+        );
+      const current = this.clientState();
+      if (JSON.stringify(current) !== JSON.stringify(state))
+        throw new Error(
+          "studio.inspect_stale: The displayed frame changed during inspection; read context and retry.",
+        );
+      return inspected;
     } else if (command.action === "select") {
       if (!this.codeEditor)
         throw new Error(

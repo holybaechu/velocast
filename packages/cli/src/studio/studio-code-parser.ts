@@ -1,5 +1,9 @@
 import ts from "typescript";
 import type { CodeEdit, CodeElement, CodeField } from "@velocast/core";
+import {
+  LAYER_ANIMATION_PROPERTIES,
+  validateLayerAnimationTrack,
+} from "@velocast/core";
 import { StudioCodeError } from "./studio-code-config.js";
 
 type Scalar = string | number | boolean;
@@ -195,6 +199,33 @@ function scalar(node: ts.Node | undefined): Scalar | undefined {
     if (typeof value === "number")
       return node.operator === ts.SyntaxKind.MinusToken ? -value : value;
   }
+}
+
+/** Read literals without evaluating project expressions. */
+function structuredLiteral(node: ts.Node | undefined): unknown {
+  if (!node) return undefined;
+  if (node.kind === ts.SyntaxKind.NullKeyword) return null;
+  if (ts.isArrayLiteralExpression(node)) {
+    const values = node.elements.map(structuredLiteral);
+    return values.includes(undefined) ? undefined : values;
+  }
+  if (ts.isObjectLiteralExpression(node)) {
+    const entries: [string, unknown][] = [];
+    for (const property of node.properties) {
+      if (!ts.isPropertyAssignment(property)) return undefined;
+      const key = propertyName(property.name),
+        value = structuredLiteral(property.initializer);
+      if (
+        key === undefined ||
+        value === undefined ||
+        entries.some(([name]) => name === key)
+      )
+        return undefined;
+      entries.push([key, value]);
+    }
+    return Object.fromEntries(entries);
+  }
+  return scalar(node);
 }
 
 function parse(
@@ -509,6 +540,80 @@ function parse(
             fields[key]!.description.value,
           );
       }
+      const animationAttr = attr("animation");
+      const animation = value(animationAttr);
+      const animationObject =
+        animation && ts.isObjectLiteralExpression(animation)
+          ? animation
+          : undefined;
+      const animationReason =
+        animationAttr &&
+        (!animationObject ||
+          animationObject.properties.some(
+            (property) =>
+              !ts.isPropertyAssignment(property) ||
+              propertyName(property.name) === undefined,
+          ) ||
+          duplicates(
+            animationObject.properties.map((property) =>
+              propertyName(property.name),
+            ),
+          ))
+          ? "Computed animation objects, duplicate properties or spreads stay code-controlled"
+          : undefined;
+      for (const property of LAYER_ANIMATION_PROPERTIES) {
+        const assigned = animationObject?.properties.find(
+          (item) => propertyName(item.name) === property,
+        );
+        const literal =
+          assigned && ts.isPropertyAssignment(assigned)
+            ? structuredLiteral(assigned.initializer)
+            : null;
+        const reason =
+          animationReason ??
+          (assigned && literal === undefined ? expressionReason : undefined) ??
+          (styleReason ||
+          styleObject?.properties.some((item) =>
+            geometryStyles[property]!.includes(propertyName(item.name) ?? ""),
+          )
+            ? "The style object overrides this animation property"
+            : undefined) ??
+          (!assigned && !fields[property]!.description.editable
+            ? fields[property]!.description.reason
+            : undefined);
+        fields[`animation.${property}`] = reason
+          ? readonly(reason)
+          : {
+              description: { editable: true, value: JSON.stringify(literal) },
+              write: (next) => {
+                const text = String(next);
+                if (assigned && ts.isPropertyAssignment(assigned))
+                  return replace(assigned.initializer, text);
+                if (text === "null")
+                  return {
+                    start: node.attributes.end,
+                    end: node.attributes.end,
+                    text: "",
+                  };
+                return animationObject
+                  ? {
+                      start: animationObject.end - 1,
+                      end: animationObject.end - 1,
+                      text: `${animationObject.properties.length && !animationObject.properties.hasTrailingComma ? "," : ""} ${property}: ${text} `,
+                    }
+                  : {
+                      start: node.attributes.end,
+                      end: node.attributes.end,
+                      text: ` animation={{ ${property}: ${text} }}`,
+                    };
+              },
+            };
+        if (animationReason || (assigned && literal !== null))
+          fields[property] = readonly(
+            animationReason ?? "The layer animation controls this value",
+            fields[property]!.description.value,
+          );
+      }
       for (
         let ancestor: ts.Node | undefined = node.parent;
         ancestor;
@@ -732,6 +837,33 @@ export function editCodeSource(
         "studio.code_readonly",
         `${edit.id}.${edit.field}: ${field.description.reason}`,
       );
+    if (edit.field.startsWith("animation.")) {
+      let track;
+      try {
+        if (typeof edit.value !== "string")
+          throw new Error("Expected JSON track");
+        const value = JSON.parse(edit.value);
+        track =
+          value === null
+            ? null
+            : validateLayerAnimationTrack(
+                edit.field.slice("animation.".length),
+                value,
+              );
+      } catch (error) {
+        throw new StudioCodeError(
+          400,
+          "studio.code_animation",
+          error instanceof Error ? error.message : "Invalid keyframes",
+        );
+      }
+      const patch = field.write(JSON.stringify(track));
+      candidate =
+        candidate.slice(0, patch.start) +
+        patch.text +
+        candidate.slice(patch.end);
+      continue;
+    }
     if (
       [
         "text",

@@ -3,6 +3,32 @@ import { HttpStudioApi } from "./studio-api.js";
 
 const session = { sessionId: "session-1", sourceVersion: "source-1" };
 
+it("delivers an inspection command from the heartbeat response to the live browser", async () => {
+  const command = {
+    id: "inspect-1",
+    action: "inspect",
+    elementId: "title",
+    expectedRevision: 1,
+    expectedSourceVersion: "source-1",
+  };
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValue(Response.json({ commands: [command] }));
+  const api = new HttpStudioApi({ baseUrl: "http://127.0.0.1:90", fetch });
+  const result = await api.heartbeat("tab", {
+    state: {
+      revision: 1,
+      sourceVersion: "source-1",
+      compositions: [],
+      dirty: false,
+      ready: false,
+      exportReady: false,
+      playing: false,
+    },
+  });
+  expect(result.commands).toEqual([command]);
+});
+
 it("accepts interrupted-edit recovery state without a current source revision", async () => {
   const source = {
     enabled: true,

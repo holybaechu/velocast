@@ -4,6 +4,11 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import type { CodeSource, StudioClient } from "@velocast/core";
+import {
+  LAYER_ANIMATION_PROPERTIES,
+  LAYER_ANIMATION_EASINGS,
+  validateLayerAnimationTrack,
+} from "@velocast/core";
 import type { StudioJob } from "../studio/studio-server.js";
 
 export interface McpOptions {
@@ -15,6 +20,10 @@ const guard = {
   compositionId: id,
   expectedSourceVersion: id,
   expectedRevision: id,
+};
+const confirmation = {
+  clientId: id.optional(),
+  waitMs: z.number().int().min(0).max(30_000).default(0),
 };
 type Result = {
   content: Array<
@@ -28,16 +37,29 @@ const result = (value: Record<string, unknown>): Result => ({
   content: [{ type: "text", text: JSON.stringify(value) }],
   structuredContent: value,
 });
+function failure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    code: message.match(/^([a-z][\w.]+):/)?.[1] ?? "studio.agent_failed",
+    message,
+  };
+}
+function animationTrack(property: string, value: unknown) {
+  try {
+    return validateLayerAnimationTrack(property, value);
+  } catch (error) {
+    throw new Error(
+      `studio.animation_invalid: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+}
 async function report(operation: () => Promise<Result>): Promise<Result> {
   try {
     return await operation();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     return {
-      ...result({
-        code: message.match(/^([a-z][\w.]+):/)?.[1] ?? "studio.agent_failed",
-        message,
-      }),
+      ...result(failure(error)),
       isError: true,
     };
   }
@@ -86,17 +108,34 @@ export function createStudioMcpServer(origin: string): McpServer {
     signal: AbortSignal,
     body?: unknown,
   ): Promise<T> {
-    const response = await fetch(origin + "/api/" + path, {
-      method: body === undefined ? "GET" : "POST",
-      ...(body === undefined
-        ? {}
-        : {
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-          }),
-      signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
-      redirect: "error",
-    });
+    let response: Response;
+    try {
+      response = await fetch(origin + "/api/" + path, {
+        method: body === undefined ? "GET" : "POST",
+        ...(body === undefined
+          ? {}
+          : {
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(body),
+            }),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
+        redirect: "error",
+      });
+    } catch (error) {
+      const cause =
+        error instanceof Error &&
+        error.cause &&
+        typeof error.cause === "object" &&
+        "code" in error.cause
+          ? String(error.cause.code)
+          : error instanceof Error
+            ? error.name
+            : "connection failure";
+      throw new Error(
+        `studio.agent_connection: ${body === undefined ? "GET" : "POST"} /api/${path} failed (${cause}); read job status before retrying an export`,
+        { cause: error },
+      );
+    }
     const value = await response.json();
     if (!response.ok)
       throw new Error(
@@ -145,6 +184,137 @@ export function createStudioMcpServer(origin: string): McpServer {
       );
     }
     return job;
+  }
+  async function waitForBuild(
+    compositionId: string,
+    revision: string,
+    clientId: string | undefined,
+    milliseconds: number,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    const deadline = Date.now() + milliseconds;
+    while (true) {
+      const source = await request<CodeSource>(
+        `code?compositionId=${encodeURIComponent(compositionId)}`,
+        signal,
+      );
+      const session = await request<{
+        session: { sourceVersion: string };
+        codeRevisions?: Record<string, string>;
+      }>("session", signal);
+      const receipt = {
+        compositionId,
+        revision,
+        observedRevision: source.revision,
+        displayedRevision: source.displayedRevision,
+        sourceVersion: session.session.sourceVersion,
+      };
+      if (source.syntaxError || source.recoveryRequired)
+        return {
+          ...receipt,
+          stage: "failed",
+          reason: source.syntaxError ?? "Source recovery is required",
+        };
+      if (source.revision !== revision)
+        return {
+          ...receipt,
+          stage: "superseded",
+          reason:
+            "Another source revision replaced this edit; read current source before retrying",
+        };
+      const built =
+        source.displayedRevision === revision &&
+        session.codeRevisions?.[compositionId] === revision;
+      let client: StudioClient | undefined;
+      if (clientId) {
+        const value = await request<{ clients: StudioClient[] }>(
+          "clients",
+          signal,
+        );
+        client = value.clients.find((item) => item.clientId === clientId);
+        if (!client)
+          return {
+            ...receipt,
+            stage: built ? "built" : "saved",
+            reason: "Requested browser is disconnected",
+            clientId,
+          };
+        if (
+          built &&
+          client.compositionId === compositionId &&
+          client.sourceVersion === session.session.sourceVersion &&
+          client.sourceRevision === revision &&
+          client.ready &&
+          !client.dirty &&
+          !client.error
+        )
+          return {
+            ...receipt,
+            stage: "displayed",
+            clientId,
+            clientRevision: client.revision,
+            frame: client.frame,
+          };
+      }
+      if (built && !clientId)
+        return {
+          ...receipt,
+          stage: "built",
+          reason: "Supply clientId to confirm the displayed browser build",
+        };
+      if (Date.now() >= deadline)
+        return {
+          ...receipt,
+          stage: built ? "built" : "saved",
+          ...(clientId ? { clientId } : {}),
+          reason:
+            client?.error ??
+            (client?.dirty
+              ? "Browser has unsaved edits"
+              : "Waiting for a successful build and browser refresh"),
+        };
+      await delay(
+        Math.min(250, Math.max(1, deadline - Date.now())),
+        undefined,
+        { signal },
+      );
+    }
+  }
+  async function saveWithReceipt(
+    path: string,
+    args: { compositionId: string; expectedRevision: string },
+    body: unknown,
+    clientId: string | undefined,
+    waitMs: number,
+    signal: AbortSignal,
+  ): Promise<Result> {
+    const saved = await request<CodeSource>(path, signal, body);
+    let receipt: Record<string, unknown> = {
+      stage: "saved",
+      compositionId: args.compositionId,
+      revision: saved.revision,
+    };
+    try {
+      if (saved.revision)
+        receipt = await waitForBuild(
+          args.compositionId,
+          saved.revision,
+          clientId,
+          waitMs,
+          signal,
+        );
+    } catch (error) {
+      // A lost readback or cancellation cannot undo a source write already saved.
+      receipt.reason = error instanceof Error ? error.message : String(error);
+    }
+    return result({
+      ...saved,
+      receipt: {
+        ...receipt,
+        persisted: true,
+        changed: saved.revision !== args.expectedRevision,
+      },
+    });
   }
   const readOnly = { readOnlyHint: true, openWorldHint: false };
   const mutation = {
@@ -202,6 +372,235 @@ export function createStudioMcpServer(origin: string): McpServer {
       ),
   );
   server.registerTool(
+    "studio_wait_for_build",
+    {
+      description:
+        "Confirm one exact saved source revision reached the accepted build and optionally a named browser. Returns saved, built, displayed, superseded or failed; a timeout never claims display. Does not run a build or change the browser.",
+      inputSchema: z.strictObject({
+        compositionId: id,
+        revision: id,
+        clientId: id.optional(),
+        waitMs: z.number().int().min(0).max(30_000).default(10_000),
+      }),
+      annotations: readOnly,
+    },
+    ({ compositionId, revision, clientId, waitMs }, ctx) =>
+      report(async () =>
+        result(
+          await waitForBuild(
+            compositionId,
+            revision,
+            clientId,
+            waitMs,
+            ctx.mcpReq.signal,
+          ),
+        ),
+      ),
+  );
+  server.registerTool(
+    "studio_inspect",
+    {
+      description:
+        "Inspect one stable Layer ID in an explicit paused tab: resolved text/styles/bounds/hierarchy plus source fields, keyframe tracks and editability reasons. Refuses changed frames, drafts and unbuilt source. Bounds use composition iframe CSS pixels.",
+      inputSchema: z.strictObject({
+        clientId: id,
+        expectedRevision: integer,
+        expectedSourceVersion: id,
+        compositionId: id,
+        elementId: id,
+      }),
+      annotations: readOnly,
+    },
+    ({ compositionId, elementId, ...args }, ctx) =>
+      report(async () => {
+        const source = await request<CodeSource>(
+          `code?compositionId=${encodeURIComponent(compositionId)}`,
+          ctx.mcpReq.signal,
+        );
+        const matches = source.elements.filter(
+          (element) => element.id === elementId,
+        );
+        if (matches.length > 1)
+          throw new Error(
+            "studio.inspect_ambiguous: Duplicate source IDs cannot address one element",
+          );
+        if (
+          source.enabled &&
+          (!source.revision ||
+            source.revision !== source.displayedRevision ||
+            source.syntaxError ||
+            source.recoveryRequired)
+        )
+          throw new Error(
+            "studio.source_not_built: Wait for the current saved source to reach the displayed build",
+          );
+        const client = await clientContext(
+          args.clientId,
+          args.expectedRevision,
+          ctx.mcpReq.signal,
+        );
+        if (
+          client.compositionId !== compositionId ||
+          client.sourceVersion !== args.expectedSourceVersion
+        )
+          throw new Error(
+            "studio.client_stale: Browser composition or source changed; read context and retry",
+          );
+        const inspected = await request<
+          StudioClient & { inspection?: unknown }
+        >("control", ctx.mcpReq.signal, {
+          ...args,
+          action: "inspect",
+          elementId,
+        });
+        const current = await request<CodeSource>(
+          `code?compositionId=${encodeURIComponent(compositionId)}`,
+          ctx.mcpReq.signal,
+        );
+        if (current.revision !== source.revision)
+          throw new Error(
+            "studio.inspect_stale: Source changed during inspection; read context and retry",
+          );
+        const { inspection, ...browser } = inspected;
+        return result({
+          compositionId,
+          client: browser,
+          source: {
+            enabled: source.enabled,
+            path: source.path,
+            revision: source.revision,
+            displayedRevision: source.displayedRevision,
+          },
+          element: {
+            ...(matches[0] ?? {
+              id: elementId,
+              fields: {},
+              reason: "No mapped source target; inspect only",
+            }),
+            runtime: inspection,
+          },
+        });
+      }),
+  );
+  server.registerTool(
+    "studio_animate",
+    {
+      description:
+        "Set a numeric Layer animation, upsert a keyframe, or remove one property track through guarded source writes and durable undo. Frames are local to the Layer, not seconds. Supports x/y/width/height/rotation/opacity with clamped endpoints. Computed/custom animation stays code-owned. Receipt distinguishes saved, built and displayed.",
+      inputSchema: z.strictObject({
+        ...guard,
+        ...confirmation,
+        elementId: id,
+        property: z.enum(LAYER_ANIMATION_PROPERTIES),
+        action: z.enum(["set", "keyframe", "remove"]),
+        keyframes: z
+          .array(z.strictObject({ frame: integer, value: z.number().finite() }))
+          .min(2)
+          .max(128)
+          .optional(),
+        frame: integer.optional(),
+        value: z.number().finite().optional(),
+        easing: z.enum(LAYER_ANIMATION_EASINGS).optional(),
+      }),
+      annotations: mutation,
+    },
+    (
+      {
+        elementId,
+        property,
+        action,
+        keyframes,
+        frame,
+        value,
+        easing,
+        clientId,
+        waitMs,
+        ...args
+      },
+      ctx,
+    ) =>
+      report(async () => {
+        const source = await request<CodeSource>(
+          `code?compositionId=${encodeURIComponent(args.compositionId)}`,
+          ctx.mcpReq.signal,
+        );
+        if (
+          (action === "set" && (frame !== undefined || value !== undefined)) ||
+          (action === "keyframe" && keyframes !== undefined) ||
+          (action === "remove" &&
+            (keyframes !== undefined ||
+              frame !== undefined ||
+              value !== undefined ||
+              easing !== undefined))
+        )
+          throw new Error(
+            "studio.animation_arguments: set takes keyframes/easing; keyframe takes frame/value/easing; remove takes no animation values",
+          );
+        if (source.revision !== args.expectedRevision)
+          throw new Error(
+            "studio.code_stale: Source changed; read current source before animating",
+          );
+        const elements = source.elements.filter(
+          (element) => element.id === elementId,
+        );
+        const field =
+          elements.length === 1
+            ? elements[0]!.fields[`animation.${property}`]
+            : undefined;
+        if (!field?.editable)
+          throw new Error(
+            `studio.code_readonly: ${field?.reason ?? "Expected one source-editable Layer animation target"}`,
+          );
+        let track = null;
+        if (action === "set") {
+          track = animationTrack(property, {
+            keyframes,
+            ...(easing ? { easing } : {}),
+          });
+        } else if (action === "keyframe") {
+          if (frame === undefined || value === undefined)
+            throw new Error(
+              "studio.animation_keyframe: Supply frame and value",
+            );
+          if (field.value === "null")
+            throw new Error(
+              "studio.animation_missing: Use set with at least two keyframes to create this track",
+            );
+          const prior = animationTrack(
+            property,
+            JSON.parse(String(field.value)),
+          );
+          track = animationTrack(property, {
+            keyframes: [
+              ...prior.keyframes.filter((point) => point.frame !== frame),
+              { frame, value },
+            ].sort((a, b) => a.frame - b.frame),
+            ...((easing ?? prior.easing)
+              ? { easing: easing ?? prior.easing }
+              : {}),
+          });
+        }
+        const body = {
+          ...args,
+          edits: [
+            {
+              id: elementId,
+              field: `animation.${property}`,
+              value: JSON.stringify(track),
+            },
+          ],
+        };
+        return saveWithReceipt(
+          "code",
+          args,
+          body,
+          clientId,
+          waitMs,
+          ctx.mcpReq.signal,
+        );
+      }),
+  );
+  server.registerTool(
     "studio_control",
     {
       description:
@@ -229,6 +628,7 @@ export function createStudioMcpServer(origin: string): McpServer {
         "Save supported literal edits to mapped JSX/TSX using the same guarded writer and durable undo as direct Studio controls. Rebuild before inspecting the result.",
       inputSchema: z.strictObject({
         ...guard,
+        ...confirmation,
         edits: z
           .array(
             z.strictObject({
@@ -242,9 +642,16 @@ export function createStudioMcpServer(origin: string): McpServer {
       }),
       annotations: mutation,
     },
-    (args, ctx) =>
+    ({ clientId, waitMs, ...args }, ctx) =>
       report(async () =>
-        result(await request("code", ctx.mcpReq.signal, args)),
+        saveWithReceipt(
+          "code",
+          args,
+          args,
+          clientId,
+          waitMs,
+          ctx.mcpReq.signal,
+        ),
       ),
   );
   server.registerTool(
@@ -254,13 +661,21 @@ export function createStudioMcpServer(origin: string): McpServer {
         "Replace one explicitly mapped source file with a complete UTF-8 source string. Preserves recoverable versions and rejects stale revisions. Use for custom code beyond literal controls; this is trusted project code, not sandboxed execution.",
       inputSchema: z.strictObject({
         ...guard,
+        ...confirmation,
         source: z.string().max(1024 * 1024),
       }),
       annotations: mutation,
     },
-    (args, ctx) =>
+    ({ clientId, waitMs, ...args }, ctx) =>
       report(async () =>
-        result(await request("code/replace", ctx.mcpReq.signal, args)),
+        saveWithReceipt(
+          "code/replace",
+          args,
+          args,
+          clientId,
+          waitMs,
+          ctx.mcpReq.signal,
+        ),
       ),
   );
   server.registerTool(
@@ -349,16 +764,22 @@ export function createStudioMcpServer(origin: string): McpServer {
     "studio_job",
     {
       description:
-        "Read, wait for, or cancel a Studio render job. Waiting returns after at most 30 seconds with an explicit status; repeat if still running. Cancelling waits for owned work to stop. Disconnecting this MCP client does not cancel exports.",
+        "List, read, wait for, or cancel Studio render jobs. action list recovers job IDs after a disconnected request. Waiting returns a bounded explicit status; repeat if still running. Cancelling waits for owned work to stop. Disconnecting MCP does not cancel exports.",
       inputSchema: z.strictObject({
-        id,
-        action: z.enum(["status", "wait", "cancel"]).default("status"),
+        id: id.optional(),
+        action: z.enum(["list", "status", "wait", "cancel"]).default("status"),
         waitMs: z.number().int().min(0).max(30_000).default(10_000),
       }),
       annotations: mutation,
     },
     ({ id: jobId, action, waitMs }, ctx) =>
       report(async () => {
+        if (action === "list")
+          return result(await request("jobs", ctx.mcpReq.signal));
+        if (!jobId)
+          throw new Error(
+            "studio.job_id: Supply id, or use action list to discover jobs",
+          );
         let job = await request<StudioJob>(
           `jobs/${encodeURIComponent(jobId)}${action === "cancel" ? "/cancel" : ""}`,
           ctx.mcpReq.signal,
@@ -397,19 +818,27 @@ export function createStudioMcpServer(origin: string): McpServer {
           "jobs",
           ctx.mcpReq.signal,
         );
-        let job = jobs.find(
+        const matching = jobs.filter(
           (item) =>
-            item.status === "succeeded" &&
             item.request.compositionId === client.compositionId &&
             item.request.frame === client.frame &&
             item.request.expectedSourceVersion === client.sourceVersion,
         );
+        let job =
+          matching.find((item) => item.status === "succeeded") ??
+          matching.find((item) =>
+            ["running", "cancelling"].includes(item.status),
+          );
         job ??= await request<StudioJob>("jobs", ctx.mcpReq.signal, {
           compositionId: client.compositionId,
           expectedSourceVersion: client.sourceVersion,
           frame: client.frame,
         });
-        job = await waitJob(job, 25_000, ctx.mcpReq.signal);
+        try {
+          job = await waitJob(job, 25_000, ctx.mcpReq.signal);
+        } catch (error) {
+          return result({ job, client, pollError: failure(error) });
+        }
         if (job.status !== "succeeded") return result({ job, client });
         if (!job.result)
           throw new Error(

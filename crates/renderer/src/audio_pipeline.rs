@@ -73,10 +73,10 @@ fn download_source(
     let mut response = agent
         .get(url.as_str())
         .call()
-        .context("audio.download_failed")?;
+        .with_context(|| format!("audio.download_failed: {url}"))?;
     if response.status().as_u16() != 200 {
         bail!(
-            "audio.download_failed: expected HTTP 200, got {}",
+            "audio.download_failed: {url}: expected HTTP 200, got {}",
             response.status()
         );
     }
@@ -278,6 +278,7 @@ mod tests {
         for (status, version, hash, limit, success) in [
             ("200 OK", "v1", digest.as_str(), 4, true),
             ("302 Found", "v1", digest.as_str(), 4, false),
+            ("404 Not Found", "v1", digest.as_str(), 4, false),
             ("200 OK", "v2", digest.as_str(), 4, false),
             (
                 "200 OK",
@@ -299,6 +300,12 @@ mod tests {
             );
             thread.join().unwrap();
             assert_eq!(result.is_ok(), success);
+            if status == "404 Not Found" {
+                let diagnostic = result.as_ref().unwrap_err().to_string();
+                assert!(diagnostic.contains("audio.download_failed"));
+                assert!(diagnostic.contains(url.as_str()), "{diagnostic}");
+                assert!(diagnostic.contains("404"));
+            }
             if success {
                 assert_eq!(std::fs::read(root.join("source")).unwrap(), b"abc");
             }

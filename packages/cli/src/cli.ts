@@ -2,6 +2,7 @@ import { cac } from "cac";
 import type { Command } from "cac";
 import { loadConfigFromPath } from "./project/config-loader.js";
 import { initCommand } from "./authoring/init-command.js";
+import { skillsCommand } from "./authoring/skills-command.js";
 import {
   checkFramesCommand,
   type FrameCheckOptions,
@@ -259,6 +260,18 @@ export async function runCli(
         });
       },
     );
+
+  cli
+    .command(
+      "skills [action]",
+      "List, install or update the packaged video skill",
+    )
+    .option(
+      "--directory <path>",
+      "Skill root (default: .agents/skills in this project)",
+    )
+    .option("--json", "Print machine-readable skill metadata")
+    .action(skillsCommand);
 
   cli
     .command("templates", "List packaged project templates and workflows")

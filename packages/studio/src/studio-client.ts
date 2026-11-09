@@ -3,6 +3,7 @@ import type {
   StudioClientCommand,
   StudioClientState,
   StudioHeartbeat,
+  StudioElementInspection,
 } from "@velocast/core";
 
 interface ClientApi {
@@ -30,7 +31,9 @@ export class StudioClientConnection {
     private readonly options: {
       api: ClientApi;
       getState(): Omit<StudioClientState, "revision">;
-      control(command: StudioClientCommand): Promise<void>;
+      control(
+        command: StudioClientCommand,
+      ): Promise<StudioElementInspection | void>;
       status?(connected: boolean, error?: string): void;
     },
   ) {}
@@ -105,8 +108,12 @@ export class StudioClientConnection {
             throw new Error(
               "studio.client_conflict: This tab changed. Read its current state and retry.",
             );
-          await this.options.control(command);
-          acknowledgement = { id: command.id, status: "succeeded" };
+          const inspection = await this.options.control(command);
+          acknowledgement = {
+            id: command.id,
+            status: "succeeded",
+            ...(inspection ? { inspection } : {}),
+          };
         } catch (error) {
           acknowledgement = {
             id: command.id,

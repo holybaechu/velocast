@@ -358,7 +358,7 @@ export class HttpStudioApi implements StudioApi {
           (command.action === "seek" &&
             Number.isSafeInteger(command.frame) &&
             Number(command.frame) >= 0) ||
-          (command.action === "select" &&
+          ((command.action === "select" || command.action === "inspect") &&
             typeof command.elementId === "string" &&
             !!command.elementId) ||
           command.action === "play" ||

@@ -65,6 +65,42 @@ it("rejects stale commands and removes expired browser contexts", async () => {
   clients.close();
 });
 
+it("refuses an inspection whose browser moved before readback acknowledgement", async () => {
+  const clients = new StudioClients();
+  clients.heartbeat("browser", { state });
+  const result = clients.control({
+    clientId: "browser",
+    expectedRevision: 1,
+    expectedSourceVersion: "build-1",
+    action: "inspect",
+    elementId: "title",
+  });
+  const rejected = expect(result).rejects.toMatchObject({
+    code: "studio.inspect_stale",
+  });
+  const command = clients.heartbeat("browser", { state }).commands[0]!;
+  clients.heartbeat("browser", {
+    state: { ...state, revision: 2, frame: 13 },
+    acknowledgements: [
+      {
+        id: command.id,
+        status: "succeeded",
+        inspection: {
+          selector: '[data-velocast-layer="title"]',
+          elementId: "title",
+          matchCount: 1,
+          tag: "div",
+          text: "Title",
+          bounds: { x: 10, y: 20, width: 100, height: 40 },
+          styles: {},
+        },
+      },
+    ],
+  });
+  await rejected;
+  clients.close();
+});
+
 it("keeps a ready browser available after a recoverable output error", () => {
   const clients = new StudioClients();
   clients.heartbeat("browser-a", {

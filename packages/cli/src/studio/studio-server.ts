@@ -710,7 +710,16 @@ export async function createStudioServer(
               "expectedSourceVersion",
               "action",
             ],
-            actions: ["play", "pause", "seek", "select", "composition"],
+            actions: [
+              "play",
+              "pause",
+              "seek",
+              "select",
+              "composition",
+              "inspect",
+            ],
+            inspection:
+              "inspect requires elementId, a paused clean tab and one rendered Layer match; acknowledgement includes resolved DOM state",
             lifecycle:
               "Commands target one explicit browser and finish only after acknowledgement. Read context again after a timeout or conflict.",
           },

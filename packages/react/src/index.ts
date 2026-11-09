@@ -32,6 +32,12 @@ export { Sequence } from "./sequence.js";
 export type { SequenceProps } from "./sequence.js";
 export { Layer } from "./layer.js";
 export type { LayerProps } from "./layer.js";
+export type {
+  LayerAnimation,
+  LayerAnimationTrack,
+  LayerKeyframe,
+  LayerAnimatedProperty,
+} from "@velocast/core";
 export { StillImage } from "./still-image.js";
 export type { StillImageProps } from "./still-image.js";
 // Motion has one implementation and one numerical contract for every adapter.

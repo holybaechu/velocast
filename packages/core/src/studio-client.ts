@@ -25,6 +25,7 @@ export type StudioControl =
   | { action: "play" | "pause" }
   | { action: "seek"; frame: number }
   | { action: "select"; elementId: string }
+  | { action: "inspect"; elementId: string }
   | { action: "composition"; compositionId: string };
 
 export type StudioClientCommand = StudioControl & {
@@ -37,6 +38,22 @@ export interface StudioClientAcknowledgement {
   id: string;
   status: "succeeded" | "failed";
   error?: string;
+  inspection?: StudioElementInspection;
+}
+
+/** Resolved DOM state at the acknowledged, paused composition frame. */
+export interface StudioElementInspection {
+  selector: string;
+  tag: string;
+  text: string;
+  source?: string;
+  elementId?: string;
+  parentElementId?: string;
+  depth?: number;
+  childCount?: number;
+  matchCount?: number;
+  bounds: { x: number; y: number; width: number; height: number };
+  styles: Record<string, string>;
 }
 
 export interface StudioHeartbeat {

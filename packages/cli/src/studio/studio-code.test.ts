@@ -435,6 +435,80 @@ it("limits writable sources to explicit distinct regular files within the config
   expect(response.status).toBe(400);
 });
 
+it("edits bounded layer keyframes through guarded source writes and durable undo", async () => {
+  const original = `import {Layer} from '@velocast/react';\n// Human note stays here\nexport const Demo = () => <Layer id="title" x={7} opacity={1}>Title</Layer>;`;
+  const f = await fixture(original);
+  const track = JSON.stringify({
+    keyframes: [
+      { frame: 0, value: 0 },
+      { frame: 15, value: 1 },
+    ],
+    easing: "easeOut",
+  });
+  const response = await f.post({
+    expectedRevision: (await f.get()).revision,
+    edits: [{ id: "title", field: "animation.opacity", value: track }],
+  });
+  expect(response.status).toBe(200);
+  const animated = await response.json();
+  expect(animated.elements[0].fields["animation.opacity"]).toEqual({
+    value: track,
+    editable: true,
+  });
+  expect(animated.elements[0].fields.opacity.editable).toBe(false);
+  expect(await readFile(f.path, "utf8")).toContain("// Human note stays here");
+  const bytes = await readFile(f.path, "utf8");
+  const invalid = await f.post({
+    expectedRevision: animated.revision,
+    edits: [
+      {
+        id: "title",
+        field: "animation.opacity",
+        value: JSON.stringify({
+          keyframes: [
+            { frame: 0, value: 0 },
+            { frame: 15, value: 2 },
+          ],
+        }),
+      },
+    ],
+  });
+  expect(invalid.status).toBe(400);
+  expect(await readFile(f.path, "utf8")).toBe(bytes);
+  const removed = await f.post({
+    expectedRevision: animated.revision,
+    edits: [{ id: "title", field: "animation.opacity", value: "null" }],
+  });
+  expect(removed.status).toBe(200);
+  const plain = await removed.json();
+  expect(plain.elements[0].fields.opacity.editable).toBe(true);
+  const undo = await f.post(
+    { expectedRevision: plain.revision, action: "undo" },
+    "/api/code/history",
+  );
+  expect(undo.status).toBe(200);
+  expect(await readFile(f.path, "utf8")).toBe(bytes);
+});
+
+it("preserves computed motion and style overrides when an animation write is refused", async () => {
+  const original = `import {Layer} from '@velocast/react'; const track = customMotion();
+export const Demo = () => <><Layer id="computed" animation={{opacity: track}}>Custom</Layer>
+<Layer id="styled" style={{opacity: 0.5}}>Style-owned</Layer></>;`;
+  const f = await fixture(original);
+  const source = await f.get();
+  for (const id of ["computed", "styled"]) {
+    const response = await f.post({
+      expectedRevision: source.revision,
+      edits: [{ id, field: "animation.opacity", value: "null" }],
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: "studio.code_readonly",
+    });
+    expect(await readFile(f.path, "utf8")).toBe(original);
+  }
+});
+
 it("rejects a configured directory replaced by a symbolic link after the session starts", async () => {
   const f = await fixture("export const value = 1;");
   const revision = (await f.get()).revision;
