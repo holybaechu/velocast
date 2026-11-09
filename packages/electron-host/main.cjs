@@ -558,8 +558,9 @@ async function dispatch(command) {
       window.setContentSize(width, height);
       // Keep the logical viewport pinned while each snapshot forces its own redraw.
       await setSnapshotViewport(width, height);
-      // Finish the surface resize before authoring can initialize canvas layers.
-      await captureSnapshot(width, height);
+      // Experiment: defer pixel readback to the existing frame capture path.
+      const resizedCompositorFailure = gpuCompositorFailure();
+      if (resizedCompositorFailure) throw resizedCompositorFailure;
       return {};
     }
     case "paint": {
