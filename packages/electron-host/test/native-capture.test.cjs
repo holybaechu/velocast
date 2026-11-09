@@ -147,7 +147,7 @@ test("resize settlement releases only known prior-size surfaces and preserves th
     codedSize: { width: 3840, height: 2160 },
     visibleRect: { x: 0, y: 0, width: 3840, height: 2160 },
   });
-  const result = f.capture.capture(3840, 2160, previousViewport);
+  const result = f.capture.capture(3840, 2160, [previousViewport]);
   const beforeFence = prior(1);
   f.contents.emit("paint", { texture: beforeFence });
   f.fence();
@@ -188,7 +188,7 @@ test("resize settlement rejects unknown geometry and malformed prior-size resour
   ]) {
     const f = fixture();
     const result = assert.rejects(
-      f.capture.capture(3840, 2160, previousViewport), /invalid_native_geometry/,
+      f.capture.capture(3840, 2160, [previousViewport]), /invalid_native_geometry/,
     );
     f.fence();
     await turn();
@@ -207,7 +207,7 @@ test("resize settlement rejects unknown geometry and malformed prior-size resour
 test("known stale resize deliveries remain bounded by the original timeout and late paints are released", async () => {
   const f = fixture();
   const previousViewport = { width: 160, height: 100 };
-  const result = assert.rejects(f.capture.capture(3840, 2160, previousViewport), (error) => {
+  const result = assert.rejects(f.capture.capture(3840, 2160, [previousViewport]), (error) => {
     assert.match(error.message, /shared_texture_timeout: texture, lastFrame=3/);
     const details = JSON.parse(error.message.slice(error.message.indexOf("{")));
     assert.equal(details.startFrame, -1);

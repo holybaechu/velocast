@@ -225,7 +225,7 @@ async function setSnapshotViewport(width, height) {
 let snapshotSequence = 0;
 let previousSnapshotMs = null;
 
-async function captureNative(width, height, previousViewport = null, identity = {}) {
+async function captureNative(width, height, previousViewports = [], identity = {}) {
   const compositorFailure = gpuCompositorFailure();
   if (compositorFailure) throw compositorFailure;
   if (!nativeCapture) throw new Error("capture.shared_texture_unavailable");
@@ -273,7 +273,7 @@ async function captureNative(width, height, previousViewport = null, identity = 
       // Diagnostics must not replace the capture failure or affect teardown.
     }
   };
-  const work = nativeCapture.capture(width, height, previousViewport);
+  const work = nativeCapture.capture(width, height, previousViewports);
   void work.then(
     (texture) => {
       if (failed) {
@@ -333,6 +333,9 @@ async function commandLoad(command) {
   abortPending(new Error("Electron browser is loading another page"));
   const initialCompositorFailure = gpuCompositorFailure();
   if (initialCompositorFailure) throw initialCompositorFailure;
+  const previousViewports = window && !window.isDestroyed() && snapshotViewport
+    ? [snapshotViewport]
+    : [];
   if (!window || window.isDestroyed()) {
     window = new BrowserWindow({
       show: false,
@@ -374,11 +377,17 @@ async function commandLoad(command) {
   // Some window managers clamp constructor bounds to the display work area.
   // Apply the requested offscreen viewport explicitly before observing it.
   window.setContentSize(width, height);
+  // Native paints can retain the OS-clamped bootstrap surface even after CDP
+  // reports the requested logical size. Trust window geometry, not page script.
+  const [bootstrapWidth, bootstrapHeight] = window.getContentSize();
+  previousViewports.push({ width: bootstrapWidth, height: bootstrapHeight });
   await deadline(window.loadURL(url), LOAD_TIMEOUT_MS, "Electron page load");
   const loadedCompositorFailure = gpuCompositorFailure();
   if (loadedCompositorFailure) throw loadedCompositorFailure;
   await setSnapshotViewport(width, height);
   nativeCapture.resetSource();
+  const texture = await captureNative(width, height, previousViewports);
+  texture.release();
   debug("load complete");
   if (process.env.VELOCAST_ELECTRON_HOST_DEBUG === "1") {
     const gpuInfo = await app.getGPUInfo("complete");
@@ -498,7 +507,7 @@ async function dispatch(command) {
         snapshotViewport?.height !== height
       )
         throw new Error("capture.invalid_snapshot_viewport");
-      const texture = await captureNative(width, height, null, {
+      const texture = await captureNative(width, height, [], {
         frame: command.frame,
         index: command.index,
       });
@@ -536,12 +545,12 @@ async function dispatch(command) {
       const compositorFailure = gpuCompositorFailure();
       if (compositorFailure) throw compositorFailure;
       browser();
-      const previousViewport = snapshotViewport;
+      const previousViewports = snapshotViewport ? [snapshotViewport] : [];
       window.setContentSize(width, height);
       // Keep the logical viewport pinned to the requested composition geometry.
       await setSnapshotViewport(width, height);
       // Settle the new native surface before authoring initializes canvas layers.
-      const texture = await captureNative(width, height, previousViewport);
+      const texture = await captureNative(width, height, previousViewports);
       texture.release();
       return {};
     }

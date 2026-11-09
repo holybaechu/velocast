@@ -61,13 +61,13 @@ class NativeCapture {
         Number.isSafeInteger(count) &&
         info.handle &&
         ["bgra", "rgba", "rgbaf16"].includes(info.pixelFormat);
-      // Resize is asynchronous: even a fresh capture counter can describe the
-      // prior viewport. Drain only that exact, otherwise-valid surface during
-      // the resize settlement capture, never crop it or admit it for encoding.
+      // Viewport changes are asynchronous: even a fresh counter can describe a
+      // known bootstrap or prior viewport. Drain only exact, otherwise-valid
+      // surfaces during settlement, never crop them or admit them for encoding.
       if (
         validResource &&
         !matchesSize(pending) &&
-        matchesSize(pending.previousViewport)
+        pending.previousViewports.some(matchesSize)
       ) {
         this.activity.staleResizePaints++;
         release();
@@ -99,7 +99,7 @@ class NativeCapture {
     this.lastFrame = -1;
   }
 
-  async capture(width, height, previousViewport = null) {
+  async capture(width, height, previousViewports = []) {
     if (this.closed) throw new Error("capture.closed");
     if (this.failure) throw this.failure;
     if (this.busy) throw new Error("capture.busy");
@@ -159,7 +159,7 @@ class NativeCapture {
           this.pending = {
             width,
             height,
-            previousViewport,
+            previousViewports,
             after: this.lastFrame,
             resolve,
             reject,
