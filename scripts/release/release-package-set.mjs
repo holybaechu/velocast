@@ -19,6 +19,6 @@ export function validReleasePackageSet(packages, version) {
     `velocast-react-${version}.tgz`,
     `velocast-remotion-${version}.tgz`,
     `velocast-remotion-source-${version}.tgz`,
-    `velocast-preview-${version}.tgz`,
+    `velocast-studio-${version}.tgz`,
   ].every((name) => packages.includes(name));
 }

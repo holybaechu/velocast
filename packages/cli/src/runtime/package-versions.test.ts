@@ -72,7 +72,7 @@ describe("official package compatibility", () => {
 
   it.each([
     "@velocast/react",
-    "@velocast/preview",
+    "@velocast/studio",
     "@velocast/remotion",
     "@velocast/remotion-source",
   ])("discovers and rejects a mismatched installed %s", (name) => {

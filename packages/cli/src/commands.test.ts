@@ -3,7 +3,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -11,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Config } from "@velocast/core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { RendererRuntimeResolver } from "./runtime/renderer-binary.js";
 import { RendererRuntimeAcquisition } from "./runtime/renderer-runtime.js";
 import { loadConfigFromPath } from "./project/config-loader.js";
@@ -19,7 +18,6 @@ import {
   doctorCommand,
   type DoctorProbeInput,
   executeRendererJob,
-  probeCapture,
   renderComposition,
   renderUrl,
   parseCliCodec,
@@ -38,6 +36,30 @@ afterEach(() => {
 });
 
 describe("doctorCommand", () => {
+  it("leads with ready when rendering works without a hardware-only guarantee", async () => {
+    const writes: string[] = [];
+    await doctorCommand(
+      {},
+      {
+        write: (value) => writes.push(value),
+        probe: () =>
+          doctorProbe({
+            rendererBinary: "installed/velocast-renderer.exe",
+            requiredGpuBackends: [
+              {
+                backend: "webcodecs",
+                available: false,
+                reason: "hardware-only guarantee unavailable",
+              },
+            ],
+          }),
+      },
+    );
+    expect(writes.join("")).toContain("Renderer: ready");
+    expect(writes.join("")).toContain("Hardware-only encoding: unavailable");
+    expect(writes.join("")).not.toContain("Diagnostics:");
+  });
+
   function doctorProbe(overrides: Partial<DoctorProbeInput>): DoctorProbeInput {
     return {
       platform: "win32",
@@ -207,7 +229,7 @@ describe("doctorCommand", () => {
 
     const output = writes.join("");
     expect(output).toContain("Velocast doctor (win32/x64)");
-    expect(output).toContain("Required GPU: available");
+    expect(output).toContain("Hardware-only encoding: available");
     expect(output).toContain("Backend: webcodecs");
     expect(output).toContain("WebCodecs runtime: available");
   });
@@ -239,7 +261,7 @@ describe("doctorCommand", () => {
     );
 
     const output = writes.join("");
-    expect(output).toContain("Required GPU: available");
+    expect(output).toContain("Hardware-only encoding: available");
     expect(output).toContain("Backend candidates: webcodecs, webcodecs");
     expect(output).not.toContain("Backend: webcodecs");
   });
@@ -318,7 +340,7 @@ describe("doctorCommand", () => {
     );
 
     const output = writes.join("");
-    expect(output).toContain("Required GPU: unavailable");
+    expect(output).toContain("Hardware-only encoding: unavailable");
     expect(output).toContain("Reason: GPU device unavailable");
     expect(output).toContain("Diagnostics:");
     expect(output).toContain(
@@ -758,46 +780,6 @@ describe("executeRendererJob", () => {
     expect(existsSync(join(cwd, "reports"))).toBe(true);
     expect(existsSync(join(cwd, ".velocast/tmp"))).toBe(false);
   });
-
-  it("rejects direct legacy probe requests before loading source or acquiring resources", async () => {
-    await expect(
-      executeRendererJob({
-        kind: "capture-probe",
-        config: { serve: { url: "http://127.0.0.1:4545" } },
-        compositionId: "product-hero",
-      }),
-    ).rejects.toThrow("capture.probe_retired");
-  });
-});
-
-describe("probeCapture", () => {
-  it.each([
-    {},
-    { report: "" },
-    { report: "report.json", inputPropsFile: "missing.json" },
-  ])(
-    "rejects legacy calls without resolving inputs or launching work (%j)",
-    async (options) => {
-      const acquire = vi.fn();
-      const runRenderer = vi.fn();
-      const cwd = mkTempDir("velocast-retired-probe-");
-      await expect(
-        probeCapture(
-          { entry: "missing.html", serve: { command: "must not start" } },
-          "hero",
-          options,
-          {
-            pathOptions: { cwd, env: {} },
-            runtimeAcquisition: { acquire },
-            runRenderer,
-          },
-        ),
-      ).rejects.toThrow("capture.probe_retired: use render --report");
-      expect(acquire).not.toHaveBeenCalled();
-      expect(runRenderer).not.toHaveBeenCalled();
-      expect(readdirSync(cwd)).toEqual([]);
-    },
-  );
 });
 
 describe("renderComposition", () => {

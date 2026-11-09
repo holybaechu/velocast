@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Config } from "@velocast/core";
+import { normalizeStudioConfig } from "../studio/studio-code-config.js";
 import {
   assertNonEmptyString,
   getInvocationCwd,
@@ -56,6 +57,21 @@ export function normalizeConfigEntryFromConfigDir(
 ): Config {
   assertSourceConfig(config);
   let normalized = config;
+  if (config.studio !== undefined)
+    normalized = {
+      ...normalized,
+      studio: normalizeStudioConfig(config.studio, configDir),
+    };
+  if (config.inputPropsFile !== undefined) {
+    assertNonEmptyString(
+      config.inputPropsFile,
+      "inputPropsFile must be a non-empty local path",
+    );
+    normalized = {
+      ...normalized,
+      inputPropsFile: resolvePathFrom(configDir, config.inputPropsFile),
+    };
+  }
   if (config.source) {
     normalized = {
       ...normalized,

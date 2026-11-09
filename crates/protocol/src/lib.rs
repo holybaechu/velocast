@@ -82,14 +82,6 @@ impl RenderJob {
                 "output.invalid_request: worker jobs cannot publish coordinator results".to_owned(),
             );
         }
-        if self.capture_probe.is_some()
-            && (self.operation != RenderOperation::Render || self.output_range.is_some())
-        {
-            return Err(
-                "output.invalid_request: capture probes cannot include public output operations"
-                    .to_owned(),
-            );
-        }
         match self.operation {
             RenderOperation::Render if self.output_frame.is_some() => {
                 return Err(
@@ -264,25 +256,6 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("url job requires selector"));
-    }
-
-    #[test]
-    fn parses_accelerated_paint_capture_probe() {
-        let job: RenderJob = serde_json::from_str(
-            &composition_job_json(json!({
-                "output": "renders/probe-unused.mp4",
-                "pixel_format": "nv12",
-                "acceleration": "required",
-                "capture_probe": "accelerated_paint"
-            }))
-            .to_string(),
-        )
-        .unwrap();
-
-        assert_eq!(
-            job.capture_probe,
-            Some(RenderCaptureProbe::AcceleratedPaint)
-        );
     }
 
     #[test]

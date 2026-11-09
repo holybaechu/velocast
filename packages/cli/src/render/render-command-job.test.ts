@@ -22,6 +22,25 @@ afterEach(() => {
 });
 
 describe("buildCompositionRenderCommandJobFromSource", () => {
+  it("uses configured saved inputs unless the invocation explicitly selects another file", () => {
+    const cwd = mkTempDir();
+    const project = join(cwd, "project.json");
+    const alternate = join(cwd, "alternate.json");
+    writeFileSync(project, '{"title":"Saved"}');
+    writeFileSync(alternate, '{"title":"Alternate"}');
+    const job = (inputPropsFile?: string) =>
+      buildCompositionRenderCommandJobFromSource(
+        { inputPropsFile: project },
+        "demo",
+        "http://localhost:1234",
+        "video.mp4",
+        { inputPropsFile },
+        { cwd, env: {} },
+      );
+    expect(job().input_props_path).toBe(project);
+    expect(job("alternate.json").input_props_path).toBe(alternate);
+  });
+
   it("accepts numeric CLI scalars and applies them before config defaults", () => {
     const job = buildCompositionRenderCommandJobFromSource(
       {

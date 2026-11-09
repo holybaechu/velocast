@@ -18,7 +18,7 @@ function loadProductHeroRuntime() {
 function mountStaticMarkup() {
   document.body.innerHTML = `
     <div id="root">
-      <main class="preview-shell">
+      <main class="studio-shell">
         <section id="product-hero" class="product-hero" aria-label="Render metrics">
           <section class="metric-scene">
             <div class="metric-headline"></div>
@@ -63,7 +63,7 @@ afterEach(() => {
 
 describe("vanilla GSAP product hero playground", () => {
   it("keeps the canonical playground composition contract", () => {
-    const { productHeroComposition, productHeroPreviewFrame } =
+    const { productHeroComposition, productHeroStudioFrame } =
       loadProductHeroRuntime();
 
     expect(productHeroComposition).toEqual({
@@ -75,20 +75,20 @@ describe("vanilla GSAP product hero playground", () => {
       target: "#product-hero",
       maxConcurrency: 4,
     });
-    expect(productHeroPreviewFrame).toBe(72);
+    expect(productHeroStudioFrame).toBe(72);
   });
 
-  it("resolves the static product hero target and renders the preview frame", () => {
+  it("resolves the static product hero target and renders the studio frame", () => {
     const {
       productHeroFrameMetrics,
-      productHeroPreviewFrame,
+      productHeroStudioFrame,
       resolveProductHeroTarget,
     } = loadProductHeroRuntime();
     const root = mountStaticMarkup();
     const target = resolveProductHeroTarget(root);
 
     expect(target.id).toBe("product-hero");
-    expectRenderedFrame(target, productHeroPreviewFrame, productHeroFrameMetrics);
+    expectRenderedFrame(target, productHeroStudioFrame, productHeroFrameMetrics);
   });
 
   it("renders deterministic frame metrics from frame numbers", () => {
@@ -148,7 +148,7 @@ describe("vanilla GSAP product hero playground", () => {
       createProductHeroTimeline,
       productHeroComposition,
       productHeroFrameMetrics,
-      productHeroPreviewFrame,
+      productHeroStudioFrame,
       renderProductHeroFrame,
       resolveProductHeroTarget,
     } = loadProductHeroRuntime();
@@ -160,7 +160,7 @@ describe("vanilla GSAP product hero playground", () => {
       renderProductHeroFrame(target, frame);
     });
 
-    timeline.totalTime(productHeroPreviewFrame / productHeroComposition.fps, false);
+    timeline.totalTime(productHeroStudioFrame / productHeroComposition.fps, false);
 
     for (const frame of [0, 72, 96, 239]) {
       calls.length = 0;
@@ -177,14 +177,14 @@ describe("vanilla GSAP product hero playground", () => {
       createProductHeroTimeline,
       productHeroComposition,
       productHeroFrameMetrics,
-      productHeroPreviewFrame,
+      productHeroStudioFrame,
       resolveProductHeroTarget,
     } = loadProductHeroRuntime();
     const root = mountStaticMarkup();
     const target = resolveProductHeroTarget(root);
     const timeline = createProductHeroTimeline(gsap, target);
 
-    timeline.totalTime(productHeroPreviewFrame / productHeroComposition.fps, false);
+    timeline.totalTime(productHeroStudioFrame / productHeroComposition.fps, false);
 
     registerGsapTimeline(productHeroComposition.id, timeline, {
       width: productHeroComposition.width,

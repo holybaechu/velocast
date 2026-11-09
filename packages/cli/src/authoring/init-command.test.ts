@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { createReactProject, initCommand } from "./init-command.js";
+import { createProject, initCommand } from "./init-command.js";
 import { runCli } from "../cli.js";
 
 const roots: string[] = [];
@@ -36,18 +36,12 @@ it("dispatches init to real filesystem creation without loading config or invoki
     write.mock.calls.map((call) => String(call[0])).join(""),
   );
   expect(result.directory).toBe(target);
-  expect(result.files).toContain("public/cover.svg");
+  expect(result.files).toContain("public/assets/overview.svg");
+  expect(result.files).toContain("src/product-demo.jsx");
+  expect(result.files).toContain("src/social-card.jsx");
   expect(
-    JSON.parse(await readFile(join(target, "velocast-template.json"), "utf8")),
-  ).toEqual({
-    template: "react-static",
-    templateVersion: 3,
-    compositionId: "hello-react",
-    width: 640,
-    height: 360,
-    fps: 30,
-    durationFrames: 90,
-  });
+    await readFile(join(target, "src/product-demo.jsx"), "utf8"),
+  ).toContain("createMediaTimeline");
   expect(loadConfig).not.toHaveBeenCalled();
   expect(setup).not.toHaveBeenCalled();
 });
@@ -57,14 +51,12 @@ it("preserves nonempty targets including hidden files and refuses a second init"
     target = join(cwd, "existing");
   await mkdir(target);
   await writeFile(join(target, ".keep"), "user bytes");
-  await expect(createReactProject(target)).rejects.toThrow(
-    "init.target_not_empty",
-  );
+  await expect(createProject(target)).rejects.toThrow("init.target_not_empty");
   expect(await readFile(join(target, ".keep"), "utf8")).toBe("user bytes");
   expect(await readdir(target)).toEqual([".keep"]);
-  const generated = await createReactProject(join(cwd, "new"));
+  const generated = await createProject(join(cwd, "new"));
   const original = await readFile(join(generated.directory, "package.json"));
-  await expect(createReactProject(generated.directory)).rejects.toThrow(
+  await expect(createProject(generated.directory)).rejects.toThrow(
     "init.target_not_empty",
   );
   expect(await readFile(join(generated.directory, "package.json"))).toEqual(
@@ -78,8 +70,8 @@ it("preserves nonempty targets including hidden files and refuses a second init"
 it("accepts an existing empty directory and generates byte-identical repeatable template files", async () => {
   const cwd = await temporary();
   await mkdir(join(cwd, "empty"));
-  const first = await createReactProject("empty", { cwd, env: {} });
-  const second = await createReactProject("nested/other", {
+  const first = await createProject("empty", { cwd, env: {} });
+  const second = await createProject("nested/other", {
     cwd: join(cwd, "empty"),
     env: { INIT_CWD: cwd },
   });
@@ -98,8 +90,8 @@ it("refuses file, blank, symlink/junction and symlink-ancestor destinations", as
   const cwd = await temporary();
   const file = join(cwd, "file.txt");
   await writeFile(file, "original");
-  await expect(createReactProject(file)).rejects.toThrow("init.invalid_target");
-  await expect(createReactProject(" ")).rejects.toThrow("init.invalid_target");
+  await expect(createProject(file)).rejects.toThrow("init.invalid_target");
+  await expect(createProject(" ")).rejects.toThrow("init.invalid_target");
   const outside = join(cwd, "outside");
   await mkdir(outside);
   await symlink(
@@ -107,10 +99,10 @@ it("refuses file, blank, symlink/junction and symlink-ancestor destinations", as
     join(cwd, "linked"),
     process.platform === "win32" ? "junction" : "dir",
   );
-  await expect(createReactProject(join(cwd, "linked"))).rejects.toThrow(
+  await expect(createProject(join(cwd, "linked"))).rejects.toThrow(
     "init.invalid_target",
   );
-  await expect(createReactProject(join(cwd, "linked/child"))).rejects.toThrow(
+  await expect(createProject(join(cwd, "linked/child"))).rejects.toThrow(
     "init.invalid_target",
   );
   expect(await readFile(file, "utf8")).toBe("original");
@@ -121,8 +113,8 @@ it("allows only one concurrent publisher and preserves its complete project", as
   const cwd = await temporary(),
     target = join(cwd, "project");
   const results = await Promise.allSettled([
-    createReactProject(target),
-    createReactProject(target),
+    createProject(target),
+    createProject(target),
   ]);
   expect(
     results.filter((result) => result.status === "fulfilled"),
@@ -146,52 +138,25 @@ async function temporary() {
   return root;
 }
 
-it("creates the versioned static React starter without installing anything", async () => {
+it("creates a blank React composition with its source configured for Studio", async () => {
   const cwd = await temporary();
   const writes: string[] = [];
   const result = await initCommand(
     "my-video",
-    { json: true },
+    { json: true, template: "blank" },
     { pathOptions: { cwd, env: {} }, write: (text) => writes.push(text) },
   );
-  const metadata = JSON.parse(
-    await readFile(join(result.directory, "package.json"), "utf8"),
-  );
-  expect(metadata.dependencies).toMatchObject({
-    "@velocast/react": "0.1.0",
-    react: "18.3.1",
-    "react-dom": "18.3.1",
-  });
-  expect(metadata.devDependencies).toMatchObject({
-    velocast: "0.1.0",
-    vite: "8.3.0",
-  });
-  expect(metadata.scripts.build).toBe("vite build");
-  expect(metadata.scripts.preview).toBe(
-    'npm run build && velocast preview --watch-command "vite build --watch"',
-  );
-  expect(metadata.scripts.render).toBe(
-    "velocast render hello-react --output renders/hello-react.mp4",
-  );
   expect(result).toMatchObject({
-    template: "react-static",
-    templateVersion: 3,
-    compositionId: "hello-react",
+    template: "blank",
+    compositionId: "video",
     dependenciesInstalled: false,
   });
   expect(JSON.parse(writes.join(""))).toEqual(result);
   expect(await readdir(result.directory)).not.toContain("node_modules");
-  const readme = await readFile(join(result.directory, "README.md"), "utf8");
-  expect(readme).toContain("npm run preview");
-  expect(readme).toContain("Refresh source");
-  expect(readme).not.toContain("does not provide a playback/preview command");
   expect(
     await readFile(join(result.directory, "velocast.config.ts"), "utf8"),
-  ).toContain('snapshotRoot: "dist"');
+  ).toContain('"video": "src/video.jsx"');
   expect(
     await readFile(join(result.directory, "src/main.jsx"), "utf8"),
-  ).toContain("defineReactComposition({");
-  expect(
-    await readFile(join(result.directory, "public/cover.svg"), "utf8"),
-  ).toContain("<svg");
+  ).toContain("startVelocast([video])");
 });

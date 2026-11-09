@@ -29,7 +29,7 @@ const server = createServer(async (request, response) => {
     }
     const relative =
       pathname === "/clock.js"
-        ? "packages/preview/dist/web-audio-clock.js"
+        ? "packages/studio/dist/web-audio-clock.js"
         : /^\/core\/[a-zA-Z0-9_/-]+\.js$/.test(pathname)
           ? `packages/core/dist/${pathname.slice(6)}`
           : null;
@@ -282,10 +282,10 @@ try {
     else assert.equal(resultCase.maxAbsoluteError, 0, resultCase.name);
   }
   result.scope =
-    "Actual offline Web Audio nodes and PCM only; real-time clock, playback gesture, encoded input and official preview integration remain separate gates.";
+    "Actual offline Web Audio nodes and PCM only; real-time clock, playback gesture, encoded input and official studio integration remain separate gates.";
   result.sourceSha256 = createHash("sha256")
     .update(
-      await readFile(join(repo, "packages/preview/dist/web-audio-clock.js")),
+      await readFile(join(repo, "packages/studio/dist/web-audio-clock.js")),
     )
     .digest("hex");
   await writeFile(

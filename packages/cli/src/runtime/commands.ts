@@ -41,6 +41,8 @@ export async function doctorCommand(
 
 export interface SetupOptions {
   json?: boolean;
+  from?: string;
+  sha256?: string;
 }
 
 export interface SetupDependencies {
@@ -55,13 +57,24 @@ export async function setupCommand(
   const write =
     dependencies.write ?? ((value: string) => process.stdout.write(value));
   const resolver = dependencies.artifactResolver ?? new ArtifactResolver();
-  const runtime = await resolver.setup();
+  if ((options.from === undefined) !== (options.sha256 === undefined))
+    throw new Error(
+      "setup.local_options: use --from <native.tar.gz> together with --sha256 <trusted-hash>",
+    );
+  const runtime =
+    options.from === undefined
+      ? await resolver.setup()
+      : await resolver.installLocal(options.from, options.sha256!);
   const result = {
     target: runtime.targetId,
     source: runtime.source,
     artifactDir: runtime.artifactDir,
     rendererBinary: runtime.rendererBinary,
     sha256: runtime.artifact.sha256,
+    trust:
+      runtime.source === "local-install"
+        ? "explicit-local"
+        : "release-manifest",
   };
   if (options.json) {
     write(`${JSON.stringify(result, null, 2)}\n`);
@@ -70,6 +83,10 @@ export async function setupCommand(
   write(`Velocast ${result.target} runtime ready (${result.source})\n`);
   write(`Artifact: ${result.artifactDir}\n`);
   write(`SHA-256: ${result.sha256}\n`);
+  if (runtime.source === "local-install")
+    write(
+      "Installed from your trusted local archive; this does not certify a signed or published release.\n",
+    );
 }
 
 export async function versionsCommand(
@@ -94,7 +111,11 @@ export async function versionsCommand(
     target: targetId,
     artifact: target.artifact?.sha256 ?? null,
     artifactStatus:
-      target.artifact === null ? "blocked" : runtime ? "verified" : "not-setup",
+      target.artifact === null
+        ? "blocked"
+        : runtime && runtime.source !== "local-install"
+          ? "verified"
+          : "not-setup",
     validationStatus: target.validatedCandidate
       ? "validated"
       : target.requirements.validationStatus,
@@ -112,6 +133,13 @@ export async function versionsCommand(
         }
       : null,
     blocker: target.blocker,
+    installedRuntime: runtime
+      ? {
+          source: runtime.source,
+          artifactDir: runtime.artifactDir,
+          sha256: runtime.artifact.sha256,
+        }
+      : null,
     installedPackages: installedVelocastVersions(),
   };
   if (options.json) {
@@ -126,6 +154,10 @@ export async function versionsCommand(
   write(`Target: ${result.target} (${result.artifactStatus})\n`);
   write(`Validation: ${result.validationStatus}\n`);
   write(`Distribution: ${result.distributionStatus}\n`);
+  if (result.installedRuntime) {
+    write(`Installed runtime: ${result.installedRuntime.source}\n`);
+    write(`Artifact: ${result.installedRuntime.artifactDir}\n`);
+  }
   if (result.blocker) {
     write(`Blocker: ${result.blocker}\n`);
   }
@@ -136,8 +168,9 @@ function writeDoctorText(
   write: (value: string) => void,
 ): void {
   write(`Velocast doctor (${report.platform}/${report.arch})\n`);
+  write(`Renderer: ${report.webCodecs.available ? "ready" : "unavailable"}\n`);
   write(
-    `Required GPU: ${report.requiredGpu.available ? "available" : "unavailable"}\n`,
+    `Hardware-only encoding: ${report.requiredGpu.available ? "available" : "unavailable"}\n`,
   );
   if (report.requiredGpu.backend) {
     write(`Backend: ${report.requiredGpu.backend}\n`);
@@ -147,10 +180,10 @@ function writeDoctorText(
       `Backend candidates: ${report.requiredGpu.candidateBackends.join(", ")}\n`,
     );
   }
-  if (report.requiredGpu.reason) {
+  if (!report.webCodecs.available && report.requiredGpu.reason) {
     write(`Reason: ${report.requiredGpu.reason}\n`);
   }
-  if (report.requiredGpu.diagnostics?.length) {
+  if (!report.webCodecs.available && report.requiredGpu.diagnostics?.length) {
     write("Diagnostics:\n");
     for (const diagnostic of report.requiredGpu.diagnostics) {
       const backend = diagnostic.backend ? `${diagnostic.backend} ` : "";

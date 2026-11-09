@@ -108,7 +108,7 @@ describe("extractKnownRendererError", () => {
     ).toBe("selector #hero was not found in composition metadata");
   });
 
-  it("extracts compositor capture probe errors from renderer output", () => {
+  it("extracts compositor capture errors from renderer output", () => {
     expect(
       extractKnownRendererError(
         "Error: capture.compositor_unavailable: Electron compositor unavailable\n",

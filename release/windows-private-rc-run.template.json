@@ -29,7 +29,7 @@
       "kind": "preflight",
       "scope": "shared",
       "environment": "install",
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\audit-package-tarballs.mjs", "<CORE_TGZ>", "<GSAP_TGZ>", "<REACT_TGZ>", "<REMOTION_TGZ>", "<PREVIEW_TGZ>", "<CLI_TGZ>"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\audit-package-tarballs.mjs", "<CORE_TGZ>", "<GSAP_TGZ>", "<REACT_TGZ>", "<REMOTION_TGZ>", "<STUDIO_TGZ>", "<CLI_TGZ>"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": []
     },
@@ -89,14 +89,14 @@
       "outputs": ["C:\\velocast-private-rc\\evidence\\concurrent-setup.json"]
     },
     {
-      "id": "npm-original-lyrics",
+      "id": "npm-text-motion",
       "kind": "render",
       "scope": "npm",
-      "videoRole": "original-lyrics",
+      "videoRole": "text-motion",
       "environment": "minimal",
-      "argv": ["<NODE_EXE>", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "render", "<ORIGINAL_COMPOSITION>", "--config", "<ORIGINAL_CONFIG>", "--start-frame", "820", "--end-frame", "1060", "--concurrency", "1", "--assembly", "reference", "--output", "C:\\velocast-private-rc\\evidence\\npm-original-lyrics.mp4", "--report", "C:\\velocast-private-rc\\evidence\\npm-original-lyrics.report.json", "--events", "C:\\velocast-private-rc\\evidence\\npm-original-lyrics.events.jsonl", "--json"],
-      "cwd": "C:\\velocast-private-rc\\projects\\original-lyrics",
-      "outputs": ["C:\\velocast-private-rc\\evidence\\npm-original-lyrics.mp4", "C:\\velocast-private-rc\\evidence\\npm-original-lyrics.report.json", "C:\\velocast-private-rc\\evidence\\npm-original-lyrics.events.jsonl"]
+      "argv": ["<NODE_EXE>", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "render", "<ORIGINAL_COMPOSITION>", "--config", "<ORIGINAL_CONFIG>", "--start-frame", "820", "--end-frame", "1060", "--concurrency", "1", "--assembly", "reference", "--output", "C:\\velocast-private-rc\\evidence\\npm-text-motion.mp4", "--report", "C:\\velocast-private-rc\\evidence\\npm-text-motion.report.json", "--events", "C:\\velocast-private-rc\\evidence\\npm-text-motion.events.jsonl", "--json"],
+      "cwd": "C:\\velocast-private-rc\\projects\\text-motion",
+      "outputs": ["C:\\velocast-private-rc\\evidence\\npm-text-motion.mp4", "C:\\velocast-private-rc\\evidence\\npm-text-motion.report.json", "C:\\velocast-private-rc\\evidence\\npm-text-motion.events.jsonl"]
     },
     {
       "id": "pnpm-clip-caption-music",
@@ -118,22 +118,22 @@
       "outputs": ["C:\\velocast-private-rc\\evidence\\pnpm-software-preference.mp4", "C:\\velocast-private-rc\\evidence\\pnpm-software-preference.report.json", "C:\\velocast-private-rc\\evidence\\pnpm-software-preference.events.jsonl"]
     },
     {
-      "id": "npm-original-lyrics-repeat",
+      "id": "npm-text-motion-repeat",
       "kind": "render-repeat",
       "scope": "npm",
       "environment": "minimal",
-      "argv": ["<NODE_EXE>", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "render", "<ORIGINAL_COMPOSITION>", "--config", "<ORIGINAL_CONFIG>", "--start-frame", "820", "--end-frame", "1060", "--concurrency", "1", "--assembly", "reference", "--output", "C:\\velocast-private-rc\\evidence\\npm-original-lyrics-repeat.mp4", "--report", "C:\\velocast-private-rc\\evidence\\npm-original-lyrics-repeat.report.json", "--events", "C:\\velocast-private-rc\\evidence\\npm-original-lyrics-repeat.events.jsonl", "--json"],
-      "cwd": "C:\\velocast-private-rc\\projects\\original-lyrics",
-      "outputs": ["C:\\velocast-private-rc\\evidence\\npm-original-lyrics-repeat.mp4", "C:\\velocast-private-rc\\evidence\\npm-original-lyrics-repeat.report.json", "C:\\velocast-private-rc\\evidence\\npm-original-lyrics-repeat.events.jsonl"]
+      "argv": ["<NODE_EXE>", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "render", "<ORIGINAL_COMPOSITION>", "--config", "<ORIGINAL_CONFIG>", "--start-frame", "820", "--end-frame", "1060", "--concurrency", "1", "--assembly", "reference", "--output", "C:\\velocast-private-rc\\evidence\\npm-text-motion-repeat.mp4", "--report", "C:\\velocast-private-rc\\evidence\\npm-text-motion-repeat.report.json", "--events", "C:\\velocast-private-rc\\evidence\\npm-text-motion-repeat.events.jsonl", "--json"],
+      "cwd": "C:\\velocast-private-rc\\projects\\text-motion",
+      "outputs": ["C:\\velocast-private-rc\\evidence\\npm-text-motion-repeat.mp4", "C:\\velocast-private-rc\\evidence\\npm-text-motion-repeat.report.json", "C:\\velocast-private-rc\\evidence\\npm-text-motion-repeat.events.jsonl"]
     },
     {
-      "id": "preview-browser",
-      "kind": "preview-harness",
+      "id": "studio-browser",
+      "kind": "studio-harness",
       "scope": "shared",
       "environment": "minimal",
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-preview.mjs", "--harness", "<REPO>\\packages\\preview\\scripts\\verify-official-preview.mjs", "--project", "C:\\velocast-private-rc\\projects\\original-lyrics", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--runtime", "<FINAL_RUNTIME_DIR>", "--output", "C:\\velocast-private-rc\\evidence\\preview-browser.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-studio.mjs", "--harness", "<REPO>\\packages\\studio\\scripts\\verify-official-studio.mjs", "--project", "C:\\velocast-private-rc\\projects\\text-motion", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--runtime", "<FINAL_RUNTIME_DIR>", "--output", "C:\\velocast-private-rc\\evidence\\studio-browser.json"],
       "cwd": "C:\\velocast-private-rc",
-      "outputs": ["C:\\velocast-private-rc\\evidence\\preview-browser.json"]
+      "outputs": ["C:\\velocast-private-rc\\evidence\\studio-browser.json"]
     },
     {
       "id": "corrupt-archive",
@@ -171,7 +171,7 @@
       "scope": "shared",
       "environment": "minimal",
       "negative": { "case": "cancel-render", "disposableRoot": "cancel-render", "cacheRoot": "cache" },
-      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-negative.mjs", "cancel-render", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--project", "C:\\velocast-private-rc\\projects\\original-lyrics", "--config", "<ORIGINAL_CONFIG>", "--composition", "<ORIGINAL_COMPOSITION>", "--output", "C:\\velocast-private-rc\\evidence\\negative-cancel-render.json"],
+      "argv": ["<NODE_EXE>", "<REPO>\\scripts\\release\\windows-private-rc-negative.mjs", "cancel-render", "--cli", "C:\\velocast-private-rc\\npm-consumer\\node_modules\\velocast\\dist\\bin.js", "--manifest", "C:\\velocast-private-rc\\inputs\\private-release-manifest.json", "--artifact", "<FINAL_ARTIFACT_ARCHIVE>", "--project", "C:\\velocast-private-rc\\projects\\text-motion", "--config", "<ORIGINAL_CONFIG>", "--composition", "<ORIGINAL_COMPOSITION>", "--output", "C:\\velocast-private-rc\\evidence\\negative-cancel-render.json"],
       "cwd": "C:\\velocast-private-rc",
       "outputs": ["C:\\velocast-private-rc\\evidence\\negative-cancel-render.json"]
     },

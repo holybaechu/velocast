@@ -176,6 +176,175 @@ describe("native artifact verification", () => {
 });
 
 describe("artifact setup", () => {
+  it("accepts uppercase SHA-256 values emitted by Windows checksum tools", async () => {
+    const fixture = await releaseFixture();
+    const resolver = new ArtifactResolver({
+      platform: "win32",
+      arch: "x64",
+      manifest: fixture.manifest,
+      env: { VELOCAST_CACHE_DIR: tempDir() },
+    });
+    const installed = await resolver.installLocal(
+      fixture.archive,
+      fixture.artifact.sha256.toUpperCase(),
+    );
+    expect(installed.artifact.sha256).toBe(fixture.artifact.sha256);
+  });
+
+  it("removes an unselected installation if publishing the selection fails", async () => {
+    const fixture = await releaseFixture();
+    const cache = tempDir();
+    fixture.manifest.targets["win32-x64"].artifact = null;
+    const targetCache = join(cache, "artifact-schema-1", "0.1.0", "win32-x64");
+    mkdirSync(join(targetCache, "local-runtime.json"), { recursive: true });
+    const resolver = new ArtifactResolver({
+      platform: "win32",
+      arch: "x64",
+      manifest: fixture.manifest,
+      env: { VELOCAST_CACHE_DIR: cache },
+    });
+    await expect(
+      resolver.installLocal(fixture.archive, fixture.artifact.sha256),
+    ).rejects.toThrow();
+    expect(readdirSync(join(targetCache, "local"))).toEqual([]);
+    expect(findNames(cache, ".lock")).toEqual([]);
+  });
+
+  it("serializes local installers and leaves no owned extraction files after cancellation", async () => {
+    const fixture = await releaseFixture();
+    const cache = tempDir();
+    fixture.manifest.targets["win32-x64"].artifact = null;
+    const options = {
+      platform: "win32" as const,
+      arch: "x64",
+      manifest: fixture.manifest,
+      env: { VELOCAST_CACHE_DIR: cache },
+    };
+    const first = new ArtifactResolver(options);
+    const second = new ArtifactResolver(options);
+    const [left, right] = await Promise.all([
+      first.installLocal(fixture.archive, fixture.artifact.sha256),
+      second.installLocal(fixture.archive, fixture.artifact.sha256),
+    ]);
+    expect(left).toEqual(right);
+    expect(second.inspect()).toEqual(left);
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled install"));
+    await expect(
+      second.installLocal(
+        fixture.archive,
+        fixture.artifact.sha256,
+        controller.signal,
+      ),
+    ).rejects.toThrow("cancelled install");
+    expect(second.inspect()).toEqual(left);
+    expect(findNames(cache, ".partial-")).toEqual([]);
+    expect(findNames(cache, ".staging-")).toEqual([]);
+    expect(findNames(cache, ".lock")).toEqual([]);
+  });
+
+  it("preserves the selected local runtime when a replacement checksum or compatibility check fails", async () => {
+    const fixture = await releaseFixture();
+    const cache = tempDir();
+    fixture.manifest.targets["win32-x64"].artifact = null;
+    const resolver = new ArtifactResolver({
+      platform: "win32",
+      arch: "x64",
+      manifest: fixture.manifest,
+      env: { VELOCAST_CACHE_DIR: cache },
+    });
+    const installed = await resolver.installLocal(
+      fixture.archive,
+      fixture.artifact.sha256,
+    );
+    await expect(
+      resolver.installLocal(fixture.archive, "0".repeat(64)),
+    ).rejects.toThrow("artifact.checksum_mismatch");
+    expect(resolver.inspect()).toEqual(installed);
+    const inventoryPath = join(fixture.runtimeDir, "artifact-manifest.json");
+    const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
+    inventory.protocolVersion = 2;
+    writeFileSync(inventoryPath, JSON.stringify(inventory));
+    await create(
+      {
+        gzip: true,
+        cwd: join(fixture.runtimeDir, ".."),
+        file: fixture.archive,
+      },
+      ["velocast"],
+    );
+    await expect(
+      resolver.installLocal(
+        fixture.archive,
+        sha256(readFileSync(fixture.archive)),
+      ),
+    ).rejects.toThrow("artifact.compatibility_mismatch");
+    expect(resolver.inspect()).toEqual(installed);
+    expect(findNames(cache, ".partial-")).toEqual([]);
+    expect(findNames(cache, ".staging-")).toEqual([]);
+    expect(findNames(cache, ".lock")).toEqual([]);
+  });
+
+  it("reports a corrupt local installation and repairs it by importing the trusted archive again", async () => {
+    const fixture = await releaseFixture();
+    const cache = tempDir();
+    fixture.manifest.targets["win32-x64"].artifact = null;
+    const resolver = new ArtifactResolver({
+      platform: "win32",
+      arch: "x64",
+      manifest: fixture.manifest,
+      env: { VELOCAST_CACHE_DIR: cache },
+    });
+    const installed = await resolver.installLocal(
+      fixture.archive,
+      fixture.artifact.sha256,
+    );
+    writeFileSync(join(installed.artifactDir, "resources.pak"), "corrupt");
+    expect(() => resolver.inspect()).toThrow("artifact.local_install_invalid");
+    expect(() => resolver.inspect()).toThrow(
+      "reinstall with velocast setup --from",
+    );
+    await resolver.installLocal(fixture.archive, fixture.artifact.sha256);
+    expect(resolver.inspect()).toEqual(installed);
+    const inventoryPath = join(installed.artifactDir, "artifact-manifest.json");
+    writeFileSync(inventoryPath, readFileSync(inventoryPath, "utf8") + " ");
+    expect(() => resolver.inspect()).toThrow("native inventory changed");
+  });
+
+  it("installs an explicitly trusted local bundle without advertising a release and reuses it offline", async () => {
+    const fixture = await releaseFixture();
+    const cache = tempDir();
+    fixture.manifest.targets["win32-x64"].artifact = null;
+    fixture.manifest.targets["win32-x64"].requirements.validationStatus =
+      "blocked";
+    const fetch = vi.fn(async () => {
+      throw new Error("unexpected download");
+    });
+    const options = {
+      platform: "win32" as const,
+      arch: "x64",
+      manifest: fixture.manifest,
+      env: { VELOCAST_CACHE_DIR: cache, VELOCAST_OFFLINE: "1" },
+      fetch,
+    };
+    const installed = await new ArtifactResolver(options).installLocal(
+      fixture.archive,
+      fixture.artifact.sha256,
+    );
+    expect(installed.source).toBe("local-install");
+    expect(installed.artifactDir.startsWith(cache)).toBe(true);
+    expect(installed.artifactDir).not.toBe(fixture.runtimeDir);
+    rmSync(fixture.archive);
+    const restarted = new ArtifactResolver(options);
+    expect(restarted.inspect()).toEqual(installed);
+    expect(await restarted.setup()).toEqual(installed);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(fixture.manifest.targets["win32-x64"].artifact).toBeNull();
+    expect(
+      fixture.manifest.targets["win32-x64"].requirements.validationStatus,
+    ).toBe("blocked");
+  });
+
   it.each(["headers", "body"])(
     "joins cancellation while waiting for download %s and removes only its owned work",
     async (phase) => {
@@ -527,6 +696,7 @@ describe("artifact setup", () => {
       platform: "win32",
       arch: "x64",
       manifest: fixture.manifest,
+      env: { VELOCAST_CACHE_DIR: tempDir() },
       fetch: (async () => {
         fetched = true;
         throw new Error("unexpected");
@@ -544,7 +714,10 @@ describe("artifact setup", () => {
       platform: "win32",
       arch: "x64",
       manifest: incompatible.manifest,
-      env: { VELOCAST_TEST_OS_VERSION: "10.0.0" },
+      env: {
+        VELOCAST_CACHE_DIR: tempDir(),
+        VELOCAST_TEST_OS_VERSION: "10.0.0",
+      },
       fetch: (async () => {
         fetched = true;
         throw new Error("unexpected");
@@ -565,6 +738,7 @@ describe("artifact setup", () => {
       platform: "win32",
       arch: "x64",
       manifest: fixture.manifest,
+      env: { VELOCAST_CACHE_DIR: tempDir() },
       fetch: (async () => {
         fetched = true;
         throw new Error("unexpected");

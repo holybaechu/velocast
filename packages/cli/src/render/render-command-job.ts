@@ -65,11 +65,6 @@ export interface RenderCommandOptions {
   inputPropsFile?: string;
 }
 
-export interface ProbeCaptureCommandOptions {
-  report?: string;
-  inputPropsFile?: string;
-}
-
 export function buildCompositionRenderCommandJobFromSource(
   config: Config,
   compositionId: string,
@@ -177,7 +172,7 @@ function prepareRenderCommandJob(
           ),
     verify_segments: options.verifySegments ?? config.renderer?.verifySegments,
     input_props_path: resolveCliInputPropsPath(
-      options.inputPropsFile,
+      options.inputPropsFile ?? config.inputPropsFile,
       pathOptions,
     ),
   };

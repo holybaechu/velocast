@@ -4,6 +4,21 @@ export type {
   PreparedSource,
 } from "./source-adapter.js";
 export type {
+  CodeField,
+  CodeElement,
+  CodeSource,
+  CodeEdit,
+} from "./studio-code.js";
+export type {
+  StudioClientState,
+  StudioClient,
+  StudioControl,
+  StudioClientCommand,
+  StudioClientAcknowledgement,
+  StudioHeartbeat,
+  StudioElementInspection,
+} from "./studio-client.js";
+export type {
   CompositionDefinition,
   CompositionManifest,
   RenderContext,
@@ -67,6 +82,18 @@ export type {
 } from "./interpolation.js";
 export { interpolate } from "./interpolation.js";
 export { cubicBezier, Easing } from "./easing.js";
+export {
+  LAYER_ANIMATION_PROPERTIES,
+  LAYER_ANIMATION_EASINGS,
+  validateLayerAnimationTrack,
+  evaluateLayerAnimation,
+} from "./layer-animation.js";
+export type {
+  LayerAnimatedProperty,
+  LayerKeyframe,
+  LayerAnimationTrack,
+  LayerAnimation,
+} from "./layer-animation.js";
 export type { AudioClip, AudioPlan, AudioEnvelopePoint } from "./audio-plan.js";
 export {
   evaluateAudioEnvelope,

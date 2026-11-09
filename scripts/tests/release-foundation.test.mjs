@@ -32,7 +32,7 @@ test("release assembly rejects unsigned, incomplete, and missing package evidenc
           "velocast-react-0.1.0.tgz",
           "velocast-remotion-0.1.0.tgz",
           "velocast-remotion-source-0.1.0.tgz",
-          "velocast-preview-0.1.0.tgz",
+          "velocast-studio-0.1.0.tgz",
         ],
       }),
     );

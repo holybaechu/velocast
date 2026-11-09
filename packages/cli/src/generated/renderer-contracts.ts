@@ -406,7 +406,6 @@ export type RenderOperation = "render" | "inspect" | "frame";
 export type RenderMode = "composition" | "url" | "composition_worker";
 export type RendererAcceleration = "required" | "auto" | "off";
 export type RendererAssemblyMode = "auto" | "reference" | "segments";
-export type RenderCaptureProbe = "accelerated_paint";
 export type RendererConcurrency = "auto" | number;
 
 export interface AudioEnvelopePoint {
@@ -713,7 +712,6 @@ export interface RenderJob {
   acceleration?: RendererAcceleration;
   concurrency?: RendererConcurrency | null;
   assembly_mode?: RendererAssemblyMode;
-  capture_probe?: RenderCaptureProbe | null;
   report_path?: string | null;
   worker_report_path?: string | null;
   event_log_path?: string | null;
@@ -844,12 +842,6 @@ export function validateRenderJob(value: unknown): asserts value is RenderJob {
     record.assembly_mode === "segments"
   ))
     throw new Error("RenderJob.assembly_mode must match RendererAssemblyMode");
-  if (!(
-    record.capture_probe === undefined ||
-    record.capture_probe === null ||
-    record.capture_probe === "accelerated_paint"
-  ))
-    throw new Error("RenderJob.capture_probe must match RenderCaptureProbe");
   if (!(
     record.report_path === undefined ||
     record.report_path === null ||

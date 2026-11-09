@@ -91,6 +91,10 @@ export interface VelocastGlobal {
 }
 
 export interface Config {
+  /** Saved composition inputs, relative to the config file; CLI flags may override. */
+  inputPropsFile?: string;
+  /** Editable React source files keyed by composition ID, relative to this config. */
+  studio?: { sources: Record<string, string> };
   source?: SourceAdapter;
   entry?: string;
   serve?: {

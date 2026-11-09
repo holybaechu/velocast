@@ -37,8 +37,8 @@ export interface InputSnapshotOptions {
   entryPath: string;
   /** Explicit props file. Outside-root props are not exposed over HTTP. */
   inputPropsPath?: string;
-  /** Internal preview instrumentation. Authored bytes/version remain independent of the host UI. */
-  preview?: PreviewSnapshotOptions;
+  /** Internal studio instrumentation. Authored bytes/version remain independent of the host UI. */
+  studio?: StudioSnapshotOptions;
   /** Internal bounded media endpoint; ordinary static files are never delegated. */
   handleMediaRequest?(
     request: IncomingMessage,
@@ -50,23 +50,23 @@ export interface InputSnapshotOptions {
   ): Promise<void>;
 }
 
-export interface PreviewSnapshotOptions {
+export interface StudioSnapshotOptions {
   readonly parentOrigin: string;
-  /** Platform modules under the reserved /__velocast-preview/ namespace. */
+  /** Platform modules under the reserved /__velocast-studio/ namespace. */
   readonly assets: Readonly<Record<string, Uint8Array>>;
   readonly entryScript: string;
 }
 
-const PREVIEW_PREFIX = "__velocast-preview/";
+const STUDIO_PREFIX = "__velocast-studio/";
 
-function previewOrigin(value: string): string {
+function studioOrigin(value: string): string {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     throw failure(
-      "invalid_preview",
-      "Preview parent must be an explicit loopback HTTP origin",
+      "invalid_studio",
+      "Studio parent must be an explicit loopback HTTP origin",
     );
   }
   if (
@@ -79,8 +79,8 @@ function previewOrigin(value: string): string {
     url.hash
   )
     throw failure(
-      "invalid_preview",
-      "Preview parent must be an explicit loopback HTTP origin",
+      "invalid_studio",
+      "Studio parent must be an explicit loopback HTTP origin",
     );
   return url.origin;
 }
@@ -407,31 +407,31 @@ export async function createInputSnapshot(
     sourceVersion: hash.digest("hex"),
   });
   let parentOrigin: string | undefined;
-  if (options.preview) {
-    const preview = options.preview;
-    parentOrigin = previewOrigin(preview.parentOrigin);
+  if (options.studio) {
+    const studio = options.studio;
+    parentOrigin = studioOrigin(studio.parentOrigin);
     if (![".html", ".htm"].includes(extname(entryName).toLowerCase()))
-      throw failure("invalid_preview", "Preview requires an HTML entry");
+      throw failure("invalid_studio", "Studio requires an HTML entry");
     if (
       before.some(
         (entry) =>
-          entry.name === PREVIEW_PREFIX.slice(0, -1) ||
-          entry.name.startsWith(PREVIEW_PREFIX),
+          entry.name === STUDIO_PREFIX.slice(0, -1) ||
+          entry.name.startsWith(STUDIO_PREFIX),
       )
     )
       throw failure(
-        "invalid_preview",
-        "Authored input uses the reserved preview namespace",
+        "invalid_studio",
+        "Authored input uses the reserved studio namespace",
       );
     let extraBytes = 0;
-    const entries = Object.entries(preview.assets);
+    const entries = Object.entries(studio.assets);
     if (
-      !entries.some(([name]) => name === preview.entryScript) ||
-      !/\.m?js$/.test(preview.entryScript)
+      !entries.some(([name]) => name === studio.entryScript) ||
+      !/\.m?js$/.test(studio.entryScript)
     )
       throw failure(
-        "invalid_preview",
-        "Preview entry script must be a provided JavaScript module",
+        "invalid_studio",
+        "Studio entry script must be a provided JavaScript module",
       );
     for (const [name, bytes] of entries) {
       if (
@@ -444,7 +444,7 @@ export async function createInputSnapshot(
         bytes.BYTES_PER_ELEMENT !== 1
       )
         throw failure(
-          "invalid_preview",
+          "invalid_studio",
           "Platform assets must use safe relative names and byte views",
         );
       extraBytes += bytes.byteLength;
@@ -454,21 +454,21 @@ export async function createInputSnapshot(
       )
         throw failure(
           "limit",
-          "Preview instrumentation exceeds snapshot limits",
+          "Studio instrumentation exceeds snapshot limits",
         );
-      frozen.set(PREVIEW_PREFIX + name, Buffer.from(bytes));
+      frozen.set(STUDIO_PREFIX + name, Buffer.from(bytes));
     }
     const scriptPath =
       "/" +
-      PREVIEW_PREFIX +
-      preview.entryScript.split("/").map(encodeURIComponent).join("/");
+      STUDIO_PREFIX +
+      studio.entryScript.split("/").map(encodeURIComponent).join("/");
     const addition = Buffer.from(
       `\n<script type="module" src="${scriptPath}"></script>\n`,
     );
     if (totalBytes + extraBytes + addition.length > MAX_SNAPSHOT_BYTES)
       throw failure(
         "limit",
-        "Preview entry instrumentation exceeds snapshot limits",
+        "Studio entry instrumentation exceeds snapshot limits",
       );
     // Like native browser injection, this is platform code, not an authored-source edit.
     // The content digest below still identifies the exact bytes actually served.

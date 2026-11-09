@@ -24,7 +24,7 @@ function loadPlaygroundRuntime() {
 function mountStaticMarkup() {
   document.body.innerHTML = `
     <div id="root">
-      <main class="preview-shell">
+      <main class="studio-shell">
         <section id="product-hero" class="product-hero" aria-label="Render metrics">
           <section class="metric-scene">
             <div class="metric-headline"></div>

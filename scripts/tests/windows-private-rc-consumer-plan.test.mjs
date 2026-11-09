@@ -25,7 +25,7 @@ test("private RC plan isolates runtime resolution and cannot publish", () => {
   assert.doesNotMatch(plan.minimalEnvironment.set.PATH, /vcpkg|cargo/i);
 });
 
-test("private RC plan covers release and preview acceptance boundaries", () => {
+test("private RC plan covers release and studio acceptance boundaries", () => {
   const commands = new Set(plan.commands.map((command) => command.id));
   for (const id of [
     "fresh-setup",
@@ -36,7 +36,7 @@ test("private RC plan covers release and preview acceptance boundaries", () => {
     "full-240-frame-output",
     "deterministic-repeat",
     "software-preference",
-    "preview-session",
+    "studio-session",
   ])
     assert.ok(commands.has(id), id);
   const negatives = new Set(
@@ -51,11 +51,11 @@ test("private RC plan covers release and preview acceptance boundaries", () => {
   ])
     assert.ok(negatives.has(id), id);
   assert.equal(plan.acceptance.frames, 240);
-  assert.deepEqual(plan.acceptance.originalLyricsSourceRange, {
+  assert.deepEqual(plan.acceptance.textMotionSourceRange, {
     start: 820,
     end: 1060,
     reason:
-      "Representative four-second range includes known lyric transitions near frames 847 and 887 while preserving the 13,488-frame source identity.",
+      "Representative four-second range includes known text transitions near frames 847 and 887 while preserving the 13,488-frame source identity.",
   });
   assert.deepEqual(plan.acceptance.packageManagers, ["npm", "pnpm"]);
 });
@@ -67,14 +67,14 @@ test("runnable template binds repository helpers and leaves only final inputs pe
   const serialized = JSON.stringify(run);
   for (const helper of [
     "windows-private-rc-concurrent-setup.mjs",
-    "windows-private-rc-preview.mjs",
+    "windows-private-rc-studio.mjs",
     "windows-private-rc-negative.mjs",
     "windows-private-rc-finalize.mjs",
   ])
     assert.match(serialized, new RegExp(helper.replaceAll(".", "\\.")));
   for (const obsolete of [
     "<CONCURRENT_SETUP_HARNESS>",
-    "<PREVIEW_BROWSER_HARNESS>",
+    "<STUDIO_BROWSER_HARNESS>",
     "<NEGATIVE_HARNESS>",
     "<FINAL_VERIFY_HARNESS>",
   ])
@@ -85,11 +85,11 @@ test("runnable template binds repository helpers and leaves only final inputs pe
     "<FINAL_HOST_REQUIREMENTS>",
   ])
     assert.match(serialized, new RegExp(pending.replace(/[<>]/g, "\\$&")));
-  const lyrics = run.steps.find((step) => step.id === "npm-original-lyrics");
-  const start = lyrics.argv.indexOf("--start-frame");
-  const end = lyrics.argv.indexOf("--end-frame");
-  assert.equal(lyrics.argv[start + 1], "820");
-  assert.equal(lyrics.argv[end + 1], "1060");
+  const text = run.steps.find((step) => step.id === "npm-text-motion");
+  const start = text.argv.indexOf("--start-frame");
+  const end = text.argv.indexOf("--end-frame");
+  assert.equal(text.argv[start + 1], "820");
+  assert.equal(text.argv[end + 1], "1060");
   const software = run.steps.find((step) => step.id === "software-preference");
   const media = run.steps.find((step) => step.id === "pnpm-clip-caption-music");
   const planned = plan.commands.find(

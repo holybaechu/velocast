@@ -63,7 +63,7 @@ try {
       `consumer.pack_invalid: expected complete package set for ${version}, got ${tarballs.join(", ")}`,
     );
   const core = `velocast-core-${version}.tgz`;
-  const preview = `velocast-preview-${version}.tgz`;
+  const studio = `velocast-studio-${version}.tgz`;
   const gsapPackage = `velocast-gsap-${version}.tgz`;
   const cli = `velocast-${version}.tgz`;
   await run(
@@ -105,13 +105,13 @@ try {
       packageJson.dependencies = {
         velocast: fileSpec(join(packs, cli)),
         "@velocast/core": fileSpec(join(packs, core)),
-        "@velocast/preview": fileSpec(join(packs, preview)),
+        "@velocast/studio": fileSpec(join(packs, studio)),
         "@velocast/gsap": fileSpec(join(packs, gsapPackage)),
         gsap: "3.15.0",
       };
       writeFileSync(
         join(consumer, "pnpm-workspace.yaml"),
-        `packages:\n  - '.'\noverrides:\n  '@velocast/core': '${fileSpec(join(packs, core))}'\n  '@velocast/preview': '${fileSpec(join(packs, preview))}'\n`,
+        `packages:\n  - '.'\noverrides:\n  '@velocast/core': '${fileSpec(join(packs, core))}'\n  '@velocast/studio': '${fileSpec(join(packs, studio))}'\n`,
       );
     }
     writeFileSync(
@@ -125,7 +125,7 @@ try {
             "--ignore-scripts",
             join(packs, cli),
             join(packs, core),
-            join(packs, preview),
+            join(packs, studio),
             join(packs, gsapPackage),
             "gsap@3.15.0",
           ]
@@ -135,7 +135,7 @@ try {
       process.execPath,
       [
         "-e",
-        "await Promise.all([import('velocast'), import('@velocast/core'), import('@velocast/core/testing'), import('@velocast/preview'), import('@velocast/gsap')])",
+        "await Promise.all([import('velocast'), import('@velocast/core'), import('@velocast/core/testing'), import('@velocast/studio'), import('@velocast/gsap')])",
       ],
       consumer,
     );

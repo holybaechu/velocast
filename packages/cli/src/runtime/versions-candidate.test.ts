@@ -50,3 +50,38 @@ it("reports validated-but-unpublished separately from installable artifacts", as
     },
   });
 });
+
+it("reports a local installation separately from the uncached published artifact", async () => {
+  const artifact = { sha256: "a".repeat(64) };
+  const manifest = {
+    targets: {
+      "win32-x64": {
+        artifact,
+        requirements: { validationStatus: "validated" },
+        blocker: null,
+      },
+    },
+  } as unknown as VelocastReleaseManifest;
+  const output: string[] = [];
+  await versionsCommand(
+    { json: true },
+    {
+      write: (value) => output.push(value),
+      artifactResolver: {
+        releaseManifest: () => manifest,
+        targetId: () => "win32-x64",
+        inspect: () => ({
+          source: "local-install",
+          artifactDir: "local-runtime",
+          artifact: { sha256: "b".repeat(64) },
+        }),
+      } as unknown as ArtifactResolver,
+    },
+  );
+  expect(JSON.parse(output.join(""))).toMatchObject({
+    artifact: "a".repeat(64),
+    artifactStatus: "not-setup",
+    distributionStatus: "installable",
+    installedRuntime: { source: "local-install", sha256: "b".repeat(64) },
+  });
+});

@@ -8,7 +8,6 @@ export type RenderOperation = "render" | "inspect" | "frame";
 export type RenderMode = "composition" | "url" | "composition_worker";
 export type RendererAcceleration = "required" | "auto" | "off";
 export type RendererAssemblyMode = "auto" | "reference" | "segments";
-export type RenderCaptureProbe = "accelerated_paint";
 export type RendererConcurrency = "auto" | number;
 
 export interface AudioEnvelopePoint {

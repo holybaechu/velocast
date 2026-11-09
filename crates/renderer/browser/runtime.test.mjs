@@ -480,8 +480,8 @@ describe("renderer browser execution", () => {
     hero.innerHTML = '<img src="cover.png">';
     hero.querySelector("img").decode = () => Promise.resolve();
     const unrelated = document.createElement("img");
-    unrelated.src = "broken-preview.png";
-    unrelated.decode = () => Promise.reject(new Error("unrelated preview"));
+    unrelated.src = "broken-studio.png";
+    unrelated.decode = () => Promise.reject(new Error("unrelated studio"));
     document.body.appendChild(unrelated);
     vi.spyOn(hero, "getBoundingClientRect").mockReturnValue({
       left: 0,

@@ -26,7 +26,7 @@ for (const packageName of [
   "react",
   "remotion-source",
   "gsap",
-  "preview",
+  "studio",
 ]) {
   test(`${packageName} build removes stale outputs and recreates code and release metadata`, (t) => {
     const root = realpathSync(
@@ -86,7 +86,7 @@ for (const packageName of [
       );
       writeFileSync(join(pkg, "src/global.ts"), source);
     }
-    if (packageName === "preview") {
+    if (packageName === "studio") {
       for (const file of [
         "vite.config.mjs",
         "scripts/build-platform.mjs",
@@ -94,7 +94,7 @@ for (const packageName of [
       ]) {
         mkdirSync(dirname(join(pkg, file)), { recursive: true });
         copyFileSync(
-          join(repository, "packages/preview", file),
+          join(repository, "packages/studio", file),
           join(pkg, file),
         );
       }

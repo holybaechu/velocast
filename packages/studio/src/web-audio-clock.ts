@@ -1,0 +1,293 @@
+import {
+  evaluateAudioEnvelope,
+  normalizeAudioPlan,
+  sliceAudioEnvelope,
+  secondsToSamples,
+  samplesToSeconds,
+  type AudioPlan,
+} from "@velocast/core";
+import type { AudioPlanClock } from "./types.js";
+
+export interface WebAudioClockOptions {
+  /** Returns source PCM decoded at context.sampleRate; caller owns immutable-source resolution. */
+  loadBuffer(
+    source: string,
+    context: AudioContext,
+    signal: AbortSignal,
+  ): Promise<AudioBuffer>;
+  /** The clock takes ownership and closes this context, including preparation failure. */
+  createContext?(sampleRate: number): AudioContext;
+  /** Bounds retained decoded buffers; the loader must separately bound decoding allocation. */
+  maxDecodedBytes?: number;
+  /** Cancels preparation. After preparation, the controller owns dispose(). */
+  signal?: AbortSignal;
+}
+
+function cancelled(): Error {
+  const error = new Error(
+    "studio.audio_cancelled: audio operation was superseded",
+  );
+  error.name = "AbortError";
+  return error;
+}
+
+/**
+ * Prepared sample clock. Shared plan normalization supplies trim/offset/gain;
+ * AudioContext.currentTime is the playback clock, never a second JS timer.
+ * Source start(when, offset, duration) uses decoded-source seconds at rate 1.
+ * https://www.w3.org/TR/webaudio-1.0/#dom-audiobuffersourcenode-start
+ */
+export async function prepareWebAudioClock(
+  plan: AudioPlan,
+  options: WebAudioClockOptions,
+): Promise<AudioPlanClock> {
+  const normalized = normalizeAudioPlan(plan);
+  const maxBytes = options.maxDecodedBytes ?? 128 * 1024 * 1024;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0)
+    throw new RangeError(
+      "studio.audio_limit: maxDecodedBytes must be a positive safe integer",
+    );
+  options.signal?.throwIfAborted();
+  const context =
+    options.createContext?.(normalized.sampleRate) ??
+    new AudioContext({ sampleRate: normalized.sampleRate });
+  const preparation = new AbortController();
+  const abort = () => preparation.abort(options.signal?.reason ?? cancelled());
+  options.signal?.addEventListener("abort", abort, { once: true });
+  if (options.signal?.aborted) abort();
+  const buffers = new Map<string, AudioBuffer>();
+  let decodedBytes = 0;
+  try {
+    if (context.sampleRate !== normalized.sampleRate)
+      throw new Error(
+        "studio.audio_rate_mismatch: context must use the shared plan sample rate",
+      );
+    for (const clip of normalized.clips) {
+      if (buffers.has(clip.source)) continue;
+      preparation.signal.throwIfAborted();
+      // Await the loader even after abort, so unabortable decode work cannot outlive cleanup.
+      const buffer = await options.loadBuffer(
+        clip.source,
+        context,
+        preparation.signal,
+      );
+      preparation.signal.throwIfAborted();
+      const bytes = buffer.length * buffer.numberOfChannels * 4;
+      if (
+        buffer.sampleRate !== normalized.sampleRate ||
+        ![1, 2].includes(buffer.numberOfChannels) ||
+        !Number.isSafeInteger(buffer.length) ||
+        buffer.length < 0 ||
+        !Number.isSafeInteger(bytes)
+      )
+        throw new Error(
+          "studio.audio_format: expected mono/stereo PCM at the plan sample rate",
+        );
+      decodedBytes += bytes;
+      if (decodedBytes > maxBytes)
+        throw new Error(
+          "studio.audio_limit: decoded sources exceed retained-buffer limit",
+        );
+      buffers.set(clip.source, buffer);
+    }
+    preparation.signal.throwIfAborted();
+    return makeClock(normalized, context, buffers);
+  } catch (error) {
+    buffers.clear();
+    try {
+      await context.close();
+    } catch {
+      /* Preserve the preparation failure. */
+    }
+    throw error;
+  } finally {
+    options.signal?.removeEventListener("abort", abort);
+  }
+}
+
+function makeClock(
+  plan: AudioPlan,
+  context: AudioContext,
+  buffers: Map<string, AudioBuffer>,
+): AudioPlanClock {
+  let position = 0;
+  let playbackEnd = plan.durationSamples;
+  let originTime = 0;
+  let playing = false;
+  let revision = 0;
+  let disposed = false;
+  let closing: Promise<void> | undefined;
+  const active = new Map<AudioBufferSourceNode, GainNode>();
+  const assertOpen = () => {
+    if (disposed)
+      throw new Error("studio.audio_closed: audio clock has been disposed");
+  };
+  const validatePosition = (sample: number) => {
+    if (
+      !Number.isSafeInteger(sample) ||
+      sample < 0 ||
+      sample > plan.durationSamples
+    )
+      throw new RangeError(
+        "studio.audio_position: sample must be inside the closed playback boundary",
+      );
+  };
+  const disconnect = (source: AudioBufferSourceNode, gain: GainNode) => {
+    source.onended = null;
+    source.disconnect();
+    gain.disconnect();
+    active.delete(source);
+  };
+  const stopSources = () => {
+    for (const [source, gain] of active) {
+      try {
+        source.stop();
+      } catch {
+        /* Already-ended source nodes may reject stop(). */
+      }
+      disconnect(source, gain);
+    }
+  };
+  const currentSample = () => {
+    assertOpen();
+    if (!playing) return position;
+    return Math.min(
+      playbackEnd,
+      position +
+        secondsToSamples(
+          Math.max(0, context.currentTime - originTime),
+          plan.sampleRate,
+          "floor",
+        ),
+    );
+  };
+  const pause = () => {
+    assertOpen();
+    position = currentSample();
+    playing = false;
+    ++revision;
+    stopSources();
+  };
+  const schedule = () => {
+    originTime = context.currentTime;
+    if (position >= playbackEnd) return;
+    try {
+      for (const clip of plan.clips) {
+        const start = Math.max(position, clip.startSample);
+        const duration =
+          Math.min(clip.startSample + clip.durationSamples, playbackEnd) -
+          start;
+        if (duration <= 0) continue;
+        const offset = clip.sourceStartSample + start - clip.startSample;
+        const buffer = buffers.get(clip.source)!;
+        const available = Math.min(duration, buffer.length - offset);
+        if (available <= 0) continue; // A missing source tail is silence, not stretched audio.
+        const source = context.createBufferSource();
+        const gain = context.createGain();
+        active.set(source, gain);
+        source.buffer = buffer;
+        source.playbackRate.value = 1;
+        gain.gain.value = clip.gain;
+        if (clip.volumeEnvelope) {
+          const when =
+            originTime + samplesToSeconds(start - position, plan.sampleRate);
+          const points = sliceAudioEnvelope(
+            clip.volumeEnvelope,
+            start - clip.startSample,
+            start - clip.startSample + available,
+          );
+          gain.gain.setValueAtTime(
+            clip.gain * evaluateAudioEnvelope(points, 0),
+            when,
+          );
+          for (const point of points)
+            if (point.sample > 0)
+              gain.gain.linearRampToValueAtTime(
+                clip.gain * point.gain,
+                when + samplesToSeconds(point.sample, plan.sampleRate),
+              );
+        }
+        source.connect(gain);
+        gain.connect(context.destination);
+        source.onended = () => disconnect(source, gain);
+        source.start(
+          originTime + samplesToSeconds(start - position, plan.sampleRate),
+          samplesToSeconds(offset, plan.sampleRate),
+          samplesToSeconds(available, plan.sampleRate),
+        );
+      }
+      playing = true;
+    } catch (error) {
+      stopSources();
+      playing = false;
+      throw error;
+    }
+  };
+  const seek = (sample: number) => {
+    assertOpen();
+    validatePosition(sample);
+    const wasPlaying = playing;
+    pause();
+    position = sample;
+    if (wasPlaying) schedule();
+  };
+  return {
+    sampleRate: plan.sampleRate,
+    durationSamples: plan.durationSamples,
+    currentSample,
+    pause,
+    seek,
+    async play(sample, endSample = plan.durationSamples) {
+      assertOpen();
+      validatePosition(endSample);
+      const start = sample ?? currentSample();
+      validatePosition(start);
+      if (start > endSample)
+        throw new RangeError(
+          "studio.audio_range: start sample must not exceed playback end",
+        );
+      if (sample !== undefined || endSample !== playbackEnd) {
+        pause();
+        position = start;
+        playbackEnd = endSample;
+      }
+      if (playing || position === playbackEnd) return;
+      const request = ++revision;
+      // Browser autoplay policy may leave resume() pending until a human gesture.
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          context.resume(),
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "studio.audio_suspended: Audio did not start. Click Play in Studio to enable sound, then retry.",
+                  ),
+                ),
+              2000,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+      assertOpen();
+      if (request !== revision) throw cancelled();
+      if (context.state !== "running")
+        throw new Error(
+          "studio.audio_suspended: Click Play in Studio to enable sound, then retry.",
+        );
+      schedule();
+    },
+    dispose() {
+      if (closing) return closing;
+      pause();
+      disposed = true;
+      buffers.clear();
+      closing = context.close();
+      return closing;
+    },
+  };
+}

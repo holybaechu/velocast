@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
@@ -14,6 +14,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir, release as osRelease } from "node:os";
 import {
@@ -26,7 +27,7 @@ import {
 } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { extract } from "tar";
 import {
@@ -38,6 +39,7 @@ import {
   type VelocastReleaseManifest,
 } from "./release-manifest.js";
 import { assertCompatibleVelocastVersions } from "./package-versions.js";
+import { inspectElectronRuntime } from "./electron-runtime.js";
 
 const CACHE_DIR_ENV = "VELOCAST_CACHE_DIR";
 const MIRROR_ENV = "VELOCAST_ARTIFACT_BASE_URL";
@@ -59,7 +61,7 @@ export interface ResolvedReleaseRuntime {
   targetId: ReleaseTargetId;
   artifactDir: string;
   rendererBinary: string;
-  source: "cache" | "download" | "local-override";
+  source: "cache" | "download" | "local-override" | "local-install";
   artifact: ReleaseArtifact;
 }
 
@@ -77,6 +79,12 @@ interface ArtifactInventory {
   nativeRendererVersion: string;
   protocolVersion: number;
   files: ArtifactFileRecord[];
+}
+
+interface LocalInstallation {
+  schema: "velocast-local-install-v1";
+  artifact: ReleaseArtifact;
+  inventorySha256: string;
 }
 
 export class ArtifactResolver {
@@ -114,6 +122,10 @@ export class ArtifactResolver {
     signal?.throwIfAborted();
     const targetId = this.targetId();
     const target = this.manifest.targets[targetId];
+    if (!this.env[LOCAL_ARTIFACT_ENV]?.trim()) {
+      const installed = this.inspectLocal(targetId, true);
+      if (installed) return installed;
+    }
     const artifact = requireReleasedArtifact(this.manifest, targetId);
     verifyHostRequirements(targetId, target, this.env);
     const localOverride = this.env[LOCAL_ARTIFACT_ENV]?.trim();
@@ -171,6 +183,10 @@ export class ArtifactResolver {
   inspect(): ResolvedReleaseRuntime | undefined {
     const targetId = this.targetId();
     const target = this.manifest.targets[targetId];
+    if (!this.env[LOCAL_ARTIFACT_ENV]?.trim()) {
+      const installed = this.inspectLocal(targetId);
+      if (installed) return installed;
+    }
     const artifact = target.artifact;
     if (artifact === null) {
       return undefined;
@@ -193,6 +209,211 @@ export class ArtifactResolver {
       this.cacheArtifactDir(targetId, artifact.sha256),
       false,
     );
+  }
+
+  /** Installs a caller-trusted bundle without claiming published release trust. */
+  async installLocal(
+    source: string,
+    expectedSha256: string,
+    signal?: AbortSignal,
+  ): Promise<ResolvedReleaseRuntime> {
+    signal?.throwIfAborted();
+    expectedSha256 = expectedSha256.toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(expectedSha256))
+      throw new Error(
+        "artifact.local_hash_required: --sha256 must contain the trusted archive SHA-256",
+      );
+    const archiveSource = resolve(source);
+    if (!lstatSync(archiveSource).isFile())
+      throw new Error(
+        "artifact.local_archive_invalid: --from must name a regular native .tar.gz archive",
+      );
+    const targetId = this.targetId();
+    const target = this.manifest.targets[targetId];
+    const selection = this.localSelectionPath(targetId);
+    const destination = join(dirname(selection), "local", expectedSha256);
+    const lock = `${selection}.lock`;
+    mkdirSync(dirname(selection), { recursive: true });
+    await this.acquireLock(lock, signal);
+    const suffix = randomUUID();
+    const archive = `${destination}.partial-${suffix}`;
+    const staging = `${destination}.staging-${suffix}`;
+    const previous = `${destination}.previous-${suffix}`;
+    const selectionTemp = `${selection}.${suffix}.tmp`;
+    try {
+      mkdirSync(dirname(destination), { recursive: true });
+      mkdirSync(staging);
+      await pipeline(
+        createReadStream(archiveSource),
+        createWriteStream(archive, { flags: "wx" }),
+        { signal },
+      );
+      if (sha256File(archive) !== expectedSha256)
+        throw new Error(
+          "artifact.checksum_mismatch: local archive does not match --sha256; obtain the trusted checksum from its producer",
+        );
+      let archiveError: Error | undefined;
+      const roots = new Set<string>();
+      await extract({
+        file: archive,
+        cwd: staging,
+        gzip: true,
+        strict: true,
+        preservePaths: false,
+        filter(path, entry) {
+          const normalized = path.replace(/\/$/, "");
+          if (
+            !isSafeInventoryPath(normalized) ||
+            !("type" in entry && ["File", "Directory"].includes(entry.type))
+          ) {
+            archiveError ??= new Error(
+              `artifact.path_invalid: archive entry ${path} must be a regular contained file or directory`,
+            );
+            return false;
+          }
+          roots.add(normalized.split("/")[0]!);
+          return true;
+        },
+      });
+      signal?.throwIfAborted();
+      if (archiveError) throw archiveError;
+      if (roots.size !== 1)
+        throw new Error(
+          "artifact.local_archive_invalid: expected one native runtime directory",
+        );
+      const rootName = [...roots][0]!;
+      const root = join(staging, rootName);
+      const inventoryPath = join(root, "artifact-manifest.json");
+      const inventory = JSON.parse(
+        readFileSync(inventoryPath, "utf8"),
+      ) as ArtifactInventory;
+      if (
+        typeof inventory.sourceCommit !== "string" ||
+        !/^[a-f0-9]{40}$/.test(inventory.sourceCommit)
+      )
+        throw new Error(
+          "artifact.compatibility_mismatch: native archive must identify its source commit",
+        );
+      const renderer = target.nativeFiles.find((path) =>
+        /(^|\/)velocast-renderer(?:\.exe)?$/.test(path),
+      );
+      if (!renderer)
+        throw new Error(
+          "artifact.runtime_invalid: target has no native renderer",
+        );
+      const artifact: ReleaseArtifact = {
+        name: basename(archiveSource),
+        url: pathToFileURL(archiveSource).href,
+        format: "tar.gz",
+        size: statSync(archive).size,
+        sha256: expectedSha256,
+        sourceCommit: inventory.sourceCommit,
+        root: rootName,
+        renderer,
+      };
+      verifyRuntimeDirectory(root, targetId, target, artifact, this.manifest);
+      if (
+        !inspectElectronRuntime(join(root, renderer), this.platform, this.arch)
+      )
+        throw new Error(
+          "runtime.electron_invalid: native bundle must include the complete Electron runtime",
+        );
+      const installed: LocalInstallation = {
+        schema: "velocast-local-install-v1",
+        artifact,
+        inventorySha256: sha256File(inventoryPath),
+      };
+      writeFileSync(selectionTemp, JSON.stringify(installed) + "\n", {
+        flag: "wx",
+      });
+      signal?.throwIfAborted();
+      if (existsSync(destination)) renameSync(destination, previous);
+      try {
+        renameSync(root, destination);
+        renameSync(selectionTemp, selection);
+      } catch (error) {
+        rmSync(destination, { recursive: true, force: true });
+        if (existsSync(previous)) {
+          renameSync(previous, destination);
+        }
+        throw error;
+      }
+      rmSync(previous, { recursive: true, force: true });
+      return {
+        targetId,
+        artifactDir: destination,
+        rendererBinary: join(destination, renderer),
+        source: "local-install",
+        artifact,
+      };
+    } finally {
+      rmSync(selectionTemp, { force: true });
+      rmSync(staging, { recursive: true, force: true });
+      rmSync(archive, { force: true });
+      rmSync(lock, { recursive: true, force: true });
+    }
+  }
+
+  private localSelectionPath(targetId: ReleaseTargetId): string {
+    return join(
+      dirname(this.cacheArtifactDir(targetId, "unused")),
+      "local-runtime.json",
+    );
+  }
+
+  private inspectLocal(
+    targetId: ReleaseTargetId,
+    prepare = false,
+  ): ResolvedReleaseRuntime | undefined {
+    const selection = this.localSelectionPath(targetId);
+    if (!existsSync(selection)) return undefined;
+    try {
+      const installed = JSON.parse(
+        readFileSync(selection, "utf8"),
+      ) as LocalInstallation;
+      const artifact = installed.artifact;
+      if (
+        installed.schema !== "velocast-local-install-v1" ||
+        !artifact ||
+        !/^[a-f0-9]{64}$/.test(artifact.sha256) ||
+        !/^[a-f0-9]{64}$/.test(installed.inventorySha256) ||
+        !isSafeInventoryPath(artifact.renderer)
+      )
+        throw new Error("invalid local installation record");
+      const artifactDir = join(dirname(selection), "local", artifact.sha256);
+      if (
+        sha256File(join(artifactDir, "artifact-manifest.json")) !==
+        installed.inventorySha256
+      )
+        throw new Error("native inventory changed");
+      (prepare ? verifyRuntimeDirectory : verifyRuntimeDirectoryContents)(
+        artifactDir,
+        targetId,
+        this.manifest.targets[targetId],
+        artifact,
+        this.manifest,
+      );
+      if (
+        !inspectElectronRuntime(
+          join(artifactDir, artifact.renderer),
+          this.platform,
+          this.arch,
+        )
+      )
+        throw new Error("Electron runtime is missing");
+      return {
+        targetId,
+        artifactDir,
+        rendererBinary: join(artifactDir, artifact.renderer),
+        source: "local-install",
+        artifact,
+      };
+    } catch (error) {
+      throw new Error(
+        `artifact.local_install_invalid: ${error instanceof Error ? error.message : String(error)}; reinstall with velocast setup --from <archive> --sha256 <trusted-hash>`,
+        { cause: error },
+      );
+    }
   }
 
   private resolveLocalOverride(
@@ -451,7 +672,7 @@ function requireReleasedArtifact(
   const available = availableReleaseTargets(manifest);
   const suffix = available.length ? available.join(", ") : "none";
   throw new Error(
-    `artifact.target_unavailable: ${targetId} has no verified release artifact (${target.blocker ?? "blocked"}). Available targets: ${suffix}`,
+    `artifact.target_unavailable: ${targetId} has no verified release artifact (${target.blocker ?? "blocked"}). Available targets: ${suffix}. Install a trusted local bundle with velocast setup --from <native.tar.gz> --sha256 <trusted-hash>, or use a local renderer build`,
   );
 }
 

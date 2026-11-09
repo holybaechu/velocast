@@ -13,7 +13,7 @@
     "Windows native artifact produced by scripts/release/package-native-artifact.mjs",
     "artifact-manifest.json SHA-256 and archive evidence JSON",
     "validated host requirements evidence",
-    "fresh core, preview, React, compatibility, and velocast package tarballs",
+    "fresh core, studio, React, compatibility, and velocast package tarballs",
     "npm and pnpm available only for clean consumer installation"
   ],
   "placeholders": {
@@ -84,7 +84,7 @@
         "<NODE_EXE>",
         "scripts/release/audit-package-tarballs.mjs",
         "<core.tgz>",
-        "<preview.tgz>",
+        "<studio.tgz>",
         "<react.tgz>",
         "<remotion.tgz>",
         "<velocast.tgz>"
@@ -247,20 +247,20 @@
       ]
     },
     {
-      "id": "preview-session",
+      "id": "studio-session",
       "environment": "minimal",
       "cwd": "<PROJECT_ROOT>",
       "argv": [
         "<NODE_EXE>",
         "<CLI_JS>",
-        "preview",
+        "studio",
         "--config",
         "<CONFIG>",
         "--port",
         "0",
         "--json",
         "--output-directory",
-        "<EVIDENCE_ROOT>/preview-output"
+        "<EVIDENCE_ROOT>/studio-output"
       ],
       "expect": "browser frame/range output, source refresh guard, watch-child cleanup, and session shutdown evidence"
     }
@@ -294,10 +294,10 @@
   ],
   "acceptance": {
     "frames": 240,
-    "originalLyricsSourceRange": {
+    "textMotionSourceRange": {
       "start": 820,
       "end": 1060,
-      "reason": "Representative four-second range includes known lyric transitions near frames 847 and 887 while preserving the 13,488-frame source identity."
+      "reason": "Representative four-second range includes known text transitions near frames 847 and 887 while preserving the 13,488-frame source identity."
     },
     "packageManagers": [
       "npm",
@@ -314,9 +314,9 @@
       "deterministicRepeat",
       "softwarePreference"
     ],
-    "extraPreviewScenarios": [
-      "previewFrame",
-      "previewRange",
+    "extraStudioScenarios": [
+      "studioFrame",
+      "studioRange",
       "sourceVersionGuard",
       "watchCleanup"
     ],

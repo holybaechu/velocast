@@ -21,7 +21,7 @@ body {
   min-height: 100vh;
 }
 
-.preview-shell {
+.studio-shell {
   min-height: 100vh;
   display: grid;
   place-items: center;
@@ -30,18 +30,18 @@ body {
   background: #050505;
 }
 
-.preview-shell .product-hero {
+.studio-shell .product-hero {
   max-width: calc(100vw - 48px);
   max-height: calc(100vh - 48px);
   aspect-ratio: 16 / 9;
 }
 
-html[data-velocast-rendering="true"] .preview-shell {
+html[data-velocast-rendering="true"] .studio-shell {
   min-height: 100vh;
   padding: 0;
 }
 
-html[data-velocast-rendering="true"] .preview-shell .product-hero {
+html[data-velocast-rendering="true"] .studio-shell .product-hero {
   max-width: none;
   max-height: none;
 }

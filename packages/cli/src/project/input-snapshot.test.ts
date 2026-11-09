@@ -38,7 +38,7 @@ async function fixture() {
   return { directory, root, props };
 }
 
-it("instruments only preview responses while preserving authored identity and isolating parent access", async () => {
+it("instruments only studio responses while preserving authored identity and isolating parent access", async () => {
   const { root, props } = await fixture();
   const plain = await createInputSnapshot({
     root,
@@ -46,27 +46,27 @@ it("instruments only preview responses while preserving authored identity and is
     inputPropsPath: props,
   });
   cleanups.push(plain.close);
-  const script = Buffer.from("window.previewReady = true;");
+  const script = Buffer.from("window.studioReady = true;");
   const parentOrigin = "http://127.0.0.1:43123";
-  const preview = await createInputSnapshot({
+  const studio = await createInputSnapshot({
     root,
     entryPath: "index.html",
     inputPropsPath: props,
-    preview: {
+    studio: {
       parentOrigin,
       entryScript: "bridge.js",
       assets: { "bridge.js": script },
     },
   });
-  cleanups.push(preview.close);
+  cleanups.push(studio.close);
   script.fill(0);
-  expect(preview.session.sourceVersion).toBe(plain.session.sourceVersion);
+  expect(studio.session.sourceVersion).toBe(plain.session.sourceVersion);
   const normal = await fetch(plain.url);
   expect(normal.headers.get("content-security-policy")).toContain(
     "frame-ancestors 'none'",
   );
-  expect(await normal.text()).not.toContain("__velocast-preview");
-  const response = await fetch(preview.url, {
+  expect(await normal.text()).not.toContain("__velocast-studio");
+  const response = await fetch(studio.url, {
     headers: { Origin: parentOrigin },
   });
   expect(response.status).toBe(200);
@@ -77,18 +77,18 @@ it("instruments only preview responses while preserving authored identity and is
     parentOrigin,
   );
   const html = await response.text();
-  expect(html).toContain('src="/__velocast-preview/bridge.js"');
+  expect(html).toContain('src="/__velocast-studio/bridge.js"');
   expect(response.headers.get("x-velocast-content-sha256")).toBe(
     createHash("sha256").update(html).digest("hex"),
   );
   expect(
     await (
-      await fetch(new URL("/__velocast-preview/bridge.js", preview.url))
+      await fetch(new URL("/__velocast-studio/bridge.js", studio.url))
     ).text(),
-  ).toBe("window.previewReady = true;");
+  ).toBe("window.studioReady = true;");
   expect(
     (
-      await fetch(preview.url, {
+      await fetch(studio.url, {
         headers: { Origin: "http://127.0.0.1:43124" },
       })
     ).status,
@@ -101,9 +101,9 @@ it("instruments only preview responses while preserving authored identity and is
   );
 });
 
-it("rejects unsafe preview origins, paths and authored namespace collisions", async () => {
+it("rejects unsafe studio origins, paths and authored namespace collisions", async () => {
   const { root } = await fixture();
-  const preview = {
+  const studio = {
     parentOrigin: "http://127.0.0.1:43123",
     entryScript: "bridge.js",
     assets: { "bridge.js": Buffer.from("export {};") },
@@ -118,24 +118,24 @@ it("rejects unsafe preview origins, paths and authored namespace collisions", as
       createInputSnapshot({
         root,
         entryPath: "index.html",
-        preview: { ...preview, parentOrigin },
+        studio: { ...studio, parentOrigin },
       }),
-    ).rejects.toThrow("snapshot.invalid_preview");
+    ).rejects.toThrow("snapshot.invalid_studio");
   await expect(
     createInputSnapshot({
       root,
       entryPath: "index.html",
-      preview: {
-        ...preview,
+      studio: {
+        ...studio,
         entryScript: "../bridge.js",
         assets: { "../bridge.js": Buffer.from("export {};") },
       },
     }),
-  ).rejects.toThrow("snapshot.invalid_preview");
-  await mkdir(join(root, "__velocast-preview"));
+  ).rejects.toThrow("snapshot.invalid_studio");
+  await mkdir(join(root, "__velocast-studio"));
   await expect(
-    createInputSnapshot({ root, entryPath: "index.html", preview }),
-  ).rejects.toThrow("snapshot.invalid_preview");
+    createInputSnapshot({ root, entryPath: "index.html", studio }),
+  ).rejects.toThrow("snapshot.invalid_studio");
 });
 
 it("dispatches only the reserved media endpoint after origin admission with the frozen identity", async () => {

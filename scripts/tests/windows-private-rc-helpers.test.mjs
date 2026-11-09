@@ -47,18 +47,18 @@ test("concurrent setup helper joins two real Node children and seals one result"
   assert.deepEqual(result.leftovers, []);
 });
 
-test("preview wrapper preserves a child harness JSON result", () => {
-  const root = temp("velocast-preview-helper-");
+test("studio wrapper preserves a child harness JSON result", () => {
+  const root = temp("velocast-studio-helper-");
   const harness = join(root, "harness.mjs");
   const project = join(root, "project");
   const runtime = join(root, "runtime");
   const cli = join(root, "cli.mjs");
-  const output = join(root, "preview.json");
+  const output = join(root, "studio.json");
   mkdirSync(project);
   mkdirSync(runtime);
   writeFileSync(cli, "// installed CLI fixture");
   writeFileSync(harness, 'console.log(JSON.stringify({browser:"test",frame:12}));');
-  run(join(repo, "scripts/release/windows-private-rc-preview.mjs"), [
+  run(join(repo, "scripts/release/windows-private-rc-studio.mjs"), [
     "--harness",
     harness,
     "--project",
@@ -167,7 +167,7 @@ test("finalizer certifies software preference only from a completed off request 
     `
     exports.runMediaOperation = async ({kind, path}) => {
       if (kind === 'frame-hashes') return {frameCount:240, hashes:Array.from({length:240},(_,i)=>String(i))};
-      const original = path.includes('original-lyrics');
+      const original = path.includes('text-motion');
       return {video:{codec:'avc',frameCount:original?240:12,duration:original?4:1.2},audio:{codec:'aac',sampleRate:48000,channels:2,duration:original?4:1.2}};
     };
   `,
@@ -181,9 +181,9 @@ test("finalizer certifies software preference only from a completed off request 
     ),
   };
   for (const [step, file, startFrame, endFrame] of [
-    ["npm-original-lyrics", "npm-original-lyrics", 820, 1060],
+    ["npm-text-motion", "npm-text-motion", 820, 1060],
     ["pnpm-clip-caption-music", "pnpm-clip-caption-music", 0, 12],
-    ["npm-original-lyrics-repeat", "npm-original-lyrics-repeat", 820, 1060],
+    ["npm-text-motion-repeat", "npm-text-motion-repeat", 820, 1060],
     ["software-preference", "pnpm-software-preference", 0, 12],
   ]) {
     writeFileSync(join(evidence, `${file}.mp4`), "fixture video");
@@ -198,7 +198,7 @@ test("finalizer certifies software preference only from a completed off request 
     state.steps[step].attempts = [{ stdout: { path: stdout } }];
   }
   for (const name of [
-    "preview-browser",
+    "studio-browser",
     "negative-corrupt-archive",
     "negative-corrupt-cache",
     "negative-version-mismatch",

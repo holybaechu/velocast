@@ -16,8 +16,8 @@ import {
 } from "../commands.js";
 import { normalizeConfigEntryFromConfigDir } from "../project/render-source.js";
 import type { OutputResult } from "./output-result.js";
-import { previewCommand } from "../preview/preview-command.js";
-import { createPreviewServer } from "../preview/preview-server.js";
+import { studioCommand } from "../studio/studio-command.js";
+import { createStudioServer } from "../studio/studio-server.js";
 
 const temporary: string[] = [];
 const composition = {
@@ -147,12 +147,13 @@ it("captures props once and routes native video, source audio, and cleanup throu
       order.push("close");
     },
   });
+  f.config.inputPropsFile = propsPath;
   let frozen: string | undefined;
   await renderComposition(
     f.config,
     "Intro",
     join(root, "video.mp4"),
-    { inputPropsFile: propsPath, codec: "h264", bitrate: "4M" },
+    { codec: "h264", bitrate: "4M" },
     {
       ...f.dependencies,
       executeNativeSourceJob: async (request, dependencies) => {
@@ -441,14 +442,14 @@ it("accepts consumed CLI routing options for reference frame rendering", async (
   expect(f.results[0]?.status).toBe("success");
 });
 
-it("rejects source preview before starting watchers or acquiring runtime", async () => {
+it("rejects source studio before starting watchers or acquiring runtime", async () => {
   const f = fixture();
   const createServer = vi.fn();
-  await expect(previewCommand(f.config, {}, { createServer })).rejects.toThrow(
-    "preview.source_unsupported",
+  await expect(studioCommand(f.config, {}, { createServer })).rejects.toThrow(
+    "studio.source_unsupported",
   );
-  await expect(createPreviewServer(f.config)).rejects.toThrow(
-    "preview.source_unsupported",
+  await expect(createStudioServer(f.config)).rejects.toThrow(
+    "studio.source_unsupported",
   );
   expect(createServer).not.toHaveBeenCalled();
   expect(f.prepare).not.toHaveBeenCalled();

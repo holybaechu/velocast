@@ -1,6 +1,6 @@
 # Agent guidance
 
-Velocast is a video-rendering project with TypeScript authoring, CLI, and preview
+Velocast is a video-rendering project with TypeScript authoring, CLI, and Studio
 packages, a Rust renderer, and an Electron media host. Optimize for correct frames
 and audio timing, reliable resource cleanup, and simple, maintainable code.
 
@@ -23,7 +23,7 @@ These requirements apply to all work in this repository.
   `scripts/contracts/generate-renderer-contracts.mjs`. Change the source and regenerate with
   `pnpm contracts:generate`; keep generated files aligned with it.
 - Preserve exact frame identity and ordering, frame/range bounds, input-props
-  snapshots, and audio sample timing across authoring, preview, and export.
+  snapshots, and audio sample timing across authoring, studio, and export.
 - Honor explicit codec, container, and acceleration choices. Report unsupported
   requests and the actual capture and encoding behavior accurately.
 - Keep worker shutdown, cancellation, and resource ownership explicit. Finish or

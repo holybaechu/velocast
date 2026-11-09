@@ -23,8 +23,14 @@ import {
   type OutputResult,
 } from "./output-result.js";
 import { parseOutputFrame } from "./output-request.js";
-import { resolveCliInputPropsPath, resolveCliOutputPath } from "../project/paths.js";
-import { assertSourceConfig, resolveSourceEntry } from "../project/render-source.js";
+import {
+  resolveCliInputPropsPath,
+  resolveCliOutputPath,
+} from "../project/paths.js";
+import {
+  assertSourceConfig,
+  resolveSourceEntry,
+} from "../project/render-source.js";
 import { renderSourceOutput } from "./source-output.js";
 import {
   resolveRendererAudioCodec,
@@ -124,7 +130,7 @@ export async function executeSourceJob(
     if (request.kind === "frame")
       result.request.frame = parseOutputFrame(request.frame);
     const propsPath = resolveCliInputPropsPath(
-      request.options?.inputPropsFile,
+      request.options?.inputPropsFile ?? request.config.inputPropsFile,
       dependencies.pathOptions,
     );
     const inputProps: unknown = propsPath

@@ -9,7 +9,6 @@ function commandDependencies() {
     loadConfigFromPath: vi.fn().mockResolvedValue(config),
     renderComposition: vi.fn().mockResolvedValue(undefined),
     renderUrl: vi.fn().mockResolvedValue(undefined),
-    probeCapture: vi.fn().mockResolvedValue(undefined),
     setupCommand: vi.fn().mockResolvedValue(undefined),
     doctorCommand: vi.fn().mockResolvedValue(undefined),
     versionsCommand: vi.fn().mockResolvedValue(undefined),
@@ -25,21 +24,31 @@ afterEach(() => {
 });
 
 describe("CLI dispatch", () => {
-  it("dispatches official preview configuration and explicit build-watch options", async () => {
+  it("opens Studio", async () => {
+    const studioCommand = vi.fn().mockResolvedValue(undefined);
+    const dependencies = { ...commandDependencies(), studioCommand };
+    await runCli(argv("studio", "--json"), dependencies);
+    expect(studioCommand).toHaveBeenCalledOnce();
+    expect(studioCommand).toHaveBeenLastCalledWith(
+      config,
+      expect.objectContaining({ json: true }),
+    );
+  });
+  it("dispatches official studio configuration and explicit build-watch options", async () => {
     const dependencies = commandDependencies();
-    const previewCommand = vi.fn().mockResolvedValue(undefined);
+    const studioCommand = vi.fn().mockResolvedValue(undefined);
     await runCli(
       argv(
-        "preview",
+        "studio",
         "--port",
         "0",
         "--watch-command",
         "vite build --watch",
         "--json",
       ),
-      { ...dependencies, previewCommand },
+      { ...dependencies, studioCommand },
     );
-    expect(previewCommand).toHaveBeenCalledWith(
+    expect(studioCommand).toHaveBeenCalledWith(
       config,
       expect.objectContaining({
         port: 0,
@@ -48,84 +57,41 @@ describe("CLI dispatch", () => {
       }),
     );
   });
-  it("forwards the explicit preview auto-refresh opt-out", async () => {
+  it("forwards the explicit studio auto-refresh opt-out", async () => {
     const dependencies = commandDependencies();
-    const previewCommand = vi.fn().mockResolvedValue(undefined);
-    await runCli(argv("preview", "--no-auto-refresh"), {
+    const studioCommand = vi.fn().mockResolvedValue(undefined);
+    await runCli(argv("studio", "--no-auto-refresh"), {
       ...dependencies,
-      previewCommand,
+      studioCommand,
     });
-    expect(previewCommand).toHaveBeenCalledWith(
+    expect(studioCommand).toHaveBeenCalledWith(
       config,
       expect.objectContaining({ autoRefresh: false }),
     );
   });
 
-  it("dispatches browser checks and packaged creative workflows", async () => {
+  it("dispatches exact-frame browser checks", async () => {
     const dependencies = commandDependencies();
-    const auditCommand = vi.fn().mockResolvedValue(undefined);
+    const checkFramesCommand = vi.fn().mockResolvedValue(undefined);
     await runCli(
       argv(
         "check",
-        "lyrics-starter",
+        "product-demo",
         "--frames",
         "0,30",
         "--assertions",
         "audit.json",
         "--json",
       ),
-      { ...dependencies, auditCommand },
+      { ...dependencies, checkFramesCommand },
     );
-    expect(auditCommand).toHaveBeenCalledWith(
+    expect(checkFramesCommand).toHaveBeenCalledWith(
       config,
-      "lyrics-starter",
+      "product-demo",
       expect.objectContaining({
         frames: "0,30",
         assertions: "audit.json",
         json: true,
-      }),
-    );
-
-    const importTranscriptCommand = vi.fn().mockResolvedValue(undefined);
-    await runCli(
-      argv(
-        "transcript",
-        "import",
-        "lyrics.srt",
-        "--output",
-        "lyrics.json",
-        "--overwrite",
-      ),
-      {
-        ...dependencies,
-        importTranscriptCommand,
-      },
-    );
-    expect(importTranscriptCommand).toHaveBeenCalledWith(
-      "lyrics.srt",
-      expect.objectContaining({ output: "lyrics.json", overwrite: true }),
-    );
-
-    const analyzeMusicCommand = vi.fn().mockResolvedValue(undefined);
-    await runCli(
-      argv(
-        "analyze-audio",
-        "song.wav",
-        "--output",
-        "analysis.json",
-        "--overwrite",
-      ),
-      {
-        ...dependencies,
-        analyzeMusicCommand,
-      },
-    );
-    expect(analyzeMusicCommand).toHaveBeenCalledWith(
-      "song.wav",
-      expect.objectContaining({
-        output: "analysis.json",
-        maxDuration: 900,
-        overwrite: true,
       }),
     );
   });
@@ -225,16 +191,16 @@ describe("CLI dispatch", () => {
     expect(dependencies.setupCommand).not.toHaveBeenCalled();
   });
 
-  it("selects the packaged lyrics starter", async () => {
+  it("selects the blank project", async () => {
     const dependencies = commandDependencies();
     const initCommand = vi.fn().mockResolvedValue(undefined);
-    await runCli(argv("init", "lyrics", "--template", "lyrics"), {
+    await runCli(argv("init", "blank", "--template", "blank"), {
       ...dependencies,
       initCommand,
     });
-    expect(initCommand).toHaveBeenCalledWith("lyrics", {
+    expect(initCommand).toHaveBeenCalledWith("blank", {
       json: undefined,
-      template: "lyrics",
+      template: "blank",
     });
   });
 
@@ -451,35 +417,6 @@ describe("CLI dispatch", () => {
     await expect(
       runCli(argv("render", "hero", "--output", "out.mp4"), dependencies),
     ).rejects.toBe(error);
-  });
-
-  it("keeps the legacy probe command callable without loading configuration", async () => {
-    const dependencies = commandDependencies();
-
-    await runCli(
-      argv(
-        "probe-capture",
-        "hero",
-        "--config",
-        "probe.config.ts",
-        "--report",
-        "probe.json",
-        "--input-props-file",
-        "props.json",
-      ),
-      dependencies,
-    );
-
-    expect(dependencies.loadConfigFromPath).not.toHaveBeenCalled();
-    expect(dependencies.probeCapture).toHaveBeenCalledExactlyOnceWith(
-      {},
-      "hero",
-      expect.objectContaining({
-        report: "probe.json",
-        inputPropsFile: "props.json",
-      }),
-    );
-    expect(dependencies.renderComposition).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -17,7 +17,10 @@ import {
 } from "../generated/renderer-contracts.js";
 import { parseRendererEventLog } from "./renderer-events.js";
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const repoRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../..",
+);
 let fixtureExecutable: string;
 // CI builds the Rust policy first. Reuse its explicitly configured external
 // target so this fixture does not recompile Rust alongside browser tests.
@@ -244,7 +247,7 @@ describe("cross-language renderer wire", () => {
     });
   });
 
-  it("decodes actual CLI jobs and preserves legacy capture-probe wire compatibility using the browser-independent protocol crate", () => {
+  it("decodes actual composition and URL CLI jobs using the browser-independent protocol crate", () => {
     const paths = { cwd: repoRoot };
     const jobs = [
       buildCompositionRenderCommandJobFromSource(
@@ -269,18 +272,6 @@ describe("cross-language renderer wire", () => {
         {},
         paths,
       ),
-      {
-        ...buildCompositionRenderCommandJobFromSource(
-          {},
-          "hero",
-          "http://localhost:4545",
-          "unused.mp4",
-          {},
-          paths,
-        ),
-        acceleration: "required",
-        capture_probe: "accelerated_paint",
-      },
     ];
     const decoded = JSON.parse(native("jobs", jobs)) as unknown[];
     jobs.forEach((job, index) => {
@@ -296,10 +287,6 @@ describe("cross-language renderer wire", () => {
       mode: "url",
       selector: "#hero",
       composition_id: null,
-    });
-    expect(decoded[2]).toMatchObject({
-      acceleration: "required",
-      capture_probe: "accelerated_paint",
     });
   });
 });
