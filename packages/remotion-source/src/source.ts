@@ -7,8 +7,8 @@ import {
 export interface RemotionSourceOptions {
   /** Remotion's unchanged registerRoot() entry file. Resolved relative to the config. */
   entry: string;
-  /** Native uses Velocast capture; reference captures the original browser page and assembles it with WebCodecs. */
-  backend?: "native" | "reference";
+  /** Capture uses Velocast's native GPU handoff. */
+  backend?: "native";
   browserExecutable?: string;
   workDirectory?: string;
   timeoutInMilliseconds?: number;
@@ -37,8 +37,10 @@ export function remotionSource(options: RemotionSourceOptions): SourceAdapter {
     throw new Error("remotion.entry_invalid: entry must be a non-empty path");
   }
   const backend = options.backend ?? "native";
-  if (backend !== "native" && backend !== "reference") {
-    throw new Error("remotion.backend_invalid: use native or reference");
+  if (backend !== "native") {
+    throw new Error(
+      "remotion.backend_invalid: the reference PNG-capture backend was removed; use backend: 'native' or omit backend (requires native GPU capture)",
+    );
   }
   const entry = options.entry.trim();
   const browserExecutable = options.browserExecutable;
@@ -85,33 +87,14 @@ export function remotionSource(options: RemotionSourceOptions): SourceAdapter {
       return {
         compositions: [asManifest(prepared.composition)],
         url: prepared.url,
-        ...(backend === "reference"
-          ? {
-              renderVideo: async (outputPath: string, signal: AbortSignal) => {
-                signal.throwIfAborted();
-                await prepared.renderReference(outputPath);
-                signal.throwIfAborted();
-              },
-              renderFrame: async (
-                frame: number,
-                outputPath: string,
-                signal: AbortSignal,
-              ) => {
-                signal.throwIfAborted();
-                await prepared.renderReferenceFrame(frame, outputPath);
-                signal.throwIfAborted();
-              },
-            }
-          : {
-              renderAudio: async (outputPath: string, signal: AbortSignal) => {
-                signal.throwIfAborted();
-                const audio = await prepared.renderAudio(
-                  outputPath.replace(/\.(aac|m4a)$/i, ".wav"),
-                );
-                signal.throwIfAborted();
-                return audio;
-              },
-            }),
+        renderAudio: async (outputPath: string, signal: AbortSignal) => {
+          signal.throwIfAborted();
+          const audio = await prepared.renderAudio(
+            outputPath.replace(/\.(aac|m4a)$/i, ".wav"),
+          );
+          signal.throwIfAborted();
+          return audio;
+        },
         close: prepared.close,
       };
     },

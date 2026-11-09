@@ -292,11 +292,23 @@ Inspect the PNG and play the video with sound. `verify` checks media metadata,
 frame count, timestamps, dimensions, and optional expectations; it does not judge
 pixels or sound quality. It indexes up to two million frames. `check` separately
 audits sampled DOM frames against layout, text, contrast, and motion assertions;
-its JSON report describes the limits. Render JSON records the composition,
-original requested frame/range, source version, result, and absolute output path.
+its JSON report describes the limits. Without `--snapshots`, this is a browser-only
+audit. `check --snapshots <directory>` renders final PNGs through the native GPU
+still renderer using the same frozen source, props, and exact frames; it requires
+the native runtime and GPU compositor and has no screenshot fallback. Render JSON
+records the composition, original requested frame/range, source version, result,
+and absolute output path.
 Failed or cancelled renders preserve previous output before publication.
 Encoding choices are explicit; codec availability depends on the host, and
 hardware acceleration is a preference rather than a guarantee.
+
+Remotion projects use `remotionSource({ entry: "./src/index.tsx" })` from
+`@velocast/remotion-source` with their original Remotion runtime. Native GPU
+capture is the default and only export backend. The former `backend: "reference"`
+PNG-sequence exporter and upstream `renderReference` / `renderReferenceFrame`
+methods were removed; omit `backend` (or use `"native"`) and export with the
+ordinary CLI `render` / `frame` commands. PNG input assets and final PNG still
+outputs remain supported.
 
 ## Scripted clients and external agents
 

@@ -11,21 +11,27 @@ import {
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it } from "vitest";
-import { runMediaOperation, type MediaProbe } from "velocast/source-media";
+import { runMediaOperation } from "velocast/source-media";
+import { renderFrame } from "velocast";
 import { writeTestVideo } from "../../cli/test-fixtures/media.js";
 import {
   prepareRemotionSource,
   discoverRemotionCompositions,
 } from "./upstream-host.js";
 
-it("discovers, captures OffthreadVideo and mixes the genuine Remotion sequence/loop timeline without upstream media helpers", async () => {
+it("discovers, natively captures OffthreadVideo and mixes the genuine Remotion sequence/loop timeline without upstream media helpers", async () => {
   const directory = await mkdtemp(join(tmpdir(), "velocast-remotion-real-"));
   let source: Awaited<ReturnType<typeof prepareRemotionSource>> | undefined;
   try {
     // Materialize this fixture's declared dependencies even when the package
     // manager resolves dev peers through a shared store or NODE_PATH.
     const fixtureRequire = createRequire(import.meta.url);
-    for (const name of ["remotion", "@remotion/bundler", "react", "react-dom"]) {
+    for (const name of [
+      "remotion",
+      "@remotion/bundler",
+      "react",
+      "react-dom",
+    ]) {
       const dependency = join(directory, "node_modules", name);
       await mkdir(dirname(dependency), { recursive: true });
       await symlink(
@@ -124,19 +130,16 @@ it("discovers, captures OffthreadVideo and mixes the genuine Remotion sequence/l
       );
       expect(bytes.readFloatLE(45000 * 8)).toBe(0);
       const frame = join(directory, "frame.png");
-      await source.renderReferenceFrame(2, frame);
+      await renderFrame(
+        { serve: { url: source.url } },
+        "Original",
+        frame,
+        { frame: 2 },
+        { onOutputResult: () => undefined },
+      );
       expect((await readFile(frame)).subarray(0, 8)).toEqual(
         Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
       );
-      const output = join(directory, "reference.mp4");
-      await source.renderReference(output);
-      const probe = await runMediaOperation<MediaProbe>({
-        kind: "probe",
-        path: output,
-        frames: true,
-      });
-      expect(probe.video?.frames).toHaveLength(6);
-      expect(probe.audio?.channels).toBe(2);
     } finally {
       childProcesses.spawn = originalSpawn;
     }

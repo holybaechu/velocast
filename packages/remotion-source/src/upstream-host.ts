@@ -35,19 +35,13 @@ export interface PrepareRemotionSourceOptions {
   signal?: AbortSignal;
   logLevel?: "trace" | "verbose" | "info" | "warn" | "error";
   timeoutInMilliseconds?: number;
-  onProgress?: (
-    phase: "bundle" | "audio" | "reference",
-    progress: number,
-  ) => void;
+  onProgress?: (phase: "bundle" | "audio", progress: number) => void;
 }
 export interface PreparedRemotionSource {
   composition: VideoConfig;
   url: string;
   /** Original timeline audio, decoded and mixed through WebCodecs. */
   renderAudio(outputPath: string): Promise<string | null>;
-  /** Original browser output assembled through the WebCodecs encoder. */
-  renderReference(outputPath: string): Promise<void>;
-  renderReferenceFrame(frame: number, outputPath: string): Promise<void>;
   close(): Promise<void>;
 }
 let bundling: Promise<unknown> = Promise.resolve();
@@ -306,28 +300,6 @@ async function openRemotionSource(
       );
       check();
     };
-    const screenshot = async (output: string) => {
-      const extension = extname(output).toLowerCase(),
-        format =
-          extension === ".png"
-            ? "png"
-            : extension === ".webp"
-              ? "webp"
-              : [".jpg", ".jpeg"].includes(extension)
-                ? "jpeg"
-                : undefined;
-      if (!format)
-        throw new Error(
-          "Reference frame output must be .png, .jpeg, .jpg or .webp",
-        );
-      await mkdir(dirname(resolve(output)), { recursive: true });
-      const image = await browser!.call<{ data: string }>(
-        "Page.captureScreenshot",
-        { format, captureBeyondViewport: false },
-      );
-      check();
-      await writeFile(resolve(output), Buffer.from(image.data, "base64"));
-    };
     const audioSources = new Map<string, Promise<string | null>>();
     const freezeAudio = (
       src: string,
@@ -351,23 +323,17 @@ async function openRemotionSource(
       }
       return pending;
     };
-    const collect = async (capture: boolean) => {
+    const collect = async () => {
       await begin();
-      const frames: RemotionMediaAsset[][] = [],
-        framePaths: string[] = [];
+      const frames: RemotionMediaAsset[][] = [];
       for (let frame = 0; frame < composition.durationInFrames; frame++) {
         await seek(frame);
         const assets = await browser!.evaluate<RemotionMediaAsset[]>(
           "window.remotion_collectAssets ? window.remotion_collectAssets().filter(a=>a.type==='audio'||a.type==='video') : []",
         );
         frames.push(assets);
-        if (capture) {
-          const output = join(workspace, `frame-${frame}.png`);
-          await screenshot(output);
-          framePaths.push(output);
-        }
         options.onProgress?.(
-          capture ? "reference" : "audio",
+          "audio",
           (frame + 1) / composition.durationInFrames,
         );
       }
@@ -379,7 +345,6 @@ async function openRemotionSource(
             .defaultSampleRate ?? 48000,
           freezeAudio,
         ),
-        framePaths,
       };
     };
     const publish = async (
@@ -426,7 +391,7 @@ async function openRemotionSource(
         throw new Error(
           "remotion.audio_format: use .wav; source assembly encodes AAC through WebCodecs",
         );
-      const { plan } = await collect(false);
+      const { plan } = await collect();
       if (!plan.clips.length) return null;
       await mkdir(dirname(resolve(output)), { recursive: true });
       await publish(
@@ -442,52 +407,6 @@ async function openRemotionSource(
       composition: runtime.deserialize<VideoConfig>(serializedComposition),
       url,
       renderAudio: (output) => enqueue(() => audio(output)),
-      renderReference: (output) =>
-        enqueue(async () => {
-          const { plan, framePaths } = await collect(true);
-          let audioPath: string | undefined;
-          if (plan.clips.length) {
-            audioPath = join(workspace, `audio-${Date.now()}.wav`);
-            await runMediaOperation(
-              {
-                kind: "mix-audio",
-                plan,
-                channels: 2,
-                format: "wav",
-                outputPath: audioPath,
-              },
-              { signal },
-            );
-          }
-          await publish(
-            {
-              kind: "encode-frames",
-              framePaths,
-              fps: composition.fps,
-              width: composition.width,
-              height: composition.height,
-              bitrate: 8_000_000,
-              codec: "h264",
-              audioPath,
-            },
-            output,
-          );
-          check();
-        }),
-      renderReferenceFrame: (frame, output) =>
-        enqueue(async () => {
-          if (
-            !Number.isSafeInteger(frame) ||
-            frame < 0 ||
-            frame >= composition.durationInFrames
-          )
-            throw new Error(
-              "Frame must be an integer within the composition duration",
-            );
-          await begin();
-          await seek(frame);
-          await screenshot(output);
-        }),
       close,
     };
   } catch (error) {

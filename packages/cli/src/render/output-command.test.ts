@@ -291,3 +291,70 @@ it("treats a native zero exit without matching metadata as failure and preserves
   expect(readFileSync(output, "utf8")).toBe("previous PNG");
   expect(results[0]?.status).toBe("failure");
 });
+
+it.each([false, true])(
+  "borrows the audit snapshot without resnapshotting live files or owning its cleanup (failure=%s)",
+  async (failed) => {
+    const { cwd, config } = fixture();
+    const props = join(cwd, "props.json");
+    writeFileSync(props, JSON.stringify({ title: "original" }));
+    const snapshot = await createInputSnapshot({
+      root: join(cwd, "dist"),
+      entryPath: "index.html",
+      inputPropsPath: props,
+    });
+    const close = vi.spyOn(snapshot, "close");
+    writeFileSync(join(cwd, "dist/index.html"), "changed live entry");
+    writeFileSync(props, JSON.stringify({ title: "changed" }));
+    const createMediaService = vi.fn();
+    try {
+      const run = executeRendererJob(
+        {
+          kind: "frame",
+          config,
+          compositionId: "hero",
+          frame: 9,
+          output: "audit.png",
+        },
+        {
+          inputSnapshot: snapshot,
+          expectedSourceVersion: snapshot.session.sourceVersion,
+          pathOptions: { cwd, env: {} },
+          createMediaService,
+          runtimeAcquisition: {
+            acquire: async () => ({
+              binary: "native",
+              env: {},
+              source: "local" as const,
+            }),
+          },
+          probeCapabilities: () => ({ available: true, outputApiVersion: 1 }),
+          onOutputResult: () => undefined,
+          runRenderer: async (_binary, value) => {
+            const job = value as RustRenderJob;
+            expect(job.operation).toBe("frame");
+            expect(job.output_frame).toBe(9);
+            expect(job.serve_url).toBe(snapshot.url);
+            expect(job.render_session).toEqual(snapshot.session);
+            expect(job.input_props_path).toBe(snapshot.inputPropsPath);
+            expect(
+              JSON.parse(readFileSync(job.input_props_path!, "utf8")),
+            ).toEqual({ title: "original" });
+            expect(await (await fetch(job.serve_url)).text()).toBe(
+              "frozen original",
+            );
+            if (failed) throw new Error("native failure");
+            nativeSuccess(job);
+          },
+        },
+      );
+      if (failed) await expect(run).rejects.toThrow("native failure");
+      else await run;
+      expect(createMediaService).not.toHaveBeenCalled();
+      expect(close).not.toHaveBeenCalled();
+      expect(await (await fetch(snapshot.url)).text()).toBe("frozen original");
+    } finally {
+      await snapshot.close();
+    }
+  },
+);

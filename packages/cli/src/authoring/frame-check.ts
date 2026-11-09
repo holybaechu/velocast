@@ -1,11 +1,12 @@
 import { withMediaRuntimeContext } from "../media/media-runtime.js";
 import { createHash } from "node:crypto";
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import type { Config } from "@velocast/core";
+import { renderFrame } from "../render/commands.js";
 import { BROWSER_PROTOCOL_VERSION } from "../generated/renderer-contracts.js";
 import {
   launchCdpBrowser,
@@ -52,6 +53,7 @@ export interface FrameCheckOptions extends InvocationPathOptions {
   strict?: boolean;
   json?: boolean;
   write?: (text: string) => void;
+  signal?: AbortSignal;
 }
 
 export interface FrameBox {
@@ -376,14 +378,34 @@ export async function checkComposition(
   const env = options.env
     ? { ...process.env, ...options.env }
     : { ...process.env };
-  return withMediaRuntimeContext(
-    {
-      configuredBinary: config.renderer?.binary,
-      cwd: getInvocationCwd(options),
-      env,
-    },
-    () => checkCompositionInContext(config, compositionId, options),
-  );
+  const controller = new AbortController();
+  const signal = options.signal ?? controller.signal;
+  const interrupt = () =>
+    controller.abort(new Error("audit.cancelled: check interrupted"));
+  if (!options.signal) {
+    process.on("SIGINT", interrupt);
+    process.on("SIGTERM", interrupt);
+  }
+  try {
+    signal.throwIfAborted();
+    return await withMediaRuntimeContext(
+      {
+        configuredBinary: config.renderer?.binary,
+        cwd: getInvocationCwd(options),
+        env,
+      },
+      () =>
+        checkCompositionInContext(config, compositionId, {
+          ...options,
+          signal,
+        }),
+    );
+  } finally {
+    if (!options.signal) {
+      process.removeListener("SIGINT", interrupt);
+      process.removeListener("SIGTERM", interrupt);
+    }
+  }
 }
 
 async function checkCompositionInContext(
@@ -416,6 +438,7 @@ async function checkCompositionInContext(
   let browser: CdpBrowser | undefined;
   let primaryFailure: { error: unknown } | undefined;
   try {
+    options.signal?.throwIfAborted();
     const inputProps = snapshot.inputPropsPath
       ? JSON.parse(
           (await readFile(snapshot.inputPropsPath, "utf8")).replace(
@@ -476,6 +499,7 @@ async function checkCompositionInContext(
     for (const frame of [...new Set(frames)].sort(
       (left, right) => left - right,
     )) {
+      options.signal?.throwIfAborted();
       const inspected = await inspectFrame(
         browser,
         composition,
@@ -494,16 +518,21 @@ async function checkCompositionInContext(
           snapshotDirectory,
           `${safeCompositionId}-frame-${frame}.png`,
         );
-        const capture = await browser.call<{ data: string }>(
-          "Page.captureScreenshot",
+        await renderFrame(
+          config,
+          composition.id,
+          snapshotPath,
+          { frame },
           {
-            format: "png",
-            fromSurface: true,
-            captureBeyondViewport: false,
+            inputSnapshot: snapshot,
+            expectedSourceVersion: snapshot.session.sourceVersion,
+            pathOptions: options,
+            signal: options.signal,
+            onOutputResult: () => undefined,
           },
         );
-        await writeFile(snapshotPath, Buffer.from(capture.data, "base64"));
       }
+      options.signal?.throwIfAborted();
       sampledFrames.push({
         frame,
         timeSeconds: frame / composition.fps,

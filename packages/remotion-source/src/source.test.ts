@@ -74,6 +74,7 @@ describe("remotionSource", () => {
     );
     expect(prepared.url).toContain("velocast.html");
     expect(prepared.renderVideo).toBeUndefined();
+    expect(prepared.renderFrame).toBeUndefined();
     await expect(
       prepared.renderAudio!("C:/tmp/audio.wav", new AbortController().signal),
     ).resolves.toBe("C:/tmp/audio.wav");
@@ -101,33 +102,16 @@ describe("remotionSource", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it("routes reference video and frame to the selected upstream composition", async () => {
-    const renderReference = vi.fn().mockResolvedValue(undefined);
-    const renderReferenceFrame = vi.fn().mockResolvedValue(undefined);
-    host.prepare.mockResolvedValue({
-      composition,
-      url: "http://localhost:1234/velocast.html",
-      renderReference,
-      renderReferenceFrame,
-      close: vi.fn().mockResolvedValue(undefined),
-    });
-    const prepared = await remotionSource({
-      entry: "./src/index.tsx",
-      backend: "reference",
-    }).prepare(context("frame"));
-    expect(prepared.renderAudio).toBeUndefined();
-    await prepared.renderVideo!(
-      "C:/tmp/video.mp4",
-      new AbortController().signal,
-    );
-    await prepared.renderFrame!(
-      4,
-      "C:/tmp/frame.png",
-      new AbortController().signal,
-    );
-    expect(renderReference).toHaveBeenCalledWith("C:/tmp/video.mp4");
-    expect(renderReferenceFrame).toHaveBeenCalledWith(4, "C:/tmp/frame.png");
-    await prepared.close();
+  it("rejects the removed reference backend before starting any host work", () => {
+    expect(() =>
+      remotionSource({
+        entry: "./src/index.tsx",
+        // @ts-expect-error Removed backend must also fail for JavaScript consumers.
+        backend: "reference",
+      }),
+    ).toThrow("use backend: 'native' or omit backend");
+    expect(host.prepare).not.toHaveBeenCalled();
+    expect(host.discover).not.toHaveBeenCalled();
   });
 
   it("rejects a missing composition before starting the host", async () => {
@@ -144,7 +128,7 @@ describe("remotionSource", () => {
     const options = {
       entry: " ./src/index.tsx ",
       browserExecutable: "C:/Chrome/chrome.exe",
-      backend: "reference" as const,
+      backend: "native" as const,
     };
     const source = remotionSource(options);
     options.entry = "./other.tsx";

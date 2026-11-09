@@ -88,7 +88,7 @@ beforeEach(async () => {
     close: mocks.close,
   });
   mocks.close.mockResolvedValue(undefined);
-  mocks.call.mockResolvedValue({ data: Buffer.from("png").toString("base64") });
+  mocks.call.mockResolvedValue(undefined);
   mocks.evaluate.mockImplementation(async (expression: string) => {
     if (expression.startsWith("Boolean(")) return true;
     if (
@@ -256,36 +256,6 @@ it("mixes captured trim and frame volume with WebCodecs and distinguishes silenc
     await expect(
       source.renderAudio(join(directory, "old.aac")),
     ).rejects.toThrow("remotion.audio_format");
-  } finally {
-    await source.close();
-  }
-});
-it("assembles reference PNGs with the media encoder and validates still bounds", async () => {
-  const source = await prepareRemotionSource({
-    entryPoint,
-    compositionId: "Original",
-    workDirectory: directory,
-  });
-  try {
-    await source.renderReference(join(directory, "reference.mp4"));
-    expect(mocks.media).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "encode-frames",
-        fps: 30,
-        framePaths: expect.arrayContaining([
-          expect.stringContaining("frame-0.png"),
-        ]),
-      }),
-      expect.anything(),
-    );
-    await source.renderReferenceFrame(1, join(directory, "frame.png"));
-    expect(await readFile(join(directory, "frame.png"), "utf8")).toBe("png");
-    await expect(
-      source.renderReferenceFrame(2, join(directory, "bad.png")),
-    ).rejects.toThrow("within the composition");
-    await expect(
-      source.renderReferenceFrame(0, join(directory, "bad.gif")),
-    ).rejects.toThrow("Reference frame output");
   } finally {
     await source.close();
   }

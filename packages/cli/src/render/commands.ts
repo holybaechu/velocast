@@ -55,6 +55,8 @@ export interface RendererRunDependencies {
   executeNativeSourceJob?: typeof executeRendererJob;
   /** Studio output must correspond to the exact authored version being inspected. */
   expectedSourceVersion?: string;
+  /** Borrow a caller-owned frozen source; the caller owns its media endpoint and lifetime. */
+  inputSnapshot?: InputSnapshot;
   signal?: AbortSignal;
   createMediaService?: typeof createVideoFrameHttp;
   probeCapabilities?: typeof probeRendererCapabilities;
@@ -222,7 +224,8 @@ async function executeRendererJobInContext(
     failureJob = prepared.job;
     ensureRenderJobDirectories(prepared.job);
     snapshot =
-      prepared.snapshotRoot === undefined
+      dependencies.inputSnapshot ??
+      (prepared.snapshotRoot === undefined
         ? undefined
         : await createInputSnapshot({
             root: prepared.snapshotRoot,
@@ -235,7 +238,7 @@ async function executeRendererJobInContext(
                 );
               return media.handle(request, response, identity);
             },
-          });
+          }));
     if (snapshot) {
       prepared.job.serve_url = snapshot.url;
       prepared.job.render_session = snapshot.session;
@@ -263,7 +266,7 @@ async function executeRendererJobInContext(
       dependencies.signal,
     );
     dependencies.signal?.throwIfAborted();
-    if (snapshot)
+    if (snapshot && !dependencies.inputSnapshot)
       media = (dependencies.createMediaService ?? createVideoFrameHttp)({
         directory: tmpdir(),
         env: runtime.env,
@@ -320,7 +323,7 @@ async function executeRendererJobInContext(
     try {
       await media?.close();
     } finally {
-      await snapshot?.close();
+      if (!dependencies.inputSnapshot) await snapshot?.close();
       if (resultDirectory)
         rmSync(resultDirectory, { recursive: true, force: true });
     }
