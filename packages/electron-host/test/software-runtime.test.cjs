@@ -5,10 +5,9 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { spawn, execFile } = require("node:child_process");
-const { promisify } = require("node:util");
+const { spawn } = require("node:child_process");
 const { hostResponses } = require("./host-responses.cjs");
-const runFile = promisify(execFile);
+const { stopOwnedWindowsTree } = require("./owned-windows-tree.cjs");
 
 async function joinHost(closed, timeoutMs) {
   let timer;
@@ -68,10 +67,7 @@ test("real software host survives repeated fresh processes", {
             await joinHost(closed, 1000);
           } catch {
             if (process.platform === "win32") {
-              // Never target an exited PID, which Windows could already reuse.
-              if (child.exitCode === null && child.signalCode === null) {
-                await runFile(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"), ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, timeout: 5000 });
-              }
+              await stopOwnedWindowsTree(child);
             } else {
               try { process.kill(-child.pid, "SIGKILL"); }
               catch (error) { if (error.code !== "ESRCH") throw error; }

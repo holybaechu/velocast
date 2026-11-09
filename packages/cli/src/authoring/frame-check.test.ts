@@ -8,6 +8,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -193,8 +194,8 @@ it.skipIf(!nativeCaptureRequired)(
   "writes final frame-check PNG snapshots through native GPU capture (required native profile)",
   async () => {
     await requireNativeCaptureRuntime();
-    const root = await mkdtemp(
-      join(tmpdir(), "velocast-native-audit-snapshots-"),
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "velocast-native-audit-snapshots-")),
     );
     roots.push(root);
     const dist = join(root, "dist");
