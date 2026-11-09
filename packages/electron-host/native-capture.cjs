@@ -16,13 +16,23 @@ class NativeCapture {
         pending?.reject(new Error("capture.shared_texture_unavailable"));
         return;
       }
+      const release = () => {
+        try {
+          texture.release();
+        } catch (error) {
+          this.failure = new Error(
+            `capture.native_release_failed: ${error.message}`,
+          );
+          this.cancel?.(this.failure);
+        }
+      };
       const info = texture.textureInfo;
       const count = info?.metadata?.frameCount;
       const previous = this.lastFrame;
       if (Number.isSafeInteger(count))
         this.lastFrame = Math.max(count, previous);
       if (!pending) {
-        texture.release();
+        release();
         return;
       }
       const { width, height } = pending;
@@ -31,7 +41,7 @@ class NativeCapture {
         count <= pending.after ||
         count <= previous
       ) {
-        texture.release();
+        release();
         return;
       }
       const rect = info?.visibleRect;
@@ -46,12 +56,11 @@ class NativeCapture {
         rect?.height !== height ||
         !["bgra", "rgba", "rgbaf16"].includes(info.pixelFormat)
       ) {
-        texture.release();
+        release();
         pending.reject(new Error("capture.invalid_native_geometry"));
         return;
       }
       this.pending = null;
-      this.contents.stopPainting();
       pending.resolve(texture);
     };
     contents.on("paint", this.onPaint);
@@ -59,6 +68,7 @@ class NativeCapture {
 
   async capture(width, height) {
     if (this.closed) throw new Error("capture.closed");
+    if (this.failure) throw this.failure;
     if (this.busy) throw new Error("capture.busy");
     if (
       !Number.isSafeInteger(width) ||
@@ -73,11 +83,16 @@ class NativeCapture {
     this.busy = true;
     const result = new Promise((resolve, reject) => {
       timer = setTimeout(
-        () => reject(new Error("capture.shared_texture_timeout")),
+        () =>
+          reject(
+            new Error(
+              `capture.shared_texture_timeout: ${this.pending ? "texture" : "readiness"}, lastFrame=${this.lastFrame}`,
+            ),
+          ),
         this.timeout,
       );
       this.cancel = reject;
-      this.contents.stopPainting();
+      this.contents.startPainting();
       // Restarting OSR requests a full native frame even for unchanged content.
       // invalidate() only replays a CPU backing bitmap in Electron 44 and is not
       // a shared-texture refresh API. Never use it as a native capture fallback.
@@ -87,6 +102,11 @@ class NativeCapture {
         )
         .then(() => {
           if (this.closed || this.cancel !== reject) return;
+          if (this.failure) {
+            reject(this.failure);
+            return;
+          }
+          this.contents.stopPainting();
           this.pending = {
             width,
             height,
@@ -105,7 +125,6 @@ class NativeCapture {
       this.busy = false;
       this.cancel = null;
       this.pending = null;
-      this.contents.stopPainting();
     }
   }
 

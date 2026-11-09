@@ -4,6 +4,30 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { NativeCapture } = require("../native-capture.cjs");
 
+test("release failure is terminal and late paints after cancellation are returned once", async () => {
+  const f = fixture();
+  const result = assert.rejects(
+    f.capture.capture(160, 100),
+    /native_release_failed/,
+  );
+  let releases = 0;
+  f.contents.emit("paint", {
+    texture: {
+      release() {
+        releases++;
+        throw new Error("device lost");
+      },
+    },
+  });
+  await result;
+  assert.equal(releases, 1);
+  await assert.rejects(f.capture.capture(160, 100), /native_release_failed/);
+  f.capture.dispose();
+  const late = texture(5);
+  f.contents.emit("paint", { texture: late });
+  assert.equal(late.releases, 1);
+});
+
 const turn = () => new Promise(setImmediate);
 function fixture() {
   const contents = new EventEmitter();
@@ -44,7 +68,7 @@ test("native capture drains old paints, fences readiness and transfers exactly o
   const result = f.capture.capture(160, 100);
   f.contents.emit("paint", { texture: old });
   assert.equal(old.releases, 1);
-  assert.equal(f.contents.started, undefined);
+  assert.equal(f.contents.started, 1);
   await assert.rejects(f.capture.capture(160, 100), /busy/);
   f.fence();
   await turn();
@@ -97,7 +121,7 @@ test("cancellation and timeout include the readiness fence and never restart a c
     await result;
     f.fence();
     await turn();
-    assert.equal(f.contents.started, undefined);
+    assert.equal(f.contents.started, 1);
     f.capture.dispose();
   }
   const f = fixture();

@@ -60,12 +60,14 @@ jobs:
           "VELOCAST_WEBCODECS_TEST_BINARY=$electron" >> $env:GITHUB_ENV
           "VELOCAST_TEST_RENDERER=$(Join-Path $env:CARGO_TARGET_DIR 'debug/velocast-renderer.exe')" >> $env:GITHUB_ENV
       - name: Verify the Electron capture host
+        env:
+          VELOCAST_CAPTURE_EXPECTATION: ${{ matrix.capture }}
         run: ${{ matrix.display }} node --test packages/electron-host/test/software-runtime.test.cjs packages/electron-host/test/compositor-capability-runtime.test.cjs
-      - name: Verify compositor snapshot transactions (macOS)
+      - name: Verify native texture transactions (macOS)
         if: runner.os == 'macOS'
         run: node --test packages/electron-host/test/webcodecs-runtime.test.cjs
       # Hosted Linux and Windows lack the required GPU compositor. Successful
-      # compositor snapshot video remains mandatory on macOS and native release hosts.
+      # native texture video remains mandatory on macOS and native release hosts.
       - name: Verify capture capability and frame output (Unix)
         if: runner.os != 'Windows'
         run: ${{ matrix.display }} node scripts/verify/verify-electron-portable.mjs --renderer "$VELOCAST_TEST_RENDERER" --output "$RUNNER_TEMP/electron-portable" --capture ${{ matrix.capture }} --frames 24 --repeats 2

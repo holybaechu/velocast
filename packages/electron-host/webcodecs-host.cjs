@@ -165,6 +165,7 @@ class WebCodecsHost {
         );
         this.pending?.reject(this.nativeFailure);
       }
+      if (!this.nativeLeases.size) this.onNativeDrained?.();
     };
     try {
       if (this.nativeFailure) throw this.nativeFailure;
@@ -205,6 +206,7 @@ class WebCodecsHost {
     } finally {
       if (imported) imported.release();
       else releaseSource();
+      if (settings.method !== "frame") await this.drainNativeLeases();
     }
   }
 
@@ -231,10 +233,29 @@ class WebCodecsHost {
     return result;
   }
 
+  async drainNativeLeases() {
+    let timer;
+    try {
+      if (this.nativeLeases.size)
+        await new Promise((resolve, reject) => {
+          this.onNativeDrained = resolve;
+          timer = setTimeout(
+            () => reject(new Error("capture.native_release_timeout")),
+            10_000,
+          );
+        });
+      if (this.nativeFailure) throw this.nativeFailure;
+    } finally {
+      clearTimeout(timer);
+      this.onNativeDrained = null;
+    }
+  }
+
   async finish() {
     if (!this.config || this.finished)
       throw new Error("webcodecs.invalid_finish");
     const result = await this.command("finish");
+    await this.drainNativeLeases();
     if (result.frames !== this.frames || !this.frames)
       throw new Error("webcodecs.frame_count_mismatch");
     this.colorSpace = result.colorSpace ?? this.colorSpace;

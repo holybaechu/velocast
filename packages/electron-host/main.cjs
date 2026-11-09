@@ -273,7 +273,6 @@ async function commandLoad(command) {
     const contents = window.webContents;
     debug("created browser", `offscreen=${contents.isOffscreen()}`);
     nativeCapture = new NativeCapture(contents);
-    contents.stopPainting();
     // Avoid the default 60 Hz wait for authoring readiness and forced redraws.
     // This affects compositor scheduling, not encoded frame timestamps.
     contents.setFrameRate(240);

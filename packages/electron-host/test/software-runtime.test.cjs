@@ -49,6 +49,16 @@ test("real software host survives repeated fresh processes", {
       });
       const ready = await next();
       assert.equal(ready.surfaceMode, "software");
+      if (process.env.VELOCAST_CAPTURE_EXPECTATION === "unavailable") {
+        child.stdin.write(`${JSON.stringify({ id: ++sequence, method: "load", url: pathToFileURL(html).href, width: 160, height: 100 })}\n`);
+        const unavailable = await next();
+        assert.equal(unavailable.id, sequence);
+        assert.equal(unavailable.ok, false);
+        assert.match(unavailable.error, /^capture\.compositor_unavailable:/);
+        assert.equal(fs.existsSync(path.join(directory, "frame.bgra")), false);
+        await request({ method: "close" });
+        return;
+      }
       await request({ method: "load", url: pathToFileURL(html).href, width: 160, height: 100 });
       const capture = async (generation, width, height) => {
         const metadata = await request({ method: "paint", generation, copy: true });
