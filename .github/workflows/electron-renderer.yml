@@ -66,6 +66,19 @@ jobs:
       - name: Verify native texture transactions (macOS)
         if: runner.os == 'macOS'
         run: node --test packages/electron-host/test/webcodecs-runtime.test.cjs
+      - name: Verify native audit snapshots and Remotion frames (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          VELOCAST_CAPTURE_EXPECTATION: required
+        run: |
+          export VELOCAST_RENDERER_BINARY="$VELOCAST_TEST_RENDERER"
+          export VELOCAST_ELECTRON_BINARY="$VELOCAST_ELECTRON_TEST_BINARY"
+          export VELOCAST_ELECTRON_HOST_SCRIPT="$GITHUB_WORKSPACE/packages/electron-host/main.cjs"
+          export VELOCAST_BROWSER_BINARY="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          test -x "$VELOCAST_BROWSER_BINARY"
+          pnpm --filter velocast exec vitest run src/authoring/frame-check.test.ts -t 'required native profile'
+          pnpm --filter @velocast/remotion-source exec vitest run src/upstream-host.integration.test.ts -t 'required native profile'
       # Hosted Linux and Windows lack the required GPU compositor. Successful
       # native texture video remains mandatory on macOS and native release hosts.
       - name: Verify capture capability and frame output (Unix)

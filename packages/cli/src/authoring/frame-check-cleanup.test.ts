@@ -120,7 +120,12 @@ it("routes ordered, scoped final snapshots to native with the audit's frozen sou
     readyBrowser();
     mocks.inputPropsPath = join(directory, "props.json");
     await writeFile(mocks.inputPropsPath, JSON.stringify({ title: "frozen" }));
-    const options = { frames: "9,0,9", snapshots: "pictures", cwd: directory };
+    const options = {
+      frames: "9,0,9",
+      snapshots: "pictures",
+      cwd: directory,
+      env: { INIT_CWD: directory },
+    };
     const report = await checkComposition({}, composition.id, options);
     expect(report.sampledFrames.map((sample) => sample.frame)).toEqual([0, 9]);
     expect(report.sampledFrames.map((sample) => sample.snapshot)).toEqual([

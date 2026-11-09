@@ -52,6 +52,9 @@
       "env": [
         "CHROME_PATH",
         "VELOCAST_BROWSER_BINARY",
+        "VELOCAST_CAPTURE_EXPECTATION",
+        "VELOCAST_ELECTRON_BINARY",
+        "VELOCAST_ELECTRON_HOST_SCRIPT",
         "VELOCAST_STUDIO_GATE_CLI"
       ],
       "outputs": []

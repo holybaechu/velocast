@@ -15,11 +15,28 @@ import { runMediaOperation } from "velocast/source-media";
 import { renderFrame } from "velocast";
 import { writeTestVideo } from "../../cli/test-fixtures/media.js";
 import {
+  nativeCaptureRequired,
+  requireNativeCaptureRuntime,
+} from "../../cli/test-fixtures/native-capture.js";
+import {
   prepareRemotionSource,
   discoverRemotionCompositions,
 } from "./upstream-host.js";
 
-it("discovers, natively captures OffthreadVideo and mixes the genuine Remotion sequence/loop timeline without upstream media helpers", async () => {
+it("discovers and mixes the genuine Remotion sequence/loop timeline without upstream media helpers", async () => {
+  await verifyUpstreamHost(false);
+}, 120000);
+
+it.skipIf(!nativeCaptureRequired)(
+  "natively captures genuine Remotion OffthreadVideo (required native profile)",
+  async () => {
+    await requireNativeCaptureRuntime();
+    await verifyUpstreamHost(true);
+  },
+  120000,
+);
+
+async function verifyUpstreamHost(capture: boolean) {
   const directory = await mkdtemp(join(tmpdir(), "velocast-remotion-real-"));
   let source: Awaited<ReturnType<typeof prepareRemotionSource>> | undefined;
   try {
@@ -129,17 +146,19 @@ it("discovers, natively captures OffthreadVideo and mixes the genuine Remotion s
         5,
       );
       expect(bytes.readFloatLE(45000 * 8)).toBe(0);
-      const frame = join(directory, "frame.png");
-      await renderFrame(
-        { serve: { url: source.url } },
-        "Original",
-        frame,
-        { frame: 2 },
-        { onOutputResult: () => undefined },
-      );
-      expect((await readFile(frame)).subarray(0, 8)).toEqual(
-        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-      );
+      if (capture) {
+        const frame = join(directory, "frame.png");
+        await renderFrame(
+          { serve: { url: source.url } },
+          "Original",
+          frame,
+          { frame: 2 },
+          { onOutputResult: () => undefined },
+        );
+        expect((await readFile(frame)).subarray(0, 8)).toEqual(
+          Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        );
+      }
     } finally {
       childProcesses.spawn = originalSpawn;
     }
@@ -147,4 +166,4 @@ it("discovers, natively captures OffthreadVideo and mixes the genuine Remotion s
     await source?.close();
     await rm(directory, { recursive: true, force: true });
   }
-}, 120000);
+}

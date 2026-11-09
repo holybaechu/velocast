@@ -1,5 +1,9 @@
 import { writeTestVideo } from "../../test-fixtures/media.js";
 import {
+  nativeCaptureRequired,
+  requireNativeCaptureRuntime,
+} from "../../test-fixtures/native-capture.js";
+import {
   mkdtemp,
   mkdir,
   readFile,
@@ -185,16 +189,19 @@ it("fails a frame when an already-complete authored image is broken", async () =
   ).rejects.toThrow("VELOCAST_IMAGE_DECODE_FAILED");
 }, 20_000);
 
-it("writes final frame-check PNG snapshots through native GPU capture", async () => {
-  const root = await mkdtemp(
-    join(tmpdir(), "velocast-native-audit-snapshots-"),
-  );
-  roots.push(root);
-  const dist = join(root, "dist");
-  await mkdir(dist);
-  await writeFile(
-    join(dist, "index.html"),
-    `<!doctype html><style>html,body{margin:0}#scene{width:64px;height:48px}</style><div id="scene"></div><script>
+it.skipIf(!nativeCaptureRequired)(
+  "writes final frame-check PNG snapshots through native GPU capture (required native profile)",
+  async () => {
+    await requireNativeCaptureRuntime();
+    const root = await mkdtemp(
+      join(tmpdir(), "velocast-native-audit-snapshots-"),
+    );
+    roots.push(root);
+    const dist = join(root, "dist");
+    await mkdir(dist);
+    await writeFile(
+      join(dist, "index.html"),
+      `<!doctype html><style>html,body{margin:0}#scene{width:64px;height:48px}</style><div id="scene"></div><script>
     window.__velocast={protocolVersion:${BROWSER_PROTOCOL_VERSION},session:null,props:null,
     async beginSession(value){this.session=value},getSession(){return this.session},cancelPending(){},async destroy(){},
     async setInputProps(value){this.props=value},async waitForReady(){},
@@ -206,35 +213,37 @@ it("writes final frame-check PNG snapshots through native GPU capture", async ()
       document.querySelector('#scene').style.background=frame===0?'red':'blue';
     }};
   </script>`,
-  );
-  const props = join(root, "props.json");
-  await writeFile(props, JSON.stringify({ title: "frozen" }));
-  const snapshots = join(root, "pictures");
-  const report = await checkComposition(
-    {
-      entry: join(dist, "index.html"),
-      renderer: { snapshotRoot: dist },
-    },
-    "scene",
-    { frames: "1,0,1", snapshots, inputPropsFile: props },
-  );
-  expect(report.status).toBe("passed");
-  expect(report.source.sourceVersion).toMatch(/^[a-f0-9]{64}$/);
-  expect(report.sampledFrames.map((sample) => sample.frame)).toEqual([0, 1]);
-  expect(await readdir(snapshots)).toEqual([
-    "scene-frame-0.png",
-    "scene-frame-1.png",
-  ]);
-  const images = await Promise.all(
-    report.sampledFrames.map(async (sample) => {
-      const bytes = await readFile(sample.snapshot!);
-      expect(bytes.subarray(0, 8)).toEqual(
-        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-      );
-      expect(bytes.readUInt32BE(16)).toBe(64);
-      expect(bytes.readUInt32BE(20)).toBe(48);
-      return bytes;
-    }),
-  );
-  expect(images[0]).not.toEqual(images[1]);
-}, 60_000);
+    );
+    const props = join(root, "props.json");
+    await writeFile(props, JSON.stringify({ title: "frozen" }));
+    const snapshots = join(root, "pictures");
+    const report = await checkComposition(
+      {
+        entry: join(dist, "index.html"),
+        renderer: { snapshotRoot: dist },
+      },
+      "scene",
+      { frames: "1,0,1", snapshots, inputPropsFile: props },
+    );
+    expect(report.status).toBe("passed");
+    expect(report.source.sourceVersion).toMatch(/^[a-f0-9]{64}$/);
+    expect(report.sampledFrames.map((sample) => sample.frame)).toEqual([0, 1]);
+    expect(await readdir(snapshots)).toEqual([
+      "scene-frame-0.png",
+      "scene-frame-1.png",
+    ]);
+    const images = await Promise.all(
+      report.sampledFrames.map(async (sample) => {
+        const bytes = await readFile(sample.snapshot!);
+        expect(bytes.subarray(0, 8)).toEqual(
+          Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        );
+        expect(bytes.readUInt32BE(16)).toBe(64);
+        expect(bytes.readUInt32BE(20)).toBe(48);
+        return bytes;
+      }),
+    );
+    expect(images[0]).not.toEqual(images[1]);
+  },
+  60_000,
+);
