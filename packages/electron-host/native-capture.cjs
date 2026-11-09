@@ -57,7 +57,16 @@ class NativeCapture {
         !["bgra", "rgba", "rgbaf16"].includes(info.pixelFormat)
       ) {
         release();
-        pending.reject(new Error("capture.invalid_native_geometry"));
+        // Report geometry, never native handle contents, so platform failures
+        // remain actionable without exposing cross-process GPU capabilities.
+        pending.reject(new Error(`capture.invalid_native_geometry: ${JSON.stringify({
+          expected: { width, height },
+          codedSize: info?.codedSize,
+          visibleRect: rect,
+          pixelFormat: info?.pixelFormat,
+          frameCount: count,
+          hasHandle: Boolean(info?.handle),
+        })}`));
         return;
       }
       this.pending = null;

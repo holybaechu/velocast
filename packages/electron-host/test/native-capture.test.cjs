@@ -114,7 +114,16 @@ test("missing native texture, malformed geometry and handles fail without CPU fa
     const f = fixture();
     const result = assert.rejects(
       f.capture.capture(160, 100),
-      /shared_texture_unavailable|invalid_native_geometry/,
+      (error) => {
+        assert.match(error.message, /shared_texture_unavailable|invalid_native_geometry/);
+        if (change !== null) {
+          const details = JSON.parse(error.message.split(": ").slice(1).join(": "));
+          assert.deepEqual(details.expected, { width: 160, height: 100 });
+          assert.equal(details.hasHandle, change.handle !== null);
+          assert.equal(error.message.includes("ntHandle"), false);
+        }
+        return true;
+      },
     );
     f.fence();
     await turn();

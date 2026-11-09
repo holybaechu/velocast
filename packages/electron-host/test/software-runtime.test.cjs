@@ -5,8 +5,24 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { spawn } = require("node:child_process");
+const { spawn, execFile } = require("node:child_process");
+const { promisify } = require("node:util");
 const { hostResponses } = require("./host-responses.cjs");
+const runFile = promisify(execFile);
+
+async function joinHost(closed, timeoutMs) {
+  let timer;
+  try {
+    await Promise.race([
+      closed,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Host close timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // Opt in: this launches real browsers sequentially. Repeated fresh processes
 // catch compositor/load races that a warmed browser hides.
@@ -27,7 +43,14 @@ test("real software host survives repeated fresh processes", {
       fs.writeFileSync(html, '<style>html,body{margin:0;background:rgb(0,255,0)}#alpha{width:20px;height:20px;background:rgba(255,0,0,.5)}</style><div id="alpha"></div>');
       const env = { ...process.env, VELOCAST_ELECTRON_SURFACE_MODE: "software", VELOCAST_ELECTRON_FRAME_DIRECTORY: directory, VELOCAST_ELECTRON_PROFILE_DIRECTORY: profileDirectory };
       delete env.ELECTRON_RUN_AS_NODE;
-      const child = spawn(process.env.VELOCAST_ELECTRON_TEST_BINARY, [path.resolve(__dirname, "../main.cjs")], { env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(process.env.VELOCAST_ELECTRON_TEST_BINARY, [path.resolve(__dirname, "../main.cjs")], { env, detached: process.platform !== "win32", windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      const closed = new Promise((resolve, reject) => {
+        child.once("close", resolve);
+        child.once("error", reject);
+      });
+      // Spawn errors are also reported by hostResponses; teardown observes this
+      // rejection even when the handshake is the first failing assertion.
+      void closed.catch(() => {});
       const responses = hostResponses(child);
       const next = () => responses.next();
       let sequence = 0;
@@ -40,12 +63,30 @@ test("real software host survives repeated fresh processes", {
       };
       t.after(async () => {
         child.stdin.end();
-        if (child.exitCode === null) {
-          await Promise.race([new Promise((resolve) => child.once("exit", resolve)), new Promise((resolve) => setTimeout(resolve, 1000))]);
-          if (child.exitCode === null) child.kill();
+        try {
+          try {
+            await joinHost(closed, 1000);
+          } catch {
+            if (process.platform === "win32") {
+              // Never target an exited PID, which Windows could already reuse.
+              if (child.exitCode === null && child.signalCode === null) {
+                await runFile(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"), ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, timeout: 5000 });
+              }
+            } else {
+              try { process.kill(-child.pid, "SIGKILL"); }
+              catch (error) { if (error.code !== "ESRCH") throw error; }
+            }
+            await joinHost(closed, 5000);
+          }
+        } catch (error) {
+          throw new Error("Host cleanup failed; owned scratch retained: " + directory, { cause: error });
+        } finally {
+          responses.close();
         }
-        responses.close();
-        fs.rmSync(directory, { recursive: true, force: true });
+        // Electron's process/pipe closure precedes delayed Windows profile-handle
+        // release. Node's bounded native retries still fail persistent locks.
+        await fs.promises.rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        assert.equal(fs.existsSync(directory), false);
       });
       const ready = await next();
       assert.equal(ready.surfaceMode, "software");
