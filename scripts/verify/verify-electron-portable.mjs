@@ -318,6 +318,12 @@ async function checkAudio(video, expectedFrames) {
   return { decodedAudioSamples: samples, audioRms: rms };
 }
 await gate("inspect", async () => {
+  if (captureExpectation === "unavailable") {
+    const result = await invoke(["inspect", "portable"], { allowFailure: true });
+    if (!unavailableCapture(result))
+      throw new Error(`Expected unavailable compositor inspection: ${result.stdout}`);
+    return { reason: result.value.error.message, metadataAvailable: false };
+  }
   await invoke(["inspect", "portable"]);
 });
 function unavailableCapture(result) {

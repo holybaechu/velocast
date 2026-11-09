@@ -312,8 +312,7 @@
       );
       signal?.throwIfAborted();
       if (selector) this.prepareTarget(selector);
-      // Surface snapshots force a compositor redraw when capturing. Their
-      // controller still awaits resources here, but owns the paint boundary.
+      // Capture controllers await resources here and own the compositor fence.
       if (!waitForPaint) {
         assertBoundSession();
         return value;

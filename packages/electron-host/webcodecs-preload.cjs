@@ -49,6 +49,8 @@ sharedTexture.setSharedTextureReceiver(
             height: settings.height,
             bytes: bytes.length,
             pixelFormat: frame.format,
+            captureBackend: "electron_shared_texture",
+            cpuReadback: true,
           };
         } else {
           const pixels = context.getImageData(

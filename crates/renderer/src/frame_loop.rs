@@ -107,6 +107,11 @@ pub async fn render_frame_png(
             && metadata["height"].as_u64() == Some(composition.height as u64),
         "output.invalid_png_dimensions"
     );
+    anyhow::ensure!(
+        metadata["captureBackend"].as_str() == Some("electron_shared_texture")
+            && metadata["cpuReadback"].as_bool() == Some(true),
+        "capture.native_still_required"
+    );
     crate::output_media::validate_png(output, composition.width, composition.height)?;
     telemetry.capture_backend = Some("electron_shared_texture".into());
     telemetry.conversion_backend = Some("chromium_canvas2d".into());

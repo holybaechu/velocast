@@ -93,6 +93,8 @@ test("real software host survives repeated fresh processes", {
       assert.equal(png.width, 160);
       assert.equal(png.height, 100);
       assert.equal(png.bytes, pngBytes.length);
+      assert.equal(png.captureBackend, "electron_shared_texture");
+      assert.equal(png.cpuReadback, true);
       assert.equal(pngBytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
       assert.equal(pngBytes.readUInt32BE(16), 160);
       assert.equal(pngBytes.readUInt32BE(20), 100);

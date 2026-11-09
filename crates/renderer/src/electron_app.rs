@@ -64,7 +64,7 @@ impl ElectronRenderer {
             .context("electron.request_overflow")?;
         self.sequence.set(sequence);
         let token = format!("electron-{sequence}");
-        // Preserve authoring paint readiness before the compositor snapshot fence.
+        // Preserve authoring paint readiness before the native compositor fence.
         let response = self.host_request(json!({
             "method":"webcodecs-frame", "index":index, "frame":frame, "token":token,
             "script":browser_protocol::render_frame_completion_script(script, true, &token)
