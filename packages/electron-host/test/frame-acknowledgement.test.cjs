@@ -21,7 +21,15 @@ function fixture(t) {
   )(
     (name) =>
       name === "electron/main"
-        ? { ipcMain: { on() {}, off() {} } }
+        ? {
+            ipcMain: { on() {}, off() {} },
+            sharedTexture: {
+              importSharedTexture: ({ allReferencesReleased }) => ({
+                release: allReferencesReleased,
+              }),
+              sendSharedTexture: async () => {},
+            },
+          }
         : hostRequire(name),
     module,
     __dirname,
@@ -45,7 +53,7 @@ test("only the exact frame, token, sequence and timestamps acknowledge a snapsho
     { timestamp: 1 },
   ]) {
     const host = fixture(t);
-    host.command = async () => ({
+    host.transfer = async () => ({
       index: 0,
       ...frameTiming(0, 30),
       frames: 1,
@@ -55,7 +63,7 @@ test("only the exact frame, token, sequence and timestamps acknowledge a snapsho
       ...change,
     });
     await assert.rejects(
-      host.encode(Buffer.from("png"), 0, 240, "seek-1"),
+      host.encode({ release() {} }, 0, 240, "seek-1"),
       /invalid.*acknowledgement/,
     );
     assert.equal(host.frames, 0);
@@ -73,9 +81,10 @@ test("cancellation rejects an in-flight snapshot submission and destroys its enc
     },
   };
   const rejected = assert.rejects(
-    host.encode(Buffer.from("png"), 0, 240, "seek-1"),
+    host.encode({ release() {} }, 0, 240, "seek-1"),
     /webcodecs.closed/,
   );
+  await new Promise(setImmediate);
   await host.dispose();
   await rejected;
   assert.equal(destroyed, true);

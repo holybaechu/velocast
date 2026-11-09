@@ -11,7 +11,7 @@ const { hostResponses } = require("./host-responses.cjs");
 
 const mode = "webcodecs";
 test(
-  "snapshot transactions encode changing and repeated frames through Mediabunny WebCodecs",
+  "native texture transactions encode changing and repeated frames through Mediabunny WebCodecs",
   {
     skip: !process.env.VELOCAST_WEBCODECS_TEST_BINARY,
     timeout: 60_000,
@@ -150,7 +150,7 @@ test(
       assert.equal(frame.frames, index + 1);
       assert.equal(frame.handle, undefined);
       assert.equal(frame.width, 160);
-      assert.equal(frame.cpuReadback, true);
+      assert.equal(frame.cpuReadback, false);
     }
     const finished = await request({ method: "webcodecs-finish" });
     assert.equal(finished.frames, colors.length);

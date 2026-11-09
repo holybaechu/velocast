@@ -3,7 +3,8 @@
 // This file is Electron's main process. The composition stays in a sandboxed
 // page without native commands or GPU handles. The optional trusted encoder
 // preload lives in a separate window that never loads composition content.
-const { app, BrowserWindow, nativeImage } = require("electron/main");
+const { app, BrowserWindow } = require("electron/main");
+const { NativeCapture } = require("./native-capture.cjs");
 const fs = require("node:fs");
 const {
   MAX_LINE_BYTES,
@@ -40,8 +41,8 @@ if (process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY !== undefined)
     app,
     process.env.VELOCAST_ELECTRON_PROFILE_DIRECTORY,
   );
-// This must happen before app.whenReady and before any renderer process exists.
-if (software) app.disableHardwareAcceleration();
+// Software audit output is an explicit readback of native capture, not a capture fallback.
+let nativeCapture = null;
 const softwareFrames = software
   ? new SoftwareFrameLease(process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY)
   : null;
@@ -86,6 +87,7 @@ async function cleanup() {
   if (closed) return;
   closed = true;
   abortPending(new Error("Electron host closed"));
+  nativeCapture?.dispose();
   clearTimeout(leaseTimer);
   leaseTimer = null;
   inputStream?.destroy();
@@ -117,7 +119,7 @@ function browser() {
 }
 
 function gpuCompositorFailure() {
-  if (software || !gpuInfoAvailable) return null;
+  if (!gpuInfoAvailable) return null;
   const status = app.getGPUFeatureStatus().gpu_compositing;
   return status === "disabled_software" || status === "unavailable_software"
     ? new Error(`capture.compositor_unavailable: ${status}`)
@@ -168,18 +170,24 @@ async function captureSoftware(request) {
   if (!snapshotViewport)
     throw new Error("capture.snapshot_viewport_unavailable");
   const { width, height } = snapshotViewport;
-  const image = await captureSnapshot(width, height);
-  const size = image.getSize(1);
-  if (
-    image.isEmpty() ||
-    size.width !== (request.expectedWidth ?? width) ||
-    size.height !== (request.expectedHeight ?? height)
-  ) {
-    throw new Error(
-      "Electron software compositor copy returned invalid dimensions",
-    );
-  }
-  const metadata = softwareFrames.capture(image, request);
+  const result = await encoderHost().transfer(
+    await captureNative(width, height),
+    {
+      method: "bitmap",
+      width,
+      height,
+    },
+  );
+  const pixels = Buffer.from(result.pixels);
+  if (pixels.length !== byteLength(width, height))
+    throw new Error("capture.invalid_native_bitmap");
+  const metadata = softwareFrames.capture(
+    {
+      getSize: () => ({ width, height }),
+      toBitmap: () => pixels,
+    },
+    request,
+  );
   if (request.copy) armLeaseTimeout();
   return metadata;
 }
@@ -213,44 +221,19 @@ async function setSnapshotViewport(width, height) {
   snapshotViewport = { width, height };
 }
 
-async function captureSnapshotPng(width, height) {
-  const compositorFailure = gpuCompositorFailure();
-  if (compositorFailure) throw compositorFailure;
-  // Page.captureScreenshot(fromSurface) asks Chromium to force a redraw before
-  // copying the surface. OSR paint/invalidate and capturePage can replay a
-  // previous bitmap or present the wrong size after an offscreen resize.
-  const snapshot = await deadline(
-    snapshotDebugger().sendCommand("Page.captureScreenshot", {
-      format: "png",
-      // This PNG is decoded immediately; prioritize lossless capture latency
-      // over compressing an intermediate that is never published or retained.
-      optimizeForSpeed: true,
-      fromSurface: true,
-      captureBeyondViewport: false,
-      clip: { x: 0, y: 0, width, height, scale: 1 },
-    }),
-    SNAPSHOT_TIMEOUT_MS,
-    "Electron compositor snapshot",
-  );
-  if (closed || typeof snapshot?.data !== "string" || !snapshot.data)
-    throw new Error("capture.invalid_snapshot");
-  const bytes = Buffer.from(snapshot.data, "base64");
-  if (
-    bytes.length < 24 ||
-    bytes.toString("hex", 0, 8) !== "89504e470d0a1a0a" ||
-    bytes.readUInt32BE(16) !== width ||
-    bytes.readUInt32BE(20) !== height
-  )
-    throw new Error("capture.invalid_snapshot_geometry");
-  return bytes;
+async function captureNative(width, height) {
+  const failure = gpuCompositorFailure();
+  if (failure) throw failure;
+  if (!nativeCapture) throw new Error("capture.shared_texture_unavailable");
+  return nativeCapture.capture(width, height);
 }
 
-async function captureSnapshot(width, height) {
-  const image = nativeImage.createFromBuffer(
-    await captureSnapshotPng(width, height),
+function encoderHost() {
+  const { WebCodecsHost } = require("./webcodecs-host.cjs");
+  webcodecsEncoder ??= new WebCodecsHost(
+    process.env.VELOCAST_ELECTRON_FRAME_DIRECTORY,
   );
-  if (image.isEmpty()) throw new Error("capture.invalid_snapshot");
-  return image;
+  return webcodecsEncoder;
 }
 
 async function commandLoad(command) {
@@ -274,7 +257,7 @@ async function commandLoad(command) {
       frame: false,
       backgroundColor: "#000000",
       webPreferences: {
-        offscreen: true,
+        offscreen: { useSharedTexture: true },
         backgroundThrottling: false,
         nodeIntegration: false,
         contextIsolation: true,
@@ -289,7 +272,7 @@ async function commandLoad(command) {
     });
     const contents = window.webContents;
     debug("created browser", `offscreen=${contents.isOffscreen()}`);
-    // Snapshot requests drive capture; disable the unrelated streaming paint queue.
+    nativeCapture = new NativeCapture(contents);
     contents.stopPainting();
     // Avoid the default 60 Hz wait for authoring readiness and forced redraws.
     // This affects compositor scheduling, not encoded frame timestamps.
@@ -309,12 +292,7 @@ async function commandLoad(command) {
   await deadline(window.loadURL(url), LOAD_TIMEOUT_MS, "Electron page load");
   const loadedCompositorFailure = gpuCompositorFailure();
   if (loadedCompositorFailure) throw loadedCompositorFailure;
-  if (software) {
-    // Observe the requested logical viewport before the first correlated frame.
-    // A forced snapshot also accepts legitimate black/transparent content.
-    await setSnapshotViewport(width, height);
-    await captureSnapshot(width, height);
-  }
+  await setSnapshotViewport(width, height);
   debug("load complete");
   if (process.env.VELOCAST_ELECTRON_HOST_DEBUG === "1") {
     const gpuInfo = await app.getGPUInfo("complete");
@@ -399,30 +377,14 @@ async function dispatch(command) {
         (snapshotViewport.width !== width || snapshotViewport.height !== height)
       )
         throw new Error("media.invalid_png_geometry");
-      const temporaryViewport = !snapshotViewport;
-      let image;
-      try {
-        if (temporaryViewport) await setSnapshotViewport(width, height);
-        image = await captureSnapshot(width, height);
-      } finally {
-        if (temporaryViewport) {
-          snapshotViewport = null;
-          await deadline(
-            snapshotDebugger().sendCommand(
-              "Emulation.clearDeviceMetricsOverride",
-            ),
-            SNAPSHOT_TIMEOUT_MS,
-            "Electron PNG viewport restore",
-          );
-        }
-      }
-      const bytes = image.toPNG();
-      fs.writeFileSync(absolute(command.outputPath), bytes, {
-        flag: "wx",
-        mode: 0o600,
+      return encoderHost().transfer(await captureNative(width, height), {
+        method: "png",
+        outputPath: absolute(command.outputPath),
+        width,
+        height,
       });
-      return { path: command.outputPath, width, height, bytes: bytes.length };
     }
+
     case "webcodecs-frame": {
       if (
         !webcodecs ||
@@ -450,10 +412,10 @@ async function dispatch(command) {
         snapshotViewport?.height !== height
       )
         throw new Error("capture.invalid_snapshot_viewport");
-      const png = await captureSnapshotPng(width, height);
+      const texture = await captureNative(width, height);
       return {
         ...(await webcodecsEncoder.encode(
-          png,
+          texture,
           command.index,
           command.frame,
           command.token,
@@ -462,8 +424,8 @@ async function dispatch(command) {
         token: command.token,
         width,
         height,
-        captureBackend: "electron_compositor_snapshot",
-        cpuReadback: true,
+        captureBackend: "electron_shared_texture",
+        cpuReadback: false,
       };
     }
 
@@ -486,10 +448,9 @@ async function dispatch(command) {
       if (compositorFailure) throw compositorFailure;
       browser();
       window.setContentSize(width, height);
-      // Keep the logical viewport pinned while each snapshot forces its own redraw.
+      // Keep the logical viewport pinned to the requested composition geometry.
       await setSnapshotViewport(width, height);
-      // Finish the surface resize before authoring can initialize canvas layers.
-      await captureSnapshot(width, height);
+
       return {};
     }
     case "paint": {

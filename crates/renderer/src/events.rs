@@ -155,7 +155,7 @@ mod tests {
             fallback_used: false,
             fallback_reason: None,
             cpu_readback_frames: 90,
-            capture_backend: Some("electron_compositor_snapshot".to_string()),
+            capture_backend: Some("electron_shared_texture".to_string()),
             conversion_backend: Some("chromium_webcodecs".to_string()),
             encoder_backend: Some("electron_webcodecs_h264".to_string()),
         })

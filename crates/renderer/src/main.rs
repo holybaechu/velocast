@@ -279,7 +279,7 @@ async fn run_coordinator_render_with_mode(
             effective_concurrency: plan.concurrency,
             probe_tier: "media_metadata".into(),
             segment_count: plan.ranges.len(),
-            capture_mode: "electron_compositor_snapshot".into(),
+            capture_mode: "electron_shared_texture".into(),
             conversion_mode: "chromium_webcodecs".into(),
             encoder_mode: requested_backend.into(),
             planned_encoder_backend: format!(

@@ -86,10 +86,10 @@ test("rejects a reversed or missing frame and truncated output", () => {
   );
 });
 const telemetry = {
-  capture_backend: "electron_compositor_snapshot",
+  capture_backend: "electron_shared_texture",
   conversion_backend: "chromium_webcodecs",
   encoder_backend: "electron_webcodecs_h264",
-  cpu_readback_frames: 24,
+  cpu_readback_frames: 0,
   fallback_used: false,
   dropped_frames: 0,
   stale_frames: 0,

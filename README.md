@@ -23,6 +23,15 @@ pnpm velocast doctor
 Set `CARGO_TARGET_DIR` to a directory outside the checkout to keep native build
 outputs there; the CLI also searches that directory for the renderer.
 
+Rendering now requires Electron's offscreen shared-texture support and a working
+GPU compositor. Video frames travel as native textures into the isolated trusted
+encoder's `VideoFrame` receiver; there is no PNG capture or CPU capture fallback.
+Unavailable textures, invalid surface geometry, or a failed transfer fail the job
+without publishing over an existing output. This does not prove hardware encoding:
+WebCodecs hardware preferences remain preferences, not hardware-use guarantees.
+Still PNG output and software/audit pixel output explicitly read back a native
+frame only for the requested final output; they also require native capture.
+
 Rendering and media tests need Electron and its system dependencies. If dependency
 installation skipped scripts, run
 `node packages/electron-host/node_modules/electron/install.js`. For Linux display

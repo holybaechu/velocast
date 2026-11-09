@@ -9,16 +9,13 @@ const protocol = require("../protocol.cjs");
 function fixture() {
   const events = [];
   let host, finishSeek, finishSnapshot;
-  const png = Buffer.alloc(24);
-  Buffer.from("89504e470d0a1a0a", "hex").copy(png);
-  png.writeUInt32BE(160, 16);
-  png.writeUInt32BE(100, 20);
+  const texture = { release() {} };
   const encoder = {
     frames: 0,
     settings: { startFrame: 240, width: 160, height: 100 },
     async encode(bytes, index, frame, token) {
       events.push("encode");
-      assert.equal(bytes.equals(png), true);
+      assert.equal(bytes, texture);
       this.frames++;
       return { index, frames: this.frames, frame, token };
     },
@@ -36,16 +33,13 @@ function fixture() {
         };
       });
     },
-    debugger: {
-      isAttached: () => true,
-      sendCommand(method) {
-        assert.equal(method, "Page.captureScreenshot");
-        events.push("snapshot");
-        return new Promise((resolve, reject) => {
-          finishSnapshot = (error) =>
-            error ? reject(error) : resolve({ data: png.toString("base64") });
-        });
-      },
+  };
+  const capture = {
+    capture() {
+      events.push("snapshot");
+      return new Promise((resolve, reject) => {
+        finishSnapshot = (error) => (error ? reject(error) : resolve(texture));
+      });
     },
   };
   const dependencies = {
@@ -57,16 +51,21 @@ function fixture() {
       },
     },
     "./protocol.cjs": protocol,
+    "./native-capture.cjs": {},
     "./software-frame.cjs": {},
     "./profile-directory.cjs": {},
   };
   const module = { exports: {} };
   vm.runInNewContext(
-    `(function(require,module){${fs.readFileSync(path.join(__dirname, "../main.cjs"), "utf8")}\nmodule.exports={dispatch,onTitle,setup(w,e){window=w;webcodecsEncoder=e;snapshotViewport={width:160,height:100};}};})`,
+    `(function(require,module){${fs.readFileSync(path.join(__dirname, "../main.cjs"), "utf8")}\nmodule.exports={dispatch,onTitle,setup(w,e,capture){window=w;webcodecsEncoder=e;nativeCapture=capture;snapshotViewport={width:160,height:100};}};})`,
     { process: { env: {} }, Buffer, setTimeout, clearTimeout },
   )((name) => dependencies[name] ?? require(name), module);
   host = module.exports;
-  host.setup({ webContents: contents, isDestroyed: () => false }, encoder);
+  host.setup(
+    { webContents: contents, isDestroyed: () => false },
+    encoder,
+    capture,
+  );
   return {
     host,
     encoder,
@@ -99,7 +98,7 @@ test("capture waits for this seek and its immutable snapshot before encoding", a
   assert.deepEqual(f.events, ["seek", "snapshot", "encode"]);
   assert.equal(reply.frame, 240);
   assert.equal(reply.token, "seek-241");
-  assert.equal(reply.cpuReadback, true);
+  assert.equal(reply.cpuReadback, false);
 });
 
 test("failed seeks and failed snapshots never submit a frame", async () => {

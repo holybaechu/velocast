@@ -1,6 +1,6 @@
 "use strict";
 
-const { BrowserWindow, ipcMain } = require("electron/main");
+const { BrowserWindow, ipcMain, sharedTexture } = require("electron/main");
 const fs = require("node:fs");
 const path = require("node:path");
 const { absolute } = require("./media-io.cjs");
@@ -23,6 +23,7 @@ class WebCodecsHost {
     this.frames = 0;
     this.bytes = 0;
     this.finished = false;
+    this.nativeLeases = new Set();
     this.onResult = (event, message) => {
       if (
         event.sender !== this.window?.webContents ||
@@ -54,6 +55,7 @@ class WebCodecsHost {
   }
 
   async initialize() {
+    if (this.closed) throw new Error("webcodecs.closed");
     if (this.window) return;
     this.window = new BrowserWindow({
       show: false,
@@ -130,7 +132,7 @@ class WebCodecsHost {
       outputPath: this.videoFile,
     });
     this.config = config;
-    return { ...config, cpuReadback: true };
+    return { ...config, cpuReadback: false };
   }
 
   command(method, settings) {
@@ -148,10 +150,75 @@ class WebCodecsHost {
     return result;
   }
 
-  async encode(png, index, frame, token) {
-    if (!this.config || this.finished || index !== this.frames)
+  async transfer(texture, settings) {
+    let imported;
+    let sourceReleased = false;
+    const releaseSource = () => {
+      if (sourceReleased) return;
+      sourceReleased = true;
+      this.nativeLeases.delete(texture);
+      try {
+        texture.release();
+      } catch (error) {
+        this.nativeFailure = new Error(
+          `capture.native_release_failed: ${error.message}`,
+        );
+        this.pending?.reject(this.nativeFailure);
+      }
+    };
+    try {
+      if (this.nativeFailure) throw this.nativeFailure;
+      if (this.nativeLeases.size >= 8)
+        throw new Error("capture.native_lease_limit");
+      this.nativeLeases.add(texture);
+      await this.initialize();
+      if (this.closed) throw new Error("webcodecs.closed");
+      if (
+        !sharedTexture?.importSharedTexture ||
+        !sharedTexture?.sendSharedTexture
+      )
+        throw new Error("capture.shared_texture_unsupported");
+      imported = sharedTexture.importSharedTexture({
+        textureInfo: texture.textureInfo,
+        allReferencesReleased: releaseSource,
+      });
+      const id = ++this.sequence;
+      const result = this.wait(id);
+      // Observe both failures: a failed transfer must not strand its result waiter.
+      const send = Promise.resolve()
+        .then(() =>
+          sharedTexture.sendSharedTexture(
+            {
+              frame: this.window.webContents.mainFrame,
+              importedSharedTexture: imported,
+            },
+            { id, ...settings },
+          ),
+        )
+        .catch((error) => {
+          if (this.pending?.id === id) this.pending.reject(error);
+        });
+      const reply = await result;
+      await send;
+      if (this.nativeFailure) throw this.nativeFailure;
+      return reply;
+    } finally {
+      if (imported) imported.release();
+      else releaseSource();
+    }
+  }
+
+  async encode(texture, index, frame, token) {
+    if (!this.config || this.finished || index !== this.frames) {
+      texture.release();
       throw new Error("webcodecs.invalid_sequence");
-    const result = await this.command("frame", { png, index, frame, token });
+    }
+    const result = await this.transfer(texture, {
+      method: "frame",
+      index,
+      frame,
+      token,
+    });
     this.validateAcknowledgement(
       result,
       index,
@@ -236,6 +303,7 @@ class WebCodecsHost {
   }
 
   async dispose() {
+    this.closed = true;
     this.pending?.reject(new Error("webcodecs.closed"));
     ipcMain.off("velocast:webcodecs:result", this.onResult);
     try {

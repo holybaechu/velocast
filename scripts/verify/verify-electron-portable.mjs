@@ -445,11 +445,11 @@ if (captureExpectation === "required") {
       data.mode !== "reference_web_codecs" ||
       data.encoder_backend !== "electron_webcodecs_h264" ||
       data.conversion_backend !== "chromium_webcodecs" ||
-      data.capture_backend !== "electron_compositor_snapshot" ||
+      data.capture_backend !== "electron_shared_texture" ||
       data.frames_expected !== frames ||
       data.frames_rendered !== frames ||
       data.frames_encoded !== frames ||
-      data.cpu_readback_frames !== frames ||
+      data.cpu_readback_frames !== 0 ||
       data.dropped_frames !== 0 ||
       data.stale_frames !== 0
     )

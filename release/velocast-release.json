@@ -147,7 +147,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -218,7 +218,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -289,7 +289,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -360,7 +360,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -431,7 +431,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -502,7 +502,7 @@
         "gpuRequired": false,
         "captureBackends": [
           "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
