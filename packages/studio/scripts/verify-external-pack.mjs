@@ -45,9 +45,15 @@ try {
     join(consumer, "package.json"),
     JSON.stringify({ name: "studio-pack-consumer", private: true, type: "module" }),
   );
+  // pnpm's installed dependencies do not populate npm's offline cache.
+  const icons = run(
+    npm,
+    ["pack", "--ignore-scripts", "--pack-destination", directory],
+    join(workspace, "packages/studio/node_modules/lucide"),
+  );
   run(
     npm,
-    ["install", "--offline", "--ignore-scripts", join(directory, core), join(directory, studio)],
+    ["install", "--offline", "--ignore-scripts", join(directory, core), join(directory, studio), join(directory, icons)],
     consumer,
   );
   const entry = new URL(

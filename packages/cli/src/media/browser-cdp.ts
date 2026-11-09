@@ -86,9 +86,11 @@ async function waitForEndpoint(
   child: ChildProcess,
   timeoutMs: number,
   getSpawnFailure: () => Error | undefined,
+  observation: { polls: number; portFile: string },
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    observation.polls++;
     const spawnFailure = getSpawnFailure();
     if (spawnFailure) throw spawnFailure;
     if (child.exitCode !== null || child.signalCode !== null)
@@ -101,8 +103,13 @@ async function waitForEndpoint(
       )
         .trim()
         .split(/\r?\n/);
+      observation.portFile = "invalid";
       if (/^\d+$/.test(port ?? "")) return `http://127.0.0.1:${port}`;
-    } catch {
+    } catch (error) {
+      observation.portFile =
+        (error as NodeJS.ErrnoException).code === "ENOENT"
+          ? "missing"
+          : "read_error";
       // Chrome writes this file only after DevTools is ready.
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -273,10 +280,29 @@ export async function launchCdpBrowser(
     url,
   ];
   if (options.headless !== false) arguments_.unshift("--headless=new");
+  const started = performance.now();
+  const observation = {
+    polls: 0,
+    portFile: "unchecked",
+    stderrBytes: 0,
+    devtoolsListening: false,
+    sandboxFailure: false,
+    gpuExit: false,
+  };
   const child = spawn(executable, arguments_, {
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
     windowsHide: true,
     detached: process.platform !== "win32",
+  });
+  // Drain stderr, but publish only allowlisted signals, never URLs or raw text.
+  let stderrTail = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    observation.stderrBytes += chunk.length;
+    const text = stderrTail + chunk.toString("utf8");
+    observation.devtoolsListening ||= text.includes("DevTools listening on");
+    observation.sandboxFailure ||= text.includes("No usable sandbox!");
+    observation.gpuExit ||= text.includes("GPU process exited unexpectedly");
+    stderrTail = text.slice(-64);
   });
   let spawnFailure: Error | undefined;
   child.once("error", (error) => {
@@ -285,13 +311,16 @@ export async function launchCdpBrowser(
     });
   });
   let socket: WebSocket | undefined;
+  let endpointReady = false;
   try {
     const endpoint = await waitForEndpoint(
       profile,
       child,
       options.timeoutMs ?? 15_000,
       () => spawnFailure,
+      observation,
     );
+    endpointReady = true;
     const discovery = new AbortController();
     const discoveryTimeout = setTimeout(
       () =>
@@ -438,6 +467,22 @@ export async function launchCdpBrowser(
       },
     };
   } catch (error) {
+    if (!endpointReady) {
+      try {
+        console.error(
+          "[audit-browser-startup]",
+          JSON.stringify({
+            pid: child.pid,
+            elapsedMs: Math.round(performance.now() - started),
+            exitCode: child.exitCode,
+            signalCode: child.signalCode,
+            ...observation,
+          }),
+        );
+      } catch {
+        // Diagnostic output must not prevent owned browser/profile cleanup.
+      }
+    }
     socket?.close();
     await cleanupBrowserResources(
       [

@@ -316,3 +316,94 @@ it("discovers standard macOS system and user application bundles", () => {
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   );
 });
+
+it
+  .skipIf(process.platform === "win32")
+  .each(["missing", "invalid", "read_error"])(
+  "reports bounded startup observations for a %s port file and still reaps resources",
+  async (portFile) => {
+    const { spawn } =
+      await vi.importActual<typeof import("node:child_process")>(
+        "node:child_process",
+      );
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const root = await mkdtemp(join(tmpdir(), "velocast-startup-diagnostic-"));
+    const executable = join(root, "browser");
+    let owned: ChildProcess | undefined;
+    mocks.spawn.mockImplementation((...args: Parameters<typeof spawn>) => {
+      owned = spawn(...args);
+      return owned;
+    });
+    await writeFile(
+      executable,
+      `#!${process.execPath}
+const fs = require("node:fs");
+const profile = process.argv.find(arg => arg.startsWith("--user-data-dir=")).slice("--user-data-dir=".length);
+if (${JSON.stringify(portFile)} === "invalid") fs.writeFileSync(profile + "/DevToolsActivePort", "secret-invalid-port");
+if (${JSON.stringify(portFile)} === "read_error") fs.mkdirSync(profile + "/DevToolsActivePort");
+process.stderr.write("secret-url-token-script-".repeat(10000) + "DevTools listen");
+setTimeout(() => process.stderr.write("ing on ws://secret/token\\nNo usable sandbox!\\nGPU process exited unexpectedly"), 10);
+setInterval(() => {}, 1000);
+`,
+    );
+    await chmod(executable, 0o700);
+    try {
+      await expect(
+        launchCdpBrowser("about:blank", { executable, timeoutMs: 500 }),
+      ).rejects.toThrow("audit.browser_timeout: DevTools did not become ready");
+      expect(log).toHaveBeenCalledOnce();
+      const [label, json] = log.mock.calls[0]!;
+      expect(label).toBe("[audit-browser-startup]");
+      const report = JSON.parse(json as string);
+      expect(report).toMatchObject({
+        portFile,
+        exitCode: null,
+        signalCode: null,
+        devtoolsListening: true,
+        sandboxFailure: true,
+        gpuExit: true,
+      });
+      expect(report.polls).toBeGreaterThan(0);
+      expect(report.stderrBytes).toBeGreaterThan(100000);
+      expect(report.elapsedMs).toBeGreaterThanOrEqual(500);
+      expect((json as string).length).toBeLessThan(512);
+      expect(json).not.toMatch(/secret|ws:\/\//);
+      expect(owned!.exitCode !== null || owned!.signalCode !== null).toBe(true);
+      const args = mocks.spawn.mock.calls[0]![1] as string[];
+      const profile = args
+        .find((arg) => arg.startsWith("--user-data-dir="))!
+        .slice("--user-data-dir=".length);
+      await expect(access(profile)).rejects.toThrow();
+    } finally {
+      if (owned) await stopBrowser(owned);
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it("preserves spawn failure and profile cleanup even when diagnostic output throws", async () => {
+  const failure = new Error("fixture spawn failure");
+  const child = new ChildProcess();
+  mocks.spawn.mockImplementation(() => {
+    setImmediate(() => {
+      Object.assign(child, { exitCode: -2 });
+      child.emit("error", failure);
+      child.emit("close", -2, null);
+    });
+    return child;
+  });
+  vi.spyOn(console, "error").mockImplementation(() => {
+    throw new Error("log failure");
+  });
+  await expect(
+    launchCdpBrowser("about:blank", {
+      executable: process.execPath,
+      timeoutMs: 200,
+    }),
+  ).rejects.toThrow("audit.browser_spawn_failed: fixture spawn failure");
+  const args = mocks.spawn.mock.calls[0]![1] as string[];
+  const profile = args
+    .find((arg) => arg.startsWith("--user-data-dir="))!
+    .slice("--user-data-dir=".length);
+  await expect(access(profile)).rejects.toThrow();
+});

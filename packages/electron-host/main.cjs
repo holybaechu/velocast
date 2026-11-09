@@ -5,6 +5,7 @@
 // preload lives in a separate window that never loads composition content.
 const { app, BrowserWindow, nativeImage } = require("electron/main");
 const fs = require("node:fs");
+const { performance } = require("node:perf_hooks");
 const {
   MAX_LINE_BYTES,
   MAX_QUEUED_COMMANDS,
@@ -213,25 +214,91 @@ async function setSnapshotViewport(width, height) {
   snapshotViewport = { width, height };
 }
 
-async function captureSnapshotPng(width, height) {
+let snapshotSequence = 0;
+let previousSnapshotMs = null;
+
+async function captureSnapshotPng(width, height, identity = {}) {
   const compositorFailure = gpuCompositorFailure();
   if (compositorFailure) throw compositorFailure;
   // Page.captureScreenshot(fromSurface) asks Chromium to force a redraw before
   // copying the surface. OSR paint/invalidate and capturePage can replay a
   // previous bitmap or present the wrong size after an offscreen resize.
-  const snapshot = await deadline(
-    snapshotDebugger().sendCommand("Page.captureScreenshot", {
-      format: "png",
-      // This PNG is decoded immediately; prioritize lossless capture latency
-      // over compressing an intermediate that is never published or retained.
-      optimizeForSpeed: true,
-      fromSurface: true,
-      captureBeyondViewport: false,
-      clip: { x: 0, y: 0, width, height, scale: 1 },
-    }),
-    SNAPSHOT_TIMEOUT_MS,
-    "Electron compositor snapshot",
+  const sequence = ++snapshotSequence;
+  const started = performance.now();
+  const submittedAtMs = Date.now();
+  const previousMs = previousSnapshotMs;
+  let settlement = "pending";
+  let failed = false;
+  // Failure-only, bounded metadata. Never emit scripts, tokens, URLs or CDP data.
+  const report = (event) => {
+    try {
+      const contents = window && !window.isDestroyed() ? window.webContents : null;
+      process.stderr.write(
+        `[electron-snapshot] ${JSON.stringify({
+          event,
+          pid: process.pid,
+          sequence,
+          width,
+          height,
+          frame: identity.frame,
+          index: identity.index,
+          startFrame: webcodecsEncoder?.settings.startFrame,
+          submittedAtMs,
+          submittedUptimeMs: Math.round(started),
+          elapsedMs: Math.round(performance.now() - started),
+          previousMs,
+          timeoutMs: SNAPSHOT_TIMEOUT_MS,
+          settlement,
+          closed,
+          debuggerAttached: contents?.debugger.isAttached() ?? false,
+          rendererPid: contents?.getOSProcessId() ?? null,
+          gpuCompositing: gpuInfoAvailable
+            ? app.getGPUFeatureStatus().gpu_compositing
+            : null,
+          processes: app.getAppMetrics().slice(0, 16).map(({ pid, type, cpu }) => ({
+            pid,
+            type,
+            cpuPercent: cpu.percentCPUUsage,
+            cumulativeCPUSeconds: cpu.cumulativeCPUUsage,
+          })),
+        })}\n`,
+      );
+    } catch {
+      // Diagnostics must not replace the capture failure or affect teardown.
+    }
+  };
+  const work = snapshotDebugger().sendCommand("Page.captureScreenshot", {
+    format: "png",
+    // This PNG is decoded immediately; prioritize lossless capture latency
+    // over compressing an intermediate that is never published or retained.
+    optimizeForSpeed: true,
+    fromSurface: true,
+    captureBeyondViewport: false,
+    clip: { x: 0, y: 0, width, height, scale: 1 },
+  });
+  void work.then(
+    () => {
+      settlement = "fulfilled";
+      if (failed) report("settled_after_failure");
+    },
+    () => {
+      settlement = "rejected";
+      if (failed) report("settled_after_failure");
+    },
   );
+  let snapshot;
+  try {
+    snapshot = await deadline(
+      work,
+      SNAPSHOT_TIMEOUT_MS,
+      "Electron compositor snapshot",
+    );
+  } catch (error) {
+    failed = true;
+    report("failed");
+    throw error;
+  }
+  previousSnapshotMs = Math.round(performance.now() - started);
   if (closed || typeof snapshot?.data !== "string" || !snapshot.data)
     throw new Error("capture.invalid_snapshot");
   const bytes = Buffer.from(snapshot.data, "base64");
@@ -450,7 +517,10 @@ async function dispatch(command) {
         snapshotViewport?.height !== height
       )
         throw new Error("capture.invalid_snapshot_viewport");
-      const png = await captureSnapshotPng(width, height);
+      const png = await captureSnapshotPng(width, height, {
+        frame: command.frame,
+        index: command.index,
+      });
       return {
         ...(await webcodecsEncoder.encode(
           png,
