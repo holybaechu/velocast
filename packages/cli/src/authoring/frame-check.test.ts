@@ -229,10 +229,15 @@ it.skipIf(!nativeCaptureRequired)(
     expect(report.status).toBe("passed");
     expect(report.source.sourceVersion).toMatch(/^[a-f0-9]{64}$/);
     expect(report.sampledFrames.map((sample) => sample.frame)).toEqual([0, 1]);
+    // Native output transactions use output-relative .velocast/tmp workspaces.
+    // Publication removes the owned transaction, not its shared parent directories.
     expect(await readdir(snapshots)).toEqual([
+      ".velocast",
       "scene-frame-0.png",
       "scene-frame-1.png",
     ]);
+    expect(await readdir(join(snapshots, ".velocast"))).toEqual(["tmp"]);
+    expect(await readdir(join(snapshots, ".velocast", "tmp"))).toEqual([]);
     const images = await Promise.all(
       report.sampledFrames.map(async (sample) => {
         const bytes = await readFile(sample.snapshot!);
