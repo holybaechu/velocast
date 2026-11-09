@@ -6,6 +6,7 @@
 const { app, BrowserWindow } = require("electron/main");
 const { NativeCapture } = require("./native-capture.cjs");
 const fs = require("node:fs");
+const { performance } = require("node:perf_hooks");
 const {
   MAX_LINE_BYTES,
   MAX_QUEUED_COMMANDS,
@@ -221,22 +222,96 @@ async function setSnapshotViewport(width, height) {
   snapshotViewport = { width, height };
 }
 
-async function captureNative(width, height, previousViewport = null) {
-  const failure = gpuCompositorFailure();
-  if (failure) throw failure;
+let snapshotSequence = 0;
+let previousSnapshotMs = null;
+
+async function captureNative(width, height, previousViewport = null, identity = {}) {
+  const compositorFailure = gpuCompositorFailure();
+  if (compositorFailure) throw compositorFailure;
   if (!nativeCapture) throw new Error("capture.shared_texture_unavailable");
+  const sequence = ++snapshotSequence;
+  const started = performance.now();
+  const submittedAtMs = Date.now();
+  const previousMs = previousSnapshotMs;
+  let settlement = "pending";
+  let failed = false;
+  // Failure-only, bounded metadata. Never emit scripts, tokens, URLs or CDP data.
+  const report = (event) => {
+    try {
+      const contents = window && !window.isDestroyed() ? window.webContents : null;
+      process.stderr.write(
+        `[electron-snapshot] ${JSON.stringify({
+          event,
+          pid: process.pid,
+          sequence,
+          width,
+          height,
+          frame: identity.frame,
+          index: identity.index,
+          startFrame: webcodecsEncoder?.settings.startFrame,
+          submittedAtMs,
+          submittedUptimeMs: Math.round(started),
+          elapsedMs: Math.round(performance.now() - started),
+          previousMs,
+          timeoutMs: SNAPSHOT_TIMEOUT_MS,
+          settlement,
+          closed,
+          debuggerAttached: contents?.debugger.isAttached() ?? false,
+          rendererPid: contents?.getOSProcessId() ?? null,
+          gpuCompositing: gpuInfoAvailable
+            ? app.getGPUFeatureStatus().gpu_compositing
+            : null,
+          processes: app.getAppMetrics().slice(0, 16).map(({ pid, type, cpu }) => ({
+            pid,
+            type,
+            cpuPercent: cpu.percentCPUUsage,
+            cumulativeCPUSeconds: cpu.cumulativeCPUUsage,
+          })),
+        })}\n`,
+      );
+    } catch {
+      // Diagnostics must not replace the capture failure or affect teardown.
+    }
+  };
+  const work = nativeCapture.capture(width, height, previousViewport);
+  void work.then(
+    (texture) => {
+      if (failed) {
+        try {
+          texture.release();
+        } catch {
+          report("late_release_failed");
+        }
+      }
+      settlement = "fulfilled";
+      if (failed) report("settled_after_failure");
+    },
+    () => {
+      settlement = "rejected";
+      if (failed) report("settled_after_failure");
+    },
+  );
+  let snapshot;
   try {
-    return await nativeCapture.capture(width, height, previousViewport);
+    snapshot = await deadline(
+      work,
+      SNAPSHOT_TIMEOUT_MS,
+      "Electron native capture",
+    );
   } catch (error) {
-    if (error.message.startsWith("capture.shared_texture_timeout:")) {
+    failed = true;
+    if (error?.message?.startsWith("capture.shared_texture_timeout:")) {
       error.message += `, encoder=${JSON.stringify({
         nativeLeases: webcodecsEncoder?.nativeLeases.size ?? 0,
         submittedFrames: webcodecsEncoder?.frames ?? 0,
         encodedFrames: webcodecsEncoder?.encodedFrames ?? 0,
       })}`;
     }
+    report("failed");
     throw error;
   }
+  previousSnapshotMs = Math.round(performance.now() - started);
+  return snapshot;
 }
 
 function encoderHost() {
@@ -423,7 +498,10 @@ async function dispatch(command) {
         snapshotViewport?.height !== height
       )
         throw new Error("capture.invalid_snapshot_viewport");
-      const texture = await captureNative(width, height);
+      const texture = await captureNative(width, height, null, {
+        frame: command.frame,
+        index: command.index,
+      });
       return {
         ...(await webcodecsEncoder.encode(
           texture,
