@@ -219,15 +219,22 @@ pub(crate) fn prepare(
 mod tests {
     use super::*;
     fn temporary_root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "velocast-audio-pipeline-{}-{}",
-            std::process::id(),
+        temporary_root_at(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+        )
+    }
+    fn temporary_root_at(timestamp: u128) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "velocast-audio-pipeline-{}-{timestamp}-{sequence}",
+            std::process::id(),
         ));
-        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir(&root).unwrap();
         root
     }
     fn cleanup(root: &Path) {
@@ -240,6 +247,37 @@ mod tests {
             .to_string_lossy()
             .starts_with("velocast-audio-pipeline-"));
         std::fs::remove_dir_all(resolved).unwrap();
+    }
+
+    #[test]
+    fn concurrent_temporary_roots_with_same_timestamp_have_independent_lifetimes() {
+        let barrier = std::sync::Barrier::new(8);
+        let roots = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        temporary_root_at(0)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        for (index, root) in roots.iter().enumerate() {
+            std::fs::write(root.join("owner"), index.to_string()).unwrap();
+        }
+        for (index, root) in roots.iter().enumerate() {
+            cleanup(root);
+            for (offset, surviving_root) in roots[index + 1..].iter().enumerate() {
+                assert_eq!(
+                    std::fs::read_to_string(surviving_root.join("owner")).unwrap(),
+                    (index + 1 + offset).to_string()
+                );
+            }
+        }
     }
 
     fn server(
