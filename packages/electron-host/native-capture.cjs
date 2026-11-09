@@ -12,6 +12,10 @@ class NativeCapture {
     this.onPaint = (event) => {
       const texture = event.texture;
       const pending = this.pending;
+      if (this.activity) {
+        this.activity[pending ? "texturePaints" : "readinessPaints"]++;
+        this.activity.lastPaintAt = performance.now();
+      }
       if (!texture) {
         pending?.reject(new Error("capture.shared_texture_unavailable"));
         return;
@@ -45,17 +49,31 @@ class NativeCapture {
         return;
       }
       const rect = info?.visibleRect;
+      const matchesSize = (size) =>
+        size &&
+        info.codedSize?.width === size.width &&
+        info.codedSize?.height === size.height &&
+        rect?.x === 0 &&
+        rect?.y === 0 &&
+        rect?.width === size.width &&
+        rect?.height === size.height;
+      const validResource =
+        Number.isSafeInteger(count) &&
+        info.handle &&
+        ["bgra", "rgba", "rgbaf16"].includes(info.pixelFormat);
+      // Resize is asynchronous: even a fresh capture counter can describe the
+      // prior viewport. Drain only that exact, otherwise-valid surface during
+      // the resize settlement capture, never crop it or admit it for encoding.
       if (
-        !Number.isSafeInteger(count) ||
-        !info.handle ||
-        info.codedSize?.width !== width ||
-        info.codedSize?.height !== height ||
-        rect?.x !== 0 ||
-        rect?.y !== 0 ||
-        rect?.width !== width ||
-        rect?.height !== height ||
-        !["bgra", "rgba", "rgbaf16"].includes(info.pixelFormat)
+        validResource &&
+        !matchesSize(pending) &&
+        matchesSize(pending.previousViewport)
       ) {
+        this.activity.staleResizePaints++;
+        release();
+        return;
+      }
+      if (!validResource || !matchesSize(pending)) {
         release();
         // Report geometry, never native handle contents, so platform failures
         // remain actionable without exposing cross-process GPU capabilities.
@@ -81,7 +99,7 @@ class NativeCapture {
     this.lastFrame = -1;
   }
 
-  async capture(width, height) {
+  async capture(width, height, previousViewport = null) {
     if (this.closed) throw new Error("capture.closed");
     if (this.failure) throw this.failure;
     if (this.busy) throw new Error("capture.busy");
@@ -96,12 +114,26 @@ class NativeCapture {
       throw new Error("capture.invalid_native_geometry");
     let timer;
     this.busy = true;
+    const activity = this.activity = {
+      startFrame: this.lastFrame,
+      readinessPaints: 0,
+      texturePaints: 0,
+      staleResizePaints: 0,
+      lastPaintAt: null,
+    };
     const result = new Promise((resolve, reject) => {
       timer = setTimeout(
         () =>
           reject(
             new Error(
-              `capture.shared_texture_timeout: ${this.pending ? "texture" : "readiness"}, lastFrame=${this.lastFrame}`,
+              `capture.shared_texture_timeout: ${this.pending ? "texture" : "readiness"}, lastFrame=${this.lastFrame}, ${JSON.stringify({
+                startFrame: activity.startFrame,
+                readinessPaints: activity.readinessPaints,
+                texturePaints: activity.texturePaints,
+                staleResizePaints: activity.staleResizePaints,
+                sinceLastPaintMs: activity.lastPaintAt === null
+                  ? null : Math.round(performance.now() - activity.lastPaintAt),
+              })}`,
             ),
           ),
         this.timeout,
@@ -127,6 +159,7 @@ class NativeCapture {
           this.pending = {
             width,
             height,
+            previousViewport,
             after: this.lastFrame,
             resolve,
             reject,
@@ -142,6 +175,7 @@ class NativeCapture {
       this.busy = false;
       this.cancel = null;
       this.pending = null;
+      this.activity = null;
     }
   }
 

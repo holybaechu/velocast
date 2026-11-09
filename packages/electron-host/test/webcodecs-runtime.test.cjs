@@ -77,6 +77,9 @@ test(
       width: 4096,
       height: 2160,
     });
+    // Match the discovery-to-4K source transition before testing encoded pixels.
+    await request({ method: "resize", width: 1200, height: 630 });
+    await request({ method: "resize", width: 3840, height: 2160 });
     await request({ method: "resize", width: 160, height: 100 });
     await request({
       method: "execute",

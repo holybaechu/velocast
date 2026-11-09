@@ -221,11 +221,22 @@ async function setSnapshotViewport(width, height) {
   snapshotViewport = { width, height };
 }
 
-async function captureNative(width, height) {
+async function captureNative(width, height, previousViewport = null) {
   const failure = gpuCompositorFailure();
   if (failure) throw failure;
   if (!nativeCapture) throw new Error("capture.shared_texture_unavailable");
-  return nativeCapture.capture(width, height);
+  try {
+    return await nativeCapture.capture(width, height, previousViewport);
+  } catch (error) {
+    if (error.message.startsWith("capture.shared_texture_timeout:")) {
+      error.message += `, encoder=${JSON.stringify({
+        nativeLeases: webcodecsEncoder?.nativeLeases.size ?? 0,
+        submittedFrames: webcodecsEncoder?.frames ?? 0,
+        encodedFrames: webcodecsEncoder?.encodedFrames ?? 0,
+      })}`;
+    }
+    throw error;
+  }
 }
 
 function encoderHost() {
@@ -447,11 +458,12 @@ async function dispatch(command) {
       const compositorFailure = gpuCompositorFailure();
       if (compositorFailure) throw compositorFailure;
       browser();
+      const previousViewport = snapshotViewport;
       window.setContentSize(width, height);
       // Keep the logical viewport pinned to the requested composition geometry.
       await setSnapshotViewport(width, height);
       // Settle the new native surface before authoring initializes canvas layers.
-      const texture = await captureNative(width, height);
+      const texture = await captureNative(width, height, previousViewport);
       texture.release();
       return {};
     }

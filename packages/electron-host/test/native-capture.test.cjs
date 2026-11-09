@@ -135,6 +135,137 @@ test("missing native texture, malformed geometry and handles fail without CPU fa
   }
 });
 
+test("resize settlement releases only known prior-size surfaces and preserves the fresh-counter fence", async () => {
+  const f = fixture();
+  const previousViewport = { width: 1200, height: 630 };
+  const prior = (count, change = {}) => texture(count, {
+    codedSize: previousViewport,
+    visibleRect: { x: 0, y: 0, ...previousViewport },
+    ...change,
+  });
+  const current = (count) => texture(count, {
+    codedSize: { width: 3840, height: 2160 },
+    visibleRect: { x: 0, y: 0, width: 3840, height: 2160 },
+  });
+  const result = f.capture.capture(3840, 2160, previousViewport);
+  const beforeFence = prior(1);
+  f.contents.emit("paint", { texture: beforeFence });
+  f.fence();
+  await turn();
+  const stale = prior(3);
+  const duplicate = current(3);
+  const regressed = current(2);
+  const popup = prior(4, { widgetType: "popup" });
+  const fresh = current(7); // Electron explicitly allows gaps.
+  for (const value of [stale, duplicate, regressed, popup, fresh])
+    f.contents.emit("paint", { texture: value });
+  assert.equal(await result, fresh);
+  for (const value of [beforeFence, stale, duplicate, regressed, popup])
+    assert.equal(value.releases, 1);
+  assert.equal(fresh.releases, 0);
+  fresh.release();
+
+  // The prior-size exception ends with settlement, not with navigation or resize.
+  const next = assert.rejects(f.capture.capture(3840, 2160), /invalid_native_geometry/);
+  f.fence();
+  await turn();
+  const latePrior = prior(8);
+  f.contents.emit("paint", { texture: latePrior });
+  await next;
+  assert.equal(latePrior.releases, 1);
+  f.capture.dispose();
+});
+
+test("resize settlement rejects unknown geometry and malformed prior-size resources", async () => {
+  const previousViewport = { width: 1200, height: 630 };
+  for (const change of [
+    { codedSize: { width: 800, height: 600 }, visibleRect: { x: 0, y: 0, width: 800, height: 600 } },
+    { visibleRect: { x: 1, y: 0, ...previousViewport } },
+    { visibleRect: { x: 0, y: 0, width: 600, height: 315 } },
+    { handle: null },
+    { pixelFormat: "invalid" },
+    { metadata: {} },
+  ]) {
+    const f = fixture();
+    const result = assert.rejects(
+      f.capture.capture(3840, 2160, previousViewport), /invalid_native_geometry/,
+    );
+    f.fence();
+    await turn();
+    const value = texture(3, {
+      codedSize: previousViewport,
+      visibleRect: { x: 0, y: 0, ...previousViewport },
+      ...change,
+    });
+    f.contents.emit("paint", { texture: value });
+    await result;
+    assert.equal(value.releases, 1);
+    f.capture.dispose();
+  }
+});
+
+test("known stale resize deliveries remain bounded by the original timeout and late paints are released", async () => {
+  const f = fixture();
+  const previousViewport = { width: 160, height: 100 };
+  const result = assert.rejects(f.capture.capture(3840, 2160, previousViewport), (error) => {
+    assert.match(error.message, /shared_texture_timeout: texture, lastFrame=3/);
+    const details = JSON.parse(error.message.slice(error.message.indexOf("{")));
+    assert.equal(details.startFrame, -1);
+    assert.equal(details.readinessPaints, 0);
+    assert.equal(details.texturePaints, 2);
+    assert.equal(details.staleResizePaints, 2);
+    assert.ok(details.sinceLastPaintMs >= 0);
+    assert.equal(error.message.includes("ntHandle"), false);
+    return true;
+  });
+  f.fence();
+  await turn();
+  for (const count of [1, 3]) {
+    const stale = texture(count);
+    f.contents.emit("paint", { texture: stale });
+    assert.equal(stale.releases, 1);
+  }
+  await result;
+  const late = texture(4);
+  f.contents.emit("paint", { texture: late });
+  assert.equal(late.releases, 1);
+  // Timeout must also discard the exception for the next capture.
+  const next = assert.rejects(f.capture.capture(3840, 2160), /invalid_native_geometry/);
+  f.fence();
+  await turn();
+  const value = texture(5);
+  f.contents.emit("paint", { texture: value });
+  await next;
+  assert.equal(value.releases, 1);
+  f.capture.dispose();
+});
+
+test("readiness timeout distinguishes ongoing paint delivery from a stalled source", async () => {
+  for (const paints of [0, 2]) {
+    const f = fixture();
+    const result = assert.rejects(f.capture.capture(160, 100), (error) => {
+      assert.match(error.message, /shared_texture_timeout: readiness/);
+      const details = JSON.parse(error.message.slice(error.message.indexOf("{")));
+      assert.equal(details.startFrame, -1);
+      assert.equal(details.readinessPaints, paints);
+      assert.equal(details.texturePaints, 0);
+      assert.equal(details.staleResizePaints, 0);
+      assert.equal(details.sinceLastPaintMs === null, paints === 0);
+      return true;
+    });
+    for (let i = 0; i < paints; i++) {
+      const value = texture(i + 1);
+      f.contents.emit("paint", { texture: value });
+      assert.equal(value.releases, 1);
+    }
+    await result;
+    f.fence();
+    await turn();
+    assert.equal(f.contents.started, 1);
+    f.capture.dispose();
+  }
+});
+
 test("cancellation and timeout include the readiness fence and never restart a cancelled capture", async () => {
   for (const cancel of [true, false]) {
     const f = fixture();
