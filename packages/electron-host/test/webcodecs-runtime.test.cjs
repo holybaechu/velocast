@@ -10,8 +10,9 @@ const { createHash } = require("node:crypto");
 const { hostResponses } = require("./host-responses.cjs");
 
 const mode = "webcodecs";
+for (const [width, height] of [[160, 100], [3840, 2160]]) {
 test(
-  "snapshot transactions encode changing and repeated frames through Mediabunny WebCodecs",
+  `snapshot transactions encode changing and repeated frames through Mediabunny WebCodecs (${width}x${height})`,
   {
     skip: !process.env.VELOCAST_WEBCODECS_TEST_BINARY,
     timeout: 60_000,
@@ -35,9 +36,28 @@ test(
     };
     delete env.ELECTRON_RUN_AS_NODE;
     const hostScript = path.resolve(__dirname, "../main.cjs");
+    const wrapper = path.join(directory, "host.cjs");
+    // Inspect the actual first/repeated frame PNG, not an extra warm-up capture
+    // or lossy H.264 decode. Never redraw the draw-once canvas in this check.
+    fs.writeFileSync(wrapper, `"use strict";
+const assert = require("node:assert/strict");
+const { nativeImage } = require("electron/main");
+const { WebCodecsHost } = require(${JSON.stringify(path.resolve(__dirname, "../webcodecs-host.cjs"))});
+const encode = WebCodecsHost.prototype.encode;
+WebCodecsHost.prototype.encode = async function(png, index, ...identity) {
+  if (index < 2) {
+    const image = nativeImage.createFromBuffer(png);
+    assert.deepEqual(image.getSize(1), { width: ${width}, height: ${height} });
+    const expected = Buffer.alloc(${width} * ${height} * 4, Buffer.from([192, 64, 32, 255]));
+    assert.ok(image.toBitmap().equals(expected), "draw-once Canvas2D pixels differ at frame " + index);
+  }
+  return encode.call(this, png, index, ...identity);
+};
+require(${JSON.stringify(hostScript)});
+`);
     const child = spawn(
       process.env.VELOCAST_WEBCODECS_TEST_BINARY,
-      [hostScript],
+      [wrapper],
       { env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
     );
     const responses = hostResponses(child);
@@ -77,7 +97,7 @@ test(
       width: 4096,
       height: 2160,
     });
-    await request({ method: "resize", width: 160, height: 100 });
+    await request({ method: "resize", width, height });
     await request({
       method: "execute",
       script: `window.__velocastRenderer = ${fs.readFileSync(
@@ -90,7 +110,7 @@ test(
     await request({
       method: "execute",
       script:
-        "const canvas=document.createElement('canvas');canvas.id='once';canvas.width=160;canvas.height=100;document.body.append(canvas);const ctx=canvas.getContext('2d');ctx.fillStyle='rgb(32,64,192)';ctx.fillRect(0,0,160,100)",
+        `const canvas=document.createElement('canvas');canvas.id='once';canvas.width=${width};canvas.height=${height};document.body.append(canvas);const ctx=canvas.getContext('2d');ctx.fillStyle='rgb(32,64,192)';ctx.fillRect(0,0,${width},${height})`,
     });
     const audioRate = 44100;
     const audioSamples = audioRate / 5;
@@ -99,8 +119,8 @@ test(
       settings: {
         mediaBackend: "webcodecs",
         startFrame: 0,
-        width: 160,
-        height: 100,
+        width,
+        height,
         fps: 30,
         bitrate: 2_000_000,
         outputPath: path.join(directory, "video.mp4"),
@@ -149,7 +169,7 @@ test(
       assert.equal(frame.timestamp, Math.round((index * 1_000_000) / 30));
       assert.equal(frame.frames, index + 1);
       assert.equal(frame.handle, undefined);
-      assert.equal(frame.width, 160);
+      assert.equal(frame.width, width);
       assert.equal(frame.cpuReadback, true);
     }
     const finished = await request({ method: "webcodecs-finish" });
@@ -189,8 +209,8 @@ test(
         },
       });
       const pixels = fs.readFileSync(outputPath);
-      assert.equal(pixels.length, 160 * 100 * 4);
-      const offset = (50 * 160 + 80) * 4;
+      assert.equal(pixels.length, width * height * 4);
+      const offset = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4;
       for (let channel = 0; channel < 3; channel++) {
         assert.ok(
           // The hardware H.264 path quantizes saturated primaries (blue 243
@@ -218,3 +238,4 @@ test(
     await request({ method: "close" });
   },
 );
+}

@@ -304,21 +304,10 @@ async function stopServeProcess(child: ChildProcess): Promise<void> {
           failure = error;
         });
         killer.once("close", (code) => {
-          if (
-            child.exitCode !== null ||
-            child.signalCode !== null ||
-            (code === 0 && !failure)
-          ) {
+          // Root exit alone cannot prove that taskkill stopped its descendants.
+          if (code === 0 && !failure) {
             resolve();
             return;
-          }
-          try {
-            process.kill(pid, 0);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ESRCH") {
-              resolve();
-              return;
-            }
           }
           reject(
             new Error(
