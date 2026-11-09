@@ -1,4 +1,3 @@
-export type AdapterKind = "built-in" | "custom";
 export type ProtocolPolicy = "required" | "bypassed";
 export type SettlementStatus = "fulfilled" | "rejected";
 
@@ -12,19 +11,15 @@ export type ProcessDisposition =
     }>;
 
 export type AdapterSettlement = Readonly<{
-  adapter: AdapterKind;
   protocol: ProtocolPolicy;
   status: SettlementStatus;
   result?: unknown;
   error?: unknown;
   process: ProcessDisposition;
-  protocolCompletionExpected: boolean;
-  terminationPolicy: "forbidden";
 }>;
 
 export function createAdapterSettlement(
   input: Readonly<{
-    adapter: AdapterKind;
     protocol: ProtocolPolicy;
     status: SettlementStatus;
     result?: unknown;
@@ -36,14 +31,11 @@ export function createAdapterSettlement(
     ...(input.process ?? { status: "unknown" }),
   });
   return Object.freeze({
-    adapter: input.adapter,
     protocol: input.protocol,
     status: input.status,
     ...(input.status === "fulfilled" ? { result: input.result } : {}),
     ...(input.status === "rejected" ? { error: input.error } : {}),
     process,
-    protocolCompletionExpected: input.protocol === "required",
-    terminationPolicy: "forbidden",
   });
 }
 

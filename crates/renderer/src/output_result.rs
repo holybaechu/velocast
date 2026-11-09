@@ -115,24 +115,32 @@ pub(crate) async fn write_optional(
     }
     let temporary = path.with_extension(format!("result-{}.tmp", std::process::id()));
     let bytes = serde_json::to_vec_pretty(&result_value(job, context, error))?;
+    publish_bytes(path, &temporary, &bytes).await
+}
+
+pub(crate) async fn publish_bytes(
+    path: &Path,
+    temporary: &Path,
+    bytes: &[u8],
+) -> anyhow::Result<()> {
     let mut file = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&temporary)
+        .open(temporary)
         .await?;
     let written = async {
-        file.write_all(&bytes).await?;
+        file.write_all(bytes).await?;
         file.flush().await?;
         Ok::<(), std::io::Error>(())
     }
     .await;
     drop(file);
     let result = match written {
-        Ok(()) => tokio::fs::rename(&temporary, path).await,
+        Ok(()) => tokio::fs::rename(temporary, path).await,
         Err(error) => Err(error),
     };
     if result.is_err() {
-        let _ = tokio::fs::remove_file(&temporary).await;
+        let _ = tokio::fs::remove_file(temporary).await;
     }
     result.map_err(Into::into)
 }

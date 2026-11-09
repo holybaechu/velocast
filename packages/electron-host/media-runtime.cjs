@@ -210,11 +210,9 @@ async function mixAudio(op) {
         clip.sourceStartSample + clip.durationSamples,
       );
     }
+    let sourceIndex = 0;
     for (const [source, state] of sources) {
-      const file = path.join(
-        directory,
-        `${[...sources.keys()].indexOf(source)}.f32`,
-      );
+      const file = path.join(directory, `${sourceIndex++}.f32`);
       await decodeAudio({
         path: op.sources?.[source] ?? source,
         outputPath: file,
@@ -430,9 +428,7 @@ async function frame(op) {
         .getContext("2d")
         .getImageData(0, 0, canvas.width, canvas.height).data;
     else {
-      const blob = canvas.convertToBlob
-        ? await canvas.convertToBlob({ type: "image/png" })
-        : await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      const blob = await canvas.convertToBlob({ type: "image/png" });
       bytes = new Uint8Array(await blob.arrayBuffer());
     }
     fs.writeFileSync(absolute(op.outputPath), bytes, {

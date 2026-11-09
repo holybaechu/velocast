@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::io::AsyncWriteExt;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderModeLabel {
@@ -190,26 +189,7 @@ pub async fn write_report(path: &Path, report: &RenderTelemetry) -> anyhow::Resu
     temporary_name.push(format!(".report-{}.tmp", std::process::id()));
     let temporary = std::path::PathBuf::from(temporary_name);
     let bytes = serde_json::to_vec_pretty(report)?;
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .await?;
-    let written = async {
-        file.write_all(&bytes).await?;
-        file.flush().await?;
-        Ok::<(), std::io::Error>(())
-    }
-    .await;
-    drop(file);
-    let result = match written {
-        Ok(()) => tokio::fs::rename(&temporary, path).await,
-        Err(error) => Err(error),
-    };
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(&temporary).await;
-    }
-    result.map_err(Into::into)
+    crate::output_result::publish_bytes(path, &temporary, &bytes).await
 }
 #[cfg(test)]
 mod tests {
@@ -261,6 +241,26 @@ mod tests {
             b"previous contents"
         );
         assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn staging_collision_preserves_the_other_owner_and_destination() {
+        let directory = report_directory();
+        let report_path = directory.join("report.json");
+        let staging = directory.join(format!("report.json.report-{}.tmp", std::process::id()));
+        std::fs::write(&report_path, b"previous report").unwrap();
+        std::fs::write(&staging, b"another publisher").unwrap();
+
+        assert!(write_report(
+            &report_path,
+            &RenderTelemetry::new(RenderModeLabel::ReferenceWebCodecs),
+        )
+        .await
+        .is_err());
+
+        assert_eq!(std::fs::read(&report_path).unwrap(), b"previous report");
+        assert_eq!(std::fs::read(&staging).unwrap(), b"another publisher");
         std::fs::remove_dir_all(directory).unwrap();
     }
 

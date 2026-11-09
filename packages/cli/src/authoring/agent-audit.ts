@@ -1,3 +1,4 @@
+import { isObjectRecord as isRecord } from "../internal/validation.js";
 import { withMediaRuntimeContext } from "../media/media-runtime.js";
 import { createHash } from "node:crypto";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
@@ -183,10 +184,6 @@ function parseFrames(
       `audit.invalid_frames: use integer frames in [0, ${duration})`,
     );
   return [...new Set(requested)];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function validateAuditAssertions(value: unknown): AuditAssertions {

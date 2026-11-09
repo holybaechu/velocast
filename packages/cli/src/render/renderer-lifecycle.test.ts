@@ -3,7 +3,6 @@ import {
   createAdapterSettlement,
   createRendererLifecycleState,
   reduceRendererLifecycle,
-  type AdapterKind,
   type LifecycleEffect,
   type LifecycleEvent,
   type ProtocolPolicy,
@@ -15,9 +14,8 @@ const adapterError = new Error("adapter rejected");
 const protocolError = new Error("protocol rejected");
 
 describe("createAdapterSettlement", () => {
-  it("freezes protocol and termination policy into the settlement", () => {
+  it("freezes the settlement and process disposition", () => {
     const settlement = createAdapterSettlement({
-      adapter: "custom",
       protocol: "bypassed",
       status: "rejected",
       error: adapterError,
@@ -25,13 +23,10 @@ describe("createAdapterSettlement", () => {
     });
 
     expect(settlement).toEqual({
-      adapter: "custom",
       protocol: "bypassed",
       status: "rejected",
       error: adapterError,
       process: { status: "running" },
-      protocolCompletionExpected: false,
-      terminationPolicy: "forbidden",
     });
     expect(Object.isFrozen(settlement)).toBe(true);
     expect(Object.isFrozen(settlement.process)).toBe(true);
@@ -39,47 +34,40 @@ describe("createAdapterSettlement", () => {
 });
 
 describe("reduceRendererLifecycle", () => {
-  const adapters: AdapterKind[] = ["built-in", "custom"];
   const protocols: ProtocolPolicy[] = ["required", "bypassed"];
   const statuses: SettlementStatus[] = ["fulfilled", "rejected"];
 
-  for (const adapter of adapters) {
-    for (const protocol of protocols) {
-      for (const status of statuses) {
-        it(`${adapter} ${status} with protocol ${protocol}`, () => {
-          const settlement = createAdapterSettlement({
-            adapter,
-            protocol,
-            status,
-            result: "adapter result",
-            error: adapterError,
-            process: { status: "running" },
-          });
-          const first = reduceRendererLifecycle(
-            createRendererLifecycleState(),
-            {
-              type: "adapter-settled",
-              settlement,
-            },
-          );
-
-          if (protocol === "bypassed") {
-            expect(effectTypes(first.effects)).toEqual([
-              "stop-protocol-drain",
-              "cleanup",
-            ]);
-            expect(first.state.primaryOutcome?.status).toBe(status);
-          } else {
-            expect(effectTypes(first.effects)).toEqual(["drain-protocol"]);
-            const afterProtocol = reduceRendererLifecycle(first.state, {
-              type: "protocol-result",
-              result: { status: "fulfilled", result: "protocol result" },
-            });
-            expect(effectTypes(afterProtocol.effects)).toEqual(["cleanup"]);
-            expect(afterProtocol.state.primaryOutcome?.status).toBe(status);
-          }
+  for (const protocol of protocols) {
+    for (const status of statuses) {
+      it(`${status} with protocol ${protocol}`, () => {
+        const settlement = createAdapterSettlement({
+          protocol,
+          status,
+          result: "adapter result",
+          error: adapterError,
+          process: { status: "running" },
         });
-      }
+        const first = reduceRendererLifecycle(createRendererLifecycleState(), {
+          type: "adapter-settled",
+          settlement,
+        });
+
+        if (protocol === "bypassed") {
+          expect(effectTypes(first.effects)).toEqual([
+            "stop-protocol-drain",
+            "cleanup",
+          ]);
+          expect(first.state.primaryOutcome?.status).toBe(status);
+        } else {
+          expect(effectTypes(first.effects)).toEqual(["drain-protocol"]);
+          const afterProtocol = reduceRendererLifecycle(first.state, {
+            type: "protocol-result",
+            result: { status: "fulfilled", result: "protocol result" },
+          });
+          expect(effectTypes(afterProtocol.effects)).toEqual(["cleanup"]);
+          expect(afterProtocol.state.primaryOutcome?.status).toBe(status);
+        }
+      });
     }
   }
 
@@ -440,7 +428,6 @@ describe("reduceRendererLifecycle", () => {
 
 function fulfilledSettlement(protocol: ProtocolPolicy) {
   return createAdapterSettlement({
-    adapter: "custom",
     protocol,
     status: "fulfilled",
     result: "adapter result",
@@ -450,7 +437,6 @@ function fulfilledSettlement(protocol: ProtocolPolicy) {
 
 function rejectedSettlement(protocol: ProtocolPolicy) {
   return createAdapterSettlement({
-    adapter: "custom",
     protocol,
     status: "rejected",
     error: adapterError,

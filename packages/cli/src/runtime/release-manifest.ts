@@ -1,3 +1,7 @@
+import {
+  isObjectRecord as isRecord,
+  isNonEmptyString,
+} from "../internal/validation.js";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -416,14 +420,6 @@ function validateArchive(label: string, value: unknown): void {
   ) {
     throw new Error(`release.manifest_invalid: ${label} sha256 is invalid`);
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
 }
 
 function isIdentityString(value: unknown): value is string {
