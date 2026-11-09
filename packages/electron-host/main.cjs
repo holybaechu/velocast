@@ -217,7 +217,11 @@ async function setSnapshotViewport(width, height) {
 let snapshotSequence = 0;
 let previousSnapshotMs = null;
 
-async function captureSnapshotPng(width, height, identity = {}) {
+async function captureSnapshotPng(
+  width,
+  height,
+  { frame, index, phase = "frame", timeoutMs = SNAPSHOT_TIMEOUT_MS } = {},
+) {
   const compositorFailure = gpuCompositorFailure();
   if (compositorFailure) throw compositorFailure;
   // Page.captureScreenshot(fromSurface) asks Chromium to force a redraw before
@@ -240,14 +244,15 @@ async function captureSnapshotPng(width, height, identity = {}) {
           sequence,
           width,
           height,
-          frame: identity.frame,
-          index: identity.index,
+          phase,
+          frame,
+          index,
           startFrame: webcodecsEncoder?.settings.startFrame,
           submittedAtMs,
           submittedUptimeMs: Math.round(started),
           elapsedMs: Math.round(performance.now() - started),
           previousMs,
-          timeoutMs: SNAPSHOT_TIMEOUT_MS,
+          timeoutMs,
           settlement,
           closed,
           debuggerAttached: contents?.debugger.isAttached() ?? false,
@@ -290,7 +295,7 @@ async function captureSnapshotPng(width, height, identity = {}) {
   try {
     snapshot = await deadline(
       work,
-      SNAPSHOT_TIMEOUT_MS,
+      timeoutMs,
       "Electron compositor snapshot",
     );
   } catch (error) {
@@ -312,9 +317,9 @@ async function captureSnapshotPng(width, height, identity = {}) {
   return bytes;
 }
 
-async function captureSnapshot(width, height) {
+async function captureSnapshot(width, height, options) {
   const image = nativeImage.createFromBuffer(
-    await captureSnapshotPng(width, height),
+    await captureSnapshotPng(width, height, options),
   );
   if (image.isEmpty()) throw new Error("capture.invalid_snapshot");
   return image;
@@ -547,6 +552,7 @@ async function dispatch(command) {
     case "execute":
       return commandExecute(command);
     case "resize": {
+      const expiresAt = performance.now() + SCRIPT_TIMEOUT_MS;
       if (softwareFrames?.occupied)
         throw new Error("Release the software frame before resizing");
       const width = positiveSize(command.width, "browser width");
@@ -559,7 +565,28 @@ async function dispatch(command) {
       // Keep the logical viewport pinned while each snapshot forces its own redraw.
       await setSnapshotViewport(width, height);
       // Finish the surface resize before authoring can initialize canvas layers.
-      await captureSnapshot(width, height);
+      // Resize uses the setup-command budget (4.5s inside Rust's 6s request),
+      // not the per-frame capture budget. Viewport work consumes the same budget.
+      const timeoutMs = expiresAt - performance.now();
+      if (timeoutMs <= 0) throw new Error("Electron surface resize timed out");
+      const started = performance.now();
+      await captureSnapshot(width, height, {
+        phase: "resize",
+        timeoutMs,
+      });
+      try {
+        process.stderr.write(`[electron-snapshot] ${JSON.stringify({
+          event: "initialization_snapshot_completed",
+          phase: "resize",
+          width,
+          height,
+          elapsedMs: Math.round(performance.now() - started),
+          timeoutMs,
+          settlement: "fulfilled",
+        })}\n`);
+      } catch {
+        // Diagnostics must not turn an accepted resize into a failure.
+      }
       return {};
     }
     case "paint": {

@@ -75,7 +75,7 @@ it.each(["running", "permission-denied", "launch-error"])(
         ...(status === "launch-error" ? { cause: launchError } : {}),
       });
       expect(pendingBeforeClose).toBe(true);
-      expect(process.kill).toHaveBeenCalledWith(456789, 0);
+      expect(process.kill).not.toHaveBeenCalled();
       expect(run.child.kill).not.toHaveBeenCalled();
     } finally {
       await run.finish();
@@ -83,33 +83,80 @@ it.each(["running", "permission-denied", "launch-error"])(
   },
 );
 
-it.each(["missing-pid", "observed-exit"])(
-  "accepts a failed helper after %s and joins the owned exit",
+// A missing/exited root does not prove its descendants stopped (native controlled red).
+it.each(["missing-pid", "observed-exit", "launch-error-after-exit"])(
+  "rejects a failed tree helper despite %s",
   async (status) => {
     const run = startServe();
     try {
       await flushMicrotasks();
-      if (status === "observed-exit") run.exit();
-      else
+      const launchError = new Error("taskkill unavailable");
+      if (status === "missing-pid")
         vi.mocked(process.kill).mockImplementation(() => {
           throw Object.assign(new Error("gone"), { code: "ESRCH" });
         });
+      else run.exit();
+      if (status === "launch-error-after-exit")
+        run.killer.emit("error", launchError);
       run.killer.emit("exit", 255, null);
-      run.killer.emit("close", 255, null);
       await flushMicrotasks();
-      if (status === "missing-pid") {
-        expect(run.settled()).toBe(false);
-        expect(process.kill).toHaveBeenCalledWith(456789, 0);
-        run.exit();
-      } else expect(process.kill).not.toHaveBeenCalled();
-      await run.result;
+      expect(run.settled()).toBe(false);
+      run.killer.emit("close", 255, null);
+      await expect(run.result).rejects.toMatchObject({
+        message: expect.stringMatching(
+          /cleanup failed: taskkill.*owned PID 456789/,
+        ),
+        ...(status === "launch-error-after-exit" ? { cause: launchError } : {}),
+      });
+      expect(process.kill).not.toHaveBeenCalled();
+      expect(run.child.listenerCount("exit")).toBe(
+        status === "missing-pid" ? 1 : 0,
+      );
     } finally {
       await run.finish();
     }
   },
 );
 
-function startServe(killed = false) {
+it("preserves a natural exit before shutdown without starting a tree helper", async () => {
+  const run = startServe(false, async () => run.exit());
+  try {
+    await run.result;
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    expect(process.kill).not.toHaveBeenCalled();
+  } finally {
+    await run.finish();
+  }
+});
+
+it("preserves the render error and failed tree cleanup after the root exits", async () => {
+  const primary = new Error("render failed");
+  const run = startServe(false, async () => {
+    throw primary;
+  });
+  try {
+    await flushMicrotasks();
+    run.exit();
+    run.killer.emit("close", 1, null);
+    await expect(run.result).rejects.toMatchObject({
+      cause: primary,
+      errors: [
+        primary,
+        expect.objectContaining({
+          message: expect.stringContaining("cleanup failed: taskkill"),
+        }),
+      ],
+    });
+    expect(mocks.spawn).toHaveBeenCalledTimes(2);
+  } finally {
+    await run.finish();
+  }
+});
+
+function startServe(
+  killed = false,
+  render: () => Promise<void> = async () => {},
+) {
   const child = Object.assign(new EventEmitter(), {
     pid: 456789,
     exitCode: null as number | null,
@@ -122,7 +169,7 @@ function startServe(killed = false) {
   let requests = 0;
   const result = withServeCommand(
     { command: "owned-server", url: "http://127.0.0.1:4545" },
-    async () => {},
+    render,
     { isUrlReady: async () => ++requests > 1 },
   );
   let settled = false;
