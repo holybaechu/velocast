@@ -6,7 +6,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const protocol = require("../protocol.cjs");
 
-function fixture({ manualClock = false, diagnosticFailure = false } = {}) {
+function fixture({ manualClock = false, diagnosticFailure = false, viewportMs = 0, decodeFailure = false } = {}) {
   const events = [];
   const diagnostics = [];
   const timers = new Map();
@@ -29,7 +29,12 @@ function fixture({ manualClock = false, diagnosticFailure = false } = {}) {
   };
   const contents = {
     getOSProcessId: () => 567,
-    executeJavaScript() {
+    executeJavaScript(script) {
+      if (script === "({width: innerWidth, height: innerHeight})") {
+        now += viewportMs;
+        events.push("viewport");
+        return Promise.resolve({ width: 160, height: 100 });
+      }
       events.push("seek");
       return new Promise((resolve, reject) => {
         finishSeek = (error) => {
@@ -43,8 +48,13 @@ function fixture({ manualClock = false, diagnosticFailure = false } = {}) {
     },
     debugger: {
       isAttached: () => true,
-      sendCommand(method) {
+      sendCommand(method, parameters) {
+        if (method === "Emulation.setDeviceMetricsOverride") {
+          events.push("override");
+          return Promise.resolve();
+        }
         assert.equal(method, "Page.captureScreenshot");
+        assert.deepEqual({ ...parameters.clip }, { x: 0, y: 0, width: 160, height: 100, scale: 1 });
         events.push("snapshot");
         return new Promise((resolve, reject) => {
           finishSnapshot = (...errors) =>
@@ -55,6 +65,11 @@ function fixture({ manualClock = false, diagnosticFailure = false } = {}) {
   };
   const dependencies = {
     "electron/main": {
+      nativeImage: { createFromBuffer(bytes) {
+        assert.ok(bytes.equals(png), "decoder receives the PNG with valid header and geometry");
+        if (decodeFailure) events.push("decode-invalid");
+        return { isEmpty: () => decodeFailure };
+      } },
       app: {
         on() {},
         commandLine: { appendSwitch() {} },
@@ -81,20 +96,30 @@ function fixture({ manualClock = false, diagnosticFailure = false } = {}) {
       Buffer,
       setTimeout: manualClock ? (callback, milliseconds) => {
         const timer = {};
-        timers.set(timer, { callback, milliseconds });
+        timers.set(timer, { callback, milliseconds, due: now + milliseconds });
         return timer;
       } : setTimeout,
       clearTimeout: manualClock ? (timer) => timers.delete(timer) : clearTimeout,
     },
   )((name) => dependencies[name] ?? require(name), module);
   host = module.exports;
-  host.setup({ webContents: contents, isDestroyed: () => false, destroy() { events.push("destroy"); } }, encoder);
+  host.setup({ webContents: contents, setContentSize(width, height) {
+    assert.equal(width, 160);
+    assert.equal(height, 100);
+    events.push("resize");
+  }, isDestroyed: () => false, destroy() { events.push("destroy"); } }, encoder);
   return {
     host,
     encoder,
     events,
     diagnostics,
     timers,
+    advance(milliseconds) {
+      now += milliseconds;
+      for (const [timer, entry] of [...timers]) {
+        if (entry.due <= now && timers.delete(timer)) entry.callback();
+      }
+    },
     expireSnapshot() {
       now += 1800;
       const timer = [...timers.values()].find(({ milliseconds }) => milliseconds === 1800);
@@ -113,6 +138,90 @@ function fixture({ manualClock = false, diagnosticFailure = false } = {}) {
   };
 }
 const turn = () => new Promise(setImmediate);
+
+test("full-size resize fence uses the remaining setup budget before subsequent authoring", async () => {
+  const f = fixture({ manualClock: true, viewportMs: 700 });
+  let prepared = false;
+  const result = f.host.dispatch({ method: "resize", width: 160, height: 100 })
+    .then(() => { prepared = true; f.events.push("authoring-init"); });
+  void result.catch(() => {});
+  await turn();
+  assert.deepEqual(f.events, ["resize", "override", "viewport", "snapshot"]);
+  f.advance(2000);
+  await turn();
+  assert.equal(prepared, false);
+  assert.equal(f.encoder.frames, 0);
+  f.finishSnapshot();
+  await result;
+  assert.deepEqual(f.events, ["resize", "override", "viewport", "snapshot", "authoring-init"]);
+  const report = JSON.parse(f.diagnostics[0].replace("[electron-snapshot] ", ""));
+  assert.equal(report.event, "initialization_snapshot_completed");
+  assert.equal(report.phase, "resize");
+  assert.equal(report.elapsedMs, 2000);
+  assert.equal(report.timeoutMs, 3800);
+  assert.equal(report.settlement, "fulfilled");
+  assert.equal(f.timers.size, 0);
+
+  // The same host's next actual frame must still fail at 1800ms; no late encode.
+  const failed = assert.rejects(f.host.dispatch(f.command), /Electron compositor snapshot timed out/);
+  f.finishSeek();
+  await turn();
+  f.advance(1800);
+  await failed;
+  f.finishSnapshot();
+  await turn();
+  assert.equal(f.encoder.frames, 0);
+});
+
+test("resize decode validation failure cannot emit initialization completion", async () => {
+  const f = fixture({ manualClock: true, decodeFailure: true });
+  const failed = assert.rejects(
+    f.host.dispatch({ method: "resize", width: 160, height: 100 }),
+    { message: "capture.invalid_snapshot" },
+  );
+  await turn();
+  f.finishSnapshot();
+  await failed;
+  assert.deepEqual(f.events, ["resize", "override", "viewport", "snapshot", "decode-invalid"]);
+  assert.equal(f.encoder.frames, 0);
+  assert.equal(f.timers.size, 0);
+  const reports = f.diagnostics.map(line => JSON.parse(line.replace("[electron-snapshot] ", "")));
+  assert.equal(reports.some(report => report.event === "initialization_snapshot_completed"), false);
+});
+
+test("resize cannot restart the setup budget after viewport work or accept a late snapshot", async () => {
+  const f = fixture({ manualClock: true, viewportMs: 700 });
+  let prepared = false;
+  const result = f.host.dispatch({ method: "resize", width: 160, height: 100 })
+    .then(() => { prepared = true; });
+  const failed = assert.rejects(result, /Electron compositor snapshot timed out/);
+  await turn();
+  f.advance(3799);
+  await turn();
+  assert.equal(f.diagnostics.length, 0, "resize has not expired before its remaining setup budget");
+  f.advance(1);
+  await failed;
+  f.finishSnapshot();
+  await turn();
+  assert.equal(prepared, false);
+  assert.equal(f.encoder.frames, 0);
+  assert.equal(f.timers.size, 0);
+  const reports = f.diagnostics.map(line => JSON.parse(line.replace("[electron-snapshot] ", "")));
+  assert.deepEqual(reports.map(report => report.event), ["failed", "settled_after_failure"]);
+  assert.equal(reports[0].phase, "resize");
+  assert.equal(reports[0].timeoutMs, 3800);
+});
+
+test("an exhausted resize setup budget cannot submit another screenshot", async () => {
+  const f = fixture({ manualClock: true, viewportMs: 4500 });
+  await assert.rejects(
+    f.host.dispatch({ method: "resize", width: 160, height: 100 }),
+    /Electron surface resize timed out/,
+  );
+  assert.deepEqual(f.events, ["resize", "override", "viewport"]);
+  assert.equal(f.encoder.frames, 0);
+  assert.equal(f.timers.size, 0);
+});
 
 test("capture waits for this seek and its immutable snapshot before encoding", async () => {
   const f = fixture();
