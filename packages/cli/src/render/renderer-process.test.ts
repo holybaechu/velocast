@@ -773,25 +773,55 @@ describe("runRenderer", () => {
     expect(cleanupEventProtocol).toHaveBeenCalledTimes(1);
   });
 
-  it("routes spawn failure through one lifecycle cleanup and finalization", async () => {
-    const spawnError = new Error("controlled spawn failure");
-    const cleanupEventProtocol = vi.fn();
+  it.each([new Error("controlled spawn failure"), undefined])(
+    "cleans up once before propagating spawn failure: %s",
+    async (spawnError) => {
+      const cleanupEventProtocol = vi.fn();
 
-    const result = runRenderer(
-      "/opt/velocast/velocast-renderer",
-      { mode: "composition", event_log_path: "explicit-events.jsonl" },
-      {
-        resolveProcessEnv: () => ({}),
-        spawnRenderer: () => {
-          throw spawnError;
+      const result = runRenderer(
+        "/opt/velocast/velocast-renderer",
+        { mode: "composition", event_log_path: "explicit-events.jsonl" },
+        {
+          resolveProcessEnv: () => ({}),
+          spawnRenderer: () => {
+            throw spawnError;
+          },
+          cleanupEventProtocol,
         },
-        cleanupEventProtocol,
-      },
-    );
+      );
 
-    await expect(result).rejects.toBe(spawnError);
-    expect(cleanupEventProtocol).toHaveBeenCalledTimes(1);
-  });
+      await expect(result).rejects.toBe(spawnError);
+      expect(cleanupEventProtocol).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([new Error("cleanup secondary"), undefined])(
+    "retains spawn and cleanup failures even for undefined rejection: %s",
+    async (cleanupError) => {
+      const spawnError = new Error("spawn primary");
+      const cleanupEventProtocol = vi.fn(async () => {
+        throw cleanupError;
+      });
+      const result = runRenderer(
+        "/opt/velocast/velocast-renderer",
+        { mode: "composition", event_log_path: "explicit-events.jsonl" },
+        {
+          resolveProcessEnv: () => ({}),
+          spawnRenderer: () => {
+            throw spawnError;
+          },
+          cleanupEventProtocol,
+        },
+      );
+      await expect(result).rejects.toMatchObject({
+        cause: spawnError,
+        message: `spawn primary
+Secondary renderer lifecycle diagnostics:
+- ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+      });
+      expect(cleanupEventProtocol).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("preserves explicit renderer event log paths", async () => {
     const child = createRendererProcess();

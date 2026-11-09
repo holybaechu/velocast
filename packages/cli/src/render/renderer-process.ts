@@ -419,9 +419,6 @@ export async function runRenderer(
     return runStartupFailureLifecycle(
       rendererCancellationError(options.signal.reason),
       cleanupProtocol,
-      usesDefaultWaitForProcess,
-      rendererJob,
-      options.waitOptions?.writeWarning,
     );
   }
   let child: RendererProcess;
@@ -433,13 +430,7 @@ export async function runRenderer(
       detached: process.platform !== "win32",
     });
   } catch (error) {
-    return runStartupFailureLifecycle(
-      error,
-      cleanupProtocol,
-      usesDefaultWaitForProcess,
-      rendererJob,
-      options.waitOptions?.writeWarning,
-    );
+    return runStartupFailureLifecycle(error, cleanupProtocol);
   }
 
   const publishCancellation = (): boolean => {
@@ -533,7 +524,6 @@ export async function runRenderer(
 
   const owner = new RendererLifecycleOwner({
     child,
-    adapter: usesDefaultWaitForProcess ? "built-in" : "custom",
     protocol: usesDefaultWaitForProcess
       ? "required"
       : (options.customProcessProtocol ?? "bypassed"),
@@ -561,7 +551,6 @@ export async function runRenderer(
 
 interface RendererLifecycleOwnerOptions {
   child?: RendererProcess;
-  adapter: "built-in" | "custom";
   protocol: "required" | "bypassed";
   waitForProcess: () => Promise<void>;
   readProtocol: (signal: AbortSignal) => Promise<unknown>;
@@ -636,7 +625,6 @@ class RendererLifecycleOwner {
         this.dispatch({
           type: "adapter-settled",
           settlement: createAdapterSettlement({
-            adapter: this.options.adapter,
             protocol: this.options.protocol,
             status: "fulfilled",
             result,
@@ -648,7 +636,6 @@ class RendererLifecycleOwner {
         this.dispatch({
           type: "adapter-settled",
           settlement: createAdapterSettlement({
-            adapter: this.options.adapter,
             protocol: this.options.protocol,
             status: "rejected",
             error,
@@ -657,11 +644,6 @@ class RendererLifecycleOwner {
         });
       },
     );
-    return this.completion;
-  }
-
-  failStartup(error: unknown): Promise<void> {
-    this.dispatch({ type: "startup-failed", error });
     return this.completion;
   }
 
@@ -807,28 +789,13 @@ export interface RendererEventProtocol {
 async function runStartupFailureLifecycle(
   primaryError: unknown,
   cleanupProtocol: () => Promise<void> | void,
-  usesDefaultWaitForProcess: boolean,
-  rendererJob: unknown,
-  configuredWarningWriter: ((message: string) => void) | undefined,
 ): Promise<void> {
-  const owner = new RendererLifecycleOwner({
-    adapter: usesDefaultWaitForProcess ? "built-in" : "custom",
-    protocol: usesDefaultWaitForProcess ? "required" : "bypassed",
-    waitForProcess: async () => {},
-    readProtocol: async () => [],
-    cleanupProtocol,
-    terminateProcess: async () => {},
-    mapFinalOutcome: (outcome, state) =>
-      finishRendererOutcome(
-        outcome,
-        state,
-        usesDefaultWaitForProcess,
-        rendererJob,
-        configuredWarningWriter,
-        [],
-      ),
-  });
-  await owner.failStartup(primaryError);
+  try {
+    await cleanupProtocol();
+  } catch (error) {
+    throw errorWithLifecycleDiagnostics(primaryError, [error]);
+  }
+  throw primaryError;
 }
 
 function finishRendererOutcome(

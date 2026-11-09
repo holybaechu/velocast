@@ -4,10 +4,6 @@ import type {
   RendererAssemblyMode,
 } from "@velocast/core";
 import {
-  defaultRendererAcceleration,
-  defaultRendererPixelFormat,
-} from "./renderer-defaults.js";
-import {
   resolveRendererAcceleration,
   resolveRendererAudioCodec,
   resolveRendererAssemblyMode,
@@ -84,6 +80,7 @@ export function buildCompositionRenderCommandJobFromSource(
 
   return prepareRenderCommandJob(config, options, pathOptions, {
     mode: "composition",
+    selector: null,
     composition_id: compositionId,
     serve_url: sourceUrl,
     output: resolvedOutput,
@@ -103,6 +100,7 @@ export function buildUrlRenderCommandJob(
 
   return prepareRenderCommandJob(config, options, pathOptions, {
     mode: "url",
+    composition_id: null,
     serve_url: url,
     selector,
     output: resolvedOutput,
@@ -113,7 +111,10 @@ function prepareRenderCommandJob(
   config: Config,
   options: RenderCommandOptions,
   pathOptions: InvocationPathOptions,
-  source: RenderJobFields,
+  source: Pick<
+    RustRenderJob,
+    "mode" | "serve_url" | "output" | "composition_id" | "selector"
+  >,
 ): RustRenderJob {
   const acceleration = resolveRendererAcceleration(
     config,
@@ -126,7 +127,7 @@ function prepareRenderCommandJob(
   const codec =
     configuredCodec ?? (inferredContainer === "webm" ? "vp9" : "h264");
 
-  return finalizeRenderJob({
+  const job: RustRenderJob = {
     ...source,
     codec,
     container,
@@ -174,30 +175,6 @@ function prepareRenderCommandJob(
       options.inputPropsFile ?? config.inputPropsFile,
       pathOptions,
     ),
-  });
-}
-
-function normalizeCliScalar(
-  value: string | number | undefined,
-): string | undefined {
-  return typeof value === "number" ? String(value) : value;
-}
-
-type RenderJobFields = Pick<RustRenderJob, "mode" | "serve_url" | "output"> &
-  Partial<RustRenderJob>;
-
-function finalizeRenderJob(fields: RenderJobFields): RustRenderJob {
-  const acceleration = fields.acceleration ?? defaultRendererAcceleration;
-  const job: RustRenderJob = {
-    ...fields,
-    composition_id: fields.composition_id ?? null,
-    selector: fields.selector ?? null,
-    codec: fields.codec ?? "h264",
-    pixel_format:
-      fields.pixel_format ??
-      defaultRendererPixelFormat(acceleration, fields.codec),
-    acceleration,
-    assembly_mode: fields.assembly_mode ?? "auto",
   };
 
   // Optional wire fields are omitted, including an explicitly disabled verification.
@@ -218,4 +195,10 @@ function finalizeRenderJob(fields: RenderJobFields): RustRenderJob {
   }
   validateRenderJob(job);
   return job;
+}
+
+function normalizeCliScalar(
+  value: string | number | undefined,
+): string | undefined {
+  return typeof value === "number" ? String(value) : value;
 }

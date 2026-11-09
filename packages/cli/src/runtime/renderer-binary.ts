@@ -257,11 +257,6 @@ export function resolveRendererBinary(
     autoCandidates.push(platformPackageBinary);
   }
 
-  const managedCacheBinary = findManagedCacheRendererBinary(cwd, exe);
-  if (managedCacheBinary !== undefined) {
-    autoCandidates.push(managedCacheBinary);
-  }
-
   const autoBinary = selectAutoBinary(
     uniquePaths(autoCandidates),
     options.isUsableAutoBinary ??
@@ -433,19 +428,6 @@ function findInstalledPlatformRendererBinary(
     exe,
   );
   return existsSync(workspaceBinary) ? workspaceBinary : undefined;
-}
-
-function findManagedCacheRendererBinary(
-  cwd: string,
-  exe: string,
-): string | undefined {
-  for (const profile of ["release", "debug"]) {
-    const binary = join(cwd, "target", profile, exe);
-    if (existsSync(binary)) {
-      return binary;
-    }
-  }
-  return undefined;
 }
 
 function ancestorDirs(start: string): string[] {

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, posix, win32 } from "node:path";
-import { assertNonEmptyString as assertNonEmptyStringInternal } from "../internal/validation.js";
+import { assertNonEmptyString } from "../internal/validation.js";
 
 export interface InvocationPathOptions {
   cwd?: string;
@@ -102,12 +102,7 @@ function hasWindowsPathSyntax(path: string): boolean {
   );
 }
 
-export function assertNonEmptyString(
-  value: unknown,
-  errorMessage: string,
-): asserts value is string {
-  assertNonEmptyStringInternal(value, errorMessage);
-}
+export { assertNonEmptyString };
 
 function stripUtf8Bom(contents: string): string {
   return contents.charCodeAt(0) === 0xfeff ? contents.slice(1) : contents;
