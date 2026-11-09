@@ -10,7 +10,7 @@ const hostRequire = require("node:module").createRequire(
 );
 const { frameTiming } = require("../webcodecs-codec.cjs");
 
-function fixture(t) {
+function fixture(t, api = {}) {
   const directory = fs.mkdtempSync(
     path.join(os.tmpdir(), "velocast-frame-ack-"),
   );
@@ -28,6 +28,7 @@ function fixture(t) {
                 release: allReferencesReleased,
               }),
               sendSharedTexture: async () => {},
+              ...api,
             },
           }
         : hostRequire(name),
@@ -44,6 +45,97 @@ function fixture(t) {
   });
   return host;
 }
+
+test("native import/transfer failures return the source exactly once", async (t) => {
+  for (const stage of ["import", "send", "release"]) {
+    let released = 0;
+    const host = fixture(t, {
+      importSharedTexture({ allReferencesReleased }) {
+        if (stage === "import") throw new Error("import failed");
+        return { release: allReferencesReleased };
+      },
+      sendSharedTexture() {
+        throw new Error("send failed");
+      },
+    });
+    host.initialize = async () => {};
+    host.window = {
+      webContents: { mainFrame: {} },
+      isDestroyed: () => false,
+      destroy() {},
+    };
+    const texture = {
+      release() {
+        released++;
+        if (stage === "release") throw new Error("release failed");
+      },
+    };
+    await assert.rejects(
+      host.transfer(texture, { method: "frame" }),
+      /import failed|send failed/,
+    );
+    assert.equal(released, 1);
+    assert.equal(host.nativeLeases.size, 0);
+    assert.equal(host.pending, null);
+    if (stage === "release")
+      await assert.rejects(host.drainNativeLeases(), /native_release_failed/);
+  }
+});
+
+test("native source remains owned until all GPU references release, with bounded in-flight leases", async (t) => {
+  let allReleased,
+    released = 0,
+    importedReleases = 0;
+  const host = fixture(t, {
+    importSharedTexture(options) {
+      allReleased = options.allReferencesReleased;
+      return {
+        release() {
+          importedReleases++;
+        },
+      };
+    },
+    async sendSharedTexture() {
+      host.pending.resolve({});
+    },
+  });
+  host.initialize = async () => {};
+  host.window = {
+    webContents: { mainFrame: {} },
+    isDestroyed: () => false,
+    destroy() {},
+  };
+  await host.transfer(
+    {
+      release() {
+        released++;
+      },
+    },
+    { method: "frame" },
+  );
+  assert.equal(importedReleases, 1);
+  assert.equal(released, 0);
+  assert.equal(host.nativeLeases.size, 1);
+  const drained = host.drainNativeLeases();
+  allReleased();
+  allReleased();
+  await drained;
+  assert.equal(released, 1);
+  for (let i = 0; i < 8; i++) host.nativeLeases.add({});
+  await assert.rejects(
+    host.transfer(
+      {
+        release() {
+          released++;
+        },
+      },
+      { method: "frame" },
+    ),
+    /native_lease_limit/,
+  );
+  assert.equal(released, 2);
+  host.nativeLeases.clear();
+});
 
 test("only the exact frame, token, sequence and timestamps acknowledge a snapshot", async (t) => {
   for (const change of [

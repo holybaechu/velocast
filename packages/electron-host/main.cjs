@@ -292,6 +292,7 @@ async function commandLoad(command) {
   const loadedCompositorFailure = gpuCompositorFailure();
   if (loadedCompositorFailure) throw loadedCompositorFailure;
   await setSnapshotViewport(width, height);
+  nativeCapture.resetSource();
   debug("load complete");
   if (process.env.VELOCAST_ELECTRON_HOST_DEBUG === "1") {
     const gpuInfo = await app.getGPUInfo("complete");

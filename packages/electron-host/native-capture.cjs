@@ -66,6 +66,12 @@ class NativeCapture {
     contents.on("paint", this.onPaint);
   }
 
+  resetSource() {
+    if (this.busy) throw new Error("capture.busy");
+    // Navigation can replace RenderWidgetHostView and its native capture counter.
+    this.lastFrame = -1;
+  }
+
   async capture(width, height) {
     if (this.closed) throw new Error("capture.closed");
     if (this.failure) throw this.failure;
@@ -97,9 +103,11 @@ class NativeCapture {
       // invalidate() only replays a CPU backing bitmap in Electron 44 and is not
       // a shared-texture refresh API. Never use it as a native capture fallback.
       this.contents
-        .executeJavaScript(
-          "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-        )
+        .executeJavaScriptInIsolatedWorld(1001, [
+          {
+            code: "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+          },
+        ])
         .then(() => {
           if (this.closed || this.cancel !== reject) return;
           if (this.failure) {

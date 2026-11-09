@@ -28,11 +28,27 @@ test("release failure is terminal and late paints after cancellation are returne
   assert.equal(late.releases, 1);
 });
 
+test("navigation resets a replaced native source counter without accepting stale frames within a capture", async () => {
+  const f = fixture();
+  const before = texture(50);
+  f.contents.emit("paint", { texture: before });
+  f.capture.resetSource();
+  const result = f.capture.capture(160, 100);
+  assert.throws(() => f.capture.resetSource(), /busy/);
+  f.fence();
+  await turn();
+  const after = texture(1);
+  f.contents.emit("paint", { texture: after });
+  assert.equal(await result, after);
+  after.release();
+  f.capture.dispose();
+});
+
 const turn = () => new Promise(setImmediate);
 function fixture() {
   const contents = new EventEmitter();
   let finishFence;
-  contents.executeJavaScript = () =>
+  contents.executeJavaScriptInIsolatedWorld = () =>
     new Promise((resolve) => {
       finishFence = resolve;
     });
