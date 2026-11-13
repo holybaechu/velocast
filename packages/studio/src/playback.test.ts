@@ -188,12 +188,24 @@ it("awaits slow visual seeks then samples the newest clock rather than enqueuing
   );
   clock.advance(100);
   await vi.waitFor(() => expect(port.seekFrame).toHaveBeenCalledTimes(3));
+  expect(controller.getState()).toMatchObject({
+    phase: "playing",
+    requestedFrame: 1,
+    presentedFrame: 0,
+    frame: "frame-0",
+    playing: true,
+  });
   clock.advance(800);
   expect(clock.callbacks.size).toBe(0);
   expect(port.seekFrame).toHaveBeenCalledTimes(3);
   resolve("frame-1");
   await vi.waitFor(() => expect(clock.callbacks.size).toBe(1));
   clock.advance(800);
+  expect(controller.getState()).toMatchObject({
+    requestedFrame: 8,
+    presentedFrame: 1,
+    frame: "frame-1",
+  });
   await vi.waitFor(() => expect(controller.getState().presentedFrame).toBe(8));
   expect(vi.mocked(port.seekFrame).mock.calls.map((call) => call[0])).toEqual([
     0, 0, 1, 8,

@@ -8,6 +8,7 @@ import {
 } from "@velocast/core";
 import type { StudioApi, StudioSessionDescriptor } from "./studio-api.js";
 import type { RpcRequest } from "./rpc-wire.js";
+import { IframeStudioTransport } from "./iframe-transport.js";
 
 const apps: StudioApp[] = [];
 afterEach(async () => {
@@ -893,6 +894,56 @@ it("retains the displayed frame after an external input change fails validation 
     expect(f.control("[data-status]").textContent).toBe("Frame ready"),
   );
   expect(f.control("[data-error]").textContent).toBe("");
+});
+
+it("keeps the viewer and playback controls ready while the next frame is pending", async () => {
+  vi.useFakeTimers();
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const seekFrame = vi.spyOn(IframeStudioTransport.prototype, "seekFrame");
+  try {
+    const f = workspace();
+    await f.app.start();
+    const play = f.control<HTMLButtonElement>("[data-play]");
+    play.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.control("[data-status]").textContent).toBe("Playing");
+    seekFrame.mockImplementationOnce(async (frame, source) => {
+      await pending;
+      return {
+        frame,
+        compositionId: source.composition.id,
+        session: source.session,
+      };
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(seekFrame).toHaveBeenLastCalledWith(
+      1,
+      expect.anything(),
+      expect.any(AbortSignal),
+    );
+    expect(f.control(".empty-state").hidden).toBe(true);
+    expect(play.disabled).toBe(false);
+    expect(play.getAttribute("aria-label")).toBe("Pause");
+    expect(f.control<HTMLButtonElement>("[data-next-frame]").disabled).toBe(
+      false,
+    );
+    expect(f.control<HTMLButtonElement>("[data-output-frame]").disabled).toBe(
+      false,
+    );
+    expect(f.control("[data-status]").textContent).toBe("Playing");
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.control("[data-frame]").textContent).toContain("0001");
+    expect(f.control(".empty-state").hidden).toBe(true);
+    expect(play.disabled).toBe(false);
+  } finally {
+    release();
+    seekFrame.mockRestore();
+    vi.useRealTimers();
+  }
 });
 
 it("seeks exact frames and window bounds while leaving editing shortcuts alone", async () => {

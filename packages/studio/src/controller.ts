@@ -368,6 +368,12 @@ export class StudioController<Frame> {
       phase: mode === "tick" && this.wantsPlayback ? "playing" : phase,
       source,
       requestedFrame: frame,
+      ...(mode === "tick"
+        ? {
+            presentedFrame: this.state.presentedFrame,
+            frame: this.state.frame,
+          }
+        : {}),
       range: this.range,
       playing: this.wantsPlayback,
       ended: this.ended,
