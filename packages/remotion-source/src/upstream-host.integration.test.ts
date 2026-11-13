@@ -129,7 +129,9 @@ it("discovers, captures OffthreadVideo and mixes the genuine Remotion sequence/l
         Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
       );
       const output = join(directory, "reference.mp4");
-      await source.renderReference(output);
+      await source.renderReference(output, {
+        hardwareAcceleration: "prefer-software",
+      });
       const probe = await runMediaOperation<MediaProbe>({
         kind: "probe",
         path: output,

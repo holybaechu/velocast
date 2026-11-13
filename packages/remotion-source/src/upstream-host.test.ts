@@ -267,10 +267,13 @@ it("assembles reference PNGs with the media encoder and validates still bounds",
     workDirectory: directory,
   });
   try {
-    await source.renderReference(join(directory, "reference.mp4"));
+    await source.renderReference(join(directory, "reference.mp4"), {
+      hardwareAcceleration: "prefer-software",
+    });
     expect(mocks.media).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "encode-frames",
+        hardwareAcceleration: "prefer-software",
         fps: 30,
         framePaths: expect.arrayContaining([
           expect.stringContaining("frame-0.png"),
