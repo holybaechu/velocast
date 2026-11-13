@@ -19,6 +19,8 @@ function fixture(behavior = "ok") {
     cancelled: 0,
     emitted: 0,
     pending: [],
+    encoderPreferences: [],
+    selectedPreference: undefined,
   };
   let source;
   const packet = (sample) => {
@@ -57,6 +59,7 @@ function fixture(behavior = "ok") {
       constructor(config) {
         source = this;
         this.config = config;
+        state.selectedPreference = config.hardwareAcceleration;
       }
       async add(sample) {
         if (behavior === "device-lost") throw new Error("device lost");
@@ -95,9 +98,15 @@ function fixture(behavior = "ok") {
     {
       VideoFrame: Frame,
       VideoEncoder: {
-        isConfigSupported: async () => ({
-          supported: behavior !== "unsupported",
-        }),
+        isConfigSupported: async (config) => {
+          state.encoderPreferences.push(config.hardwareAcceleration);
+          return {
+            supported:
+              behavior !== "unsupported" &&
+              (behavior !== "software-only" ||
+                config.hardwareAcceleration === "prefer-software"),
+          };
+        },
       },
       Uint8Array,
     },
@@ -169,4 +178,20 @@ test("sequence errors release the import and unavailable video never opens nativ
     fixture().session.open({ ...settings, mediaBackend: "native" }),
     /invalid_backend/,
   );
+});
+
+test("software fallback configures Mediabunny and encodes the same GPU imports", async () => {
+  const { session, state, imported } = fixture("software-only");
+  const config = await session.open(settings);
+  assert.equal(config.hardwareAcceleration, "prefer-software");
+  assert.equal(state.selectedPreference, "prefer-software");
+  assert.deepEqual(state.encoderPreferences, [
+    "prefer-hardware",
+    "prefer-software",
+  ]);
+  await session.encode(imported(), 0);
+  await session.encode(imported(), 1);
+  assert.equal((await session.finish()).frames, 2);
+  assert.equal(state.released, 2);
+  assert.equal(state.cancelled, 0);
 });

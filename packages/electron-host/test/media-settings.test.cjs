@@ -23,7 +23,7 @@ test("only browser video codecs and compatible containers are accepted", () => {
   ])
     assert.throws(() => mediaSettings({ ...settings, ...change }), /media\./);
 });
-test("auto and explicit WebCodecs fail instead of switching to CPU video", async () => {
+test("unavailable WebCodecs fails without switching media backends", async () => {
   for (const mediaBackend of ["auto", "webcodecs"])
     for (const VideoEncoder of [
       null,

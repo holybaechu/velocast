@@ -3,6 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   encoderConfig,
+  supportedEncoderConfig,
   frameTiming,
   MAX_PACKET_BYTES,
 } = require("../webcodecs-codec.cjs");
@@ -41,24 +42,114 @@ test("timestamps derive from frame indices without accumulated rounding", () => 
   assert.equal(frameTiming(108000, 30).timestamp, 3_600_000_000);
 });
 
-test("hardware selection never silently retries with a software-capable preference", async () => {
-  const { supportedEncoderConfig } = require("../webcodecs-codec.cjs");
+test("hardware is selected without probing software when supported", async () => {
   const requests = [];
-  const api = {
-    isConfigSupported: async (config) => {
-      requests.push(config.hardwareAcceleration);
-      return { supported: config.hardwareAcceleration !== "prefer-hardware" };
-    },
-  };
   const result = await supportedEncoderConfig(
     { ...settings, codec: "h264" },
-    api,
+    {
+      isConfigSupported: async (config) => {
+        requests.push(config.hardwareAcceleration);
+        return { supported: true };
+      },
+    },
+  );
+  assert.deepEqual(requests, ["prefer-hardware"]);
+  assert.equal(result.config.hardwareAcceleration, "prefer-hardware");
+});
+
+for (const unsupported of ["false", "NotSupportedError"])
+  test(`unsupported hardware (${unsupported}) falls back to software with the same codec`, async () => {
+    const requests = [];
+    const result = await supportedEncoderConfig(
+      { ...settings, codec: "h264" },
+      {
+        isConfigSupported: async (config) => {
+          requests.push(config);
+          if (config.hardwareAcceleration === "prefer-hardware") {
+            if (unsupported === "NotSupportedError")
+              throw Object.assign(new Error("Hardware unavailable"), {
+                name: "NotSupportedError",
+              });
+            return { supported: false };
+          }
+          return { supported: true };
+        },
+      },
+    );
+    assert.deepEqual(
+      requests.map((config) => config.hardwareAcceleration),
+      ["prefer-hardware", "prefer-software"],
+    );
+    assert.deepEqual(requests[1], {
+      ...requests[0],
+      hardwareAcceleration: "prefer-software",
+    });
+    assert.equal(result.logicalCodec, "h264");
+    assert.equal(result.config.hardwareAcceleration, "prefer-software");
+  });
+
+for (const hardwareAcceleration of ["prefer-software", "no-preference"])
+  test(`explicit ${hardwareAcceleration} probes only that preference`, async () => {
+    const requests = [];
+    const result = await supportedEncoderConfig(
+      { ...settings, codec: "h264", hardwareAcceleration },
+      {
+        isConfigSupported: async (config) => {
+          requests.push(config.hardwareAcceleration);
+          return { supported: true };
+        },
+      },
+    );
+    assert.deepEqual(requests, [hardwareAcceleration]);
+    assert.equal(result.config.hardwareAcceleration, hardwareAcceleration);
+  });
+
+test("unsupported hardware and software fail without changing an explicit codec", async () => {
+  const requests = [];
+  const result = await supportedEncoderConfig(
+    { ...settings, codec: "h264" },
+    {
+      isConfigSupported: async (config) => {
+        requests.push(config);
+        return { supported: false };
+      },
+    },
   );
   assert.equal(result.config, undefined);
-  assert.deepEqual(requests, ["prefer-hardware"]);
-  const explicit = await supportedEncoderConfig(
-    { ...settings, codec: "h264", hardwareAcceleration: "prefer-software" },
-    api,
+  assert.equal(result.reason, "webcodecs.unsupported_config: h264");
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every((config) => config.codec === "avc1.42001f"));
+});
+
+test("unrelated capability errors are propagated without a software retry", async () => {
+  const requests = [];
+  const failure = new Error("encoder service disconnected");
+  await assert.rejects(
+    supportedEncoderConfig(
+      { ...settings, codec: "h264" },
+      {
+        isConfigSupported: async (config) => {
+          requests.push(config.hardwareAcceleration);
+          throw failure;
+        },
+      },
+    ),
+    (error) => error === failure,
   );
-  assert.equal(explicit.config.hardwareAcceleration, "prefer-software");
+  assert.deepEqual(requests, ["prefer-hardware"]);
+});
+
+test("unavailable explicit software encoding fails without trying hardware", async () => {
+  const requests = [];
+  const result = await supportedEncoderConfig(
+    { ...settings, codec: "h264", hardwareAcceleration: "prefer-software" },
+    {
+      isConfigSupported: async (config) => {
+        requests.push(config.hardwareAcceleration);
+        return { supported: false };
+      },
+    },
+  );
+  assert.equal(result.config, undefined);
+  assert.deepEqual(requests, ["prefer-software"]);
 });

@@ -107,16 +107,23 @@ async function supportedEncoderConfig(settings, VideoEncoder) {
       reason = error.message;
       continue;
     }
-    let supported;
-    try {
-      supported = (await VideoEncoder.isConfigSupported(candidate)).supported;
-    } catch (error) {
-      if (!isUnsupportedWebCodecsError(error)) throw error;
-      reason = `webcodecs.unsupported_config: ${codec}`;
-      continue;
+    const preferences =
+      candidate.hardwareAcceleration === "prefer-hardware"
+        ? ["prefer-hardware", "prefer-software"]
+        : [candidate.hardwareAcceleration];
+    for (const hardwareAcceleration of preferences) {
+      const config = { ...candidate, hardwareAcceleration };
+      let supported;
+      try {
+        supported = (await VideoEncoder.isConfigSupported(config)).supported;
+      } catch (error) {
+        if (!isUnsupportedWebCodecsError(error)) throw error;
+        reason = `webcodecs.unsupported_config: ${codec}`;
+        continue;
+      }
+      if (supported) return { config, logicalCodec: codec };
+      reason ??= `webcodecs.unsupported_config: ${codec}`;
     }
-    if (supported) return { config: candidate, logicalCodec: codec };
-    reason ??= `webcodecs.unsupported_config: ${codec}`;
   }
   return {
     reason:

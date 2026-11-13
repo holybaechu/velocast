@@ -10,9 +10,9 @@ const { createHash } = require("node:crypto");
 const { hostResponses } = require("./host-responses.cjs");
 
 const mode = "webcodecs";
-for (const [width, height] of [
-  [160, 100],
-  [3840, 2160],
+for (const [width, height, hardwareAcceleration] of [
+  [160, 100, undefined],
+  [3840, 2160, "prefer-software"],
 ]) {
   test(
     `shared texture transactions encode changing and repeated frames through Mediabunny WebCodecs (${width}x${height})`,
@@ -137,7 +137,7 @@ for (const [width, height] of [
         method: "webcodecs-open",
         settings: {
           mediaBackend: "webcodecs",
-          hardwareAcceleration: "prefer-software",
+          hardwareAcceleration,
           startFrame: 0,
           width,
           height,
@@ -155,7 +155,13 @@ for (const [width, height] of [
           sources: {},
         },
       });
-      assert.equal(opened.config.hardwareAcceleration, "prefer-software");
+      assert.ok(
+        ["prefer-hardware", "prefer-software"].includes(
+          opened.config.hardwareAcceleration,
+        ),
+      );
+      if (hardwareAcceleration)
+        assert.equal(opened.config.hardwareAcceleration, hardwareAcceleration);
       assert.equal(opened.config.cpuReadback, false);
       const colors = [
         [32, 64, 192],

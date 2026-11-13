@@ -430,6 +430,8 @@ if (captureExpectation === "required") {
       "portable",
       "--media-backend",
       "auto",
+      "--acceleration",
+      "auto",
       "--output",
       video,
       "--report",
@@ -445,6 +447,9 @@ if (captureExpectation === "required") {
       data.encoder_backend !== "electron_webcodecs_h264" ||
       data.conversion_backend !== "chromium_webcodecs" ||
       data.capture_backend !== "electron_shared_texture" ||
+      !["prefer-hardware", "prefer-software"].includes(
+        data.webcodecs?.hardware_acceleration,
+      ) ||
       data.frames_expected !== frames ||
       data.frames_rendered !== frames ||
       data.frames_encoded !== frames ||
@@ -457,6 +462,7 @@ if (captureExpectation === "required") {
       decodedFrames: decoded,
       captureBackend: data.capture_backend,
       encoderBackend: data.encoder_backend,
+      hardwareAcceleration: data.webcodecs.hardware_acceleration,
       ...(await checkAudio(video, frames)),
     };
   });

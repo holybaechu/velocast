@@ -116,7 +116,6 @@ test(
         kind: "encode-frames",
         mediaBackend: "auto",
         codec: "h264",
-        hardwareAcceleration: "prefer-software",
         container: "mp4",
         audioCodec: "aac",
         audioPath: source,
