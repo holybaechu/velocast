@@ -151,16 +151,16 @@ export function median(values) {
 export function assertWebCodecsTelemetry(report, backend, expectedFrames) {
   if (backend !== "electron")
     throw new Error("Only the Electron browser host is supported");
-  if (report.capture_backend !== "electron_compositor_snapshot")
+  if (report.capture_backend !== "electron_shared_texture")
     throw new Error(
-      `capture_backend ${report.capture_backend}; expected Electron compositor snapshot`,
+      `capture_backend ${report.capture_backend}; expected Electron shared texture`,
     );
   if (
     report.fallback_used ||
     report.fallback_reason ||
-    report.cpu_readback_frames !== expectedFrames
+    report.cpu_readback_frames !== 0
   )
-    throw new Error("Compositor snapshot reported fallback or incorrect CPU readback count");
+    throw new Error("Shared texture capture reported fallback or CPU readback");
   const hardwarePreference = report.webcodecs?.hardware_acceleration;
   if (
     hardwarePreference !== undefined &&

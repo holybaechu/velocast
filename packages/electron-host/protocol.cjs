@@ -27,8 +27,6 @@ function parseCommand(line) {
       "load",
       "execute",
       "resize",
-      "paint",
-      "release",
       "close",
       "webcodecs-open",
       "webcodecs-frame",

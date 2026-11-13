@@ -40,3 +40,25 @@ test("timestamps derive from frame indices without accumulated rounding", () => 
   assert.deepEqual(frameTiming(1, 30), { timestamp: 33333, duration: 33334 });
   assert.equal(frameTiming(108000, 30).timestamp, 3_600_000_000);
 });
+
+test("hardware selection never silently retries with a software-capable preference", async () => {
+  const { supportedEncoderConfig } = require("../webcodecs-codec.cjs");
+  const requests = [];
+  const api = {
+    isConfigSupported: async (config) => {
+      requests.push(config.hardwareAcceleration);
+      return { supported: config.hardwareAcceleration !== "prefer-hardware" };
+    },
+  };
+  const result = await supportedEncoderConfig(
+    { ...settings, codec: "h264" },
+    api,
+  );
+  assert.equal(result.config, undefined);
+  assert.deepEqual(requests, ["prefer-hardware"]);
+  const explicit = await supportedEncoderConfig(
+    { ...settings, codec: "h264", hardwareAcceleration: "prefer-software" },
+    api,
+  );
+  assert.equal(explicit.config.hardwareAcceleration, "prefer-software");
+});

@@ -1,6 +1,6 @@
 "use strict";
 
-const { BrowserWindow, ipcMain } = require("electron/main");
+const { BrowserWindow, ipcMain, sharedTexture } = require("electron/main");
 const fs = require("node:fs");
 const path = require("node:path");
 const { absolute } = require("./media-io.cjs");
@@ -23,6 +23,7 @@ class WebCodecsHost {
     this.frames = 0;
     this.bytes = 0;
     this.finished = false;
+    this.textures = new Set();
     this.onResult = (event, message) => {
       if (
         event.sender !== this.window?.webContents ||
@@ -130,7 +131,11 @@ class WebCodecsHost {
       outputPath: this.videoFile,
     });
     this.config = config;
-    return { ...config, cpuReadback: true };
+    return {
+      ...config,
+      captureBackend: "electron_shared_texture",
+      cpuReadback: false,
+    };
   }
 
   command(method, settings) {
@@ -148,10 +153,56 @@ class WebCodecsHost {
     return result;
   }
 
-  async encode(png, index, frame, token) {
-    if (!this.config || this.finished || index !== this.frames)
-      throw new Error("webcodecs.invalid_sequence");
-    const result = await this.command("frame", { png, index, frame, token });
+  async encode(texture, index, frame, token) {
+    let imported;
+    let release;
+    const released = new Promise((resolve) => {
+      release = resolve;
+    });
+    try {
+      if (
+        !this.config ||
+        this.finished ||
+        index !== this.frames ||
+        this.pending
+      )
+        throw new Error("webcodecs.invalid_sequence");
+      imported = sharedTexture.importSharedTexture({
+        textureInfo: texture.textureInfo,
+        // The source belongs to Electron's bounded OSR texture pool. Retain it
+        // until encoder VideoFrames and imports in every process are released.
+        allReferencesReleased: () => {
+          texture.release();
+          this.textures.delete(released);
+          release();
+        },
+      });
+      this.textures.add(released);
+    } catch (error) {
+      texture.release();
+      throw error;
+    }
+    const id = ++this.sequence;
+    const acknowledgement = this.wait(id);
+    // Observe rejection immediately, even when transfer itself fails first.
+    void acknowledgement.catch(() => {});
+    let result;
+    try {
+      await sharedTexture.sendSharedTexture(
+        {
+          frame: this.window.webContents.mainFrame,
+          importedSharedTexture: imported,
+        },
+        { id, index, frame, token },
+      );
+      result = await acknowledgement;
+    } catch (error) {
+      this.pending?.reject(error);
+      await acknowledgement.catch(() => {});
+      throw error;
+    } finally {
+      imported.release();
+    }
     this.validateAcknowledgement(
       result,
       index,
@@ -168,6 +219,7 @@ class WebCodecsHost {
     if (!this.config || this.finished)
       throw new Error("webcodecs.invalid_finish");
     const result = await this.command("finish");
+    await this.drainTextures();
     if (result.frames !== this.frames || !this.frames)
       throw new Error("webcodecs.frame_count_mismatch");
     this.colorSpace = result.colorSpace ?? this.colorSpace;
@@ -235,6 +287,24 @@ class WebCodecsHost {
     this.encodedFrames = result.encodedFrames;
   }
 
+  async drainTextures() {
+    if (!this.textures.size) return;
+    let timer;
+    try {
+      await Promise.race([
+        Promise.all([...this.textures]),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("webcodecs.texture_release_timeout")),
+            2000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async dispose() {
     this.pending?.reject(new Error("webcodecs.closed"));
     ipcMain.off("velocast:webcodecs:result", this.onResult);
@@ -243,6 +313,7 @@ class WebCodecsHost {
     } finally {
       if (this.window && !this.window.isDestroyed()) this.window.destroy();
       this.window = null;
+      await this.drainTextures();
       if (!this.finished && this.config) {
         fs.rmSync(this.videoFile, {
           force: true,

@@ -99,10 +99,10 @@ const softwareReport = JSON.parse(
 if (
   softwareReport.webcodecs?.hardware_acceleration !== "prefer-software" ||
   softwareReport.webcodecs?.hardware_encoder_verified !== false ||
-  softwareReport.capture_backend !== "electron_compositor_snapshot" ||
+  softwareReport.capture_backend !== "electron_shared_texture" ||
   softwareReport.conversion_backend !== "chromium_webcodecs" ||
   !softwareReport.encoder_backend?.startsWith("electron_webcodecs_") ||
-  softwareReport.cpu_readback_frames !== software.frames ||
+  softwareReport.cpu_readback_frames !== 0 ||
   ["frames_expected", "frames_rendered", "frames_encoded"].some(
     (key) => softwareReport[key] !== software.frames,
   )

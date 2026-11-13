@@ -108,7 +108,7 @@ pub async fn render_frame_png(
         "output.invalid_png_dimensions"
     );
     crate::output_media::validate_png(output, composition.width, composition.height)?;
-    telemetry.capture_backend = Some("electron_software_png".into());
+    telemetry.capture_backend = Some("electron_compositor_png".into());
     telemetry.encoder_backend = Some("electron_png".into());
     telemetry.surface_format_in = Some("bgra".into());
     telemetry.surface_format_encoder = Some("rgba".into());

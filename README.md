@@ -75,6 +75,16 @@ pnpm velocast render product-hero --config apps/playground/velocast.config.ts --
 Use `pnpm velocast --help` for commands and `pnpm velocast render --help` for
 render options.
 
+Video rendering captures Electron GPU shared textures and passes them directly
+to WebCodecs, without PNG intermediates or CPU frame readback. A working GPU
+compositor and shared-texture support are required; unavailable capture fails
+without replacing an existing output. Encoding defaults to `prefer-hardware`
+and fails if that configuration is unsupported. `--acceleration off` explicitly
+requests software **encoding** while retaining GPU capture. WebCodecs exposes
+preferences, so reports do not claim a verified hardware encoder; `required`
+remains unsupported. `velocast frame` still writes a PNG when requested. Rebuild
+the CLI, native renderer, and bundled host together for host protocol 6.
+
 ## Create a video project
 
 For a coding agent, run `velocast skills install` in an existing video project,

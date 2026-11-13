@@ -46,7 +46,7 @@
         "electron-host/package.json",
         "electron-host/profile-directory.cjs",
         "electron-host/protocol.cjs",
-        "electron-host/software-frame.cjs",
+        "electron-host/shared-texture-capture.cjs",
         "electron-host/video-canvases.cjs",
         "electron-host/webcodecs-codec.cjs",
         "electron-host/webcodecs-host.cjs",
@@ -144,10 +144,9 @@
         "validationStatus": "blocked",
         "minimumOsVersion": null,
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -197,7 +196,7 @@
         "electron-host/package.json",
         "electron-host/profile-directory.cjs",
         "electron-host/protocol.cjs",
-        "electron-host/software-frame.cjs",
+        "electron-host/shared-texture-capture.cjs",
         "electron-host/video-canvases.cjs",
         "electron-host/webcodecs-codec.cjs",
         "electron-host/webcodecs-host.cjs",
@@ -215,10 +214,9 @@
         "validationStatus": "blocked",
         "minimumOsVersion": "10.0.22000",
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -268,7 +266,7 @@
         "electron-host/package.json",
         "electron-host/profile-directory.cjs",
         "electron-host/protocol.cjs",
-        "electron-host/software-frame.cjs",
+        "electron-host/shared-texture-capture.cjs",
         "electron-host/video-canvases.cjs",
         "electron-host/webcodecs-codec.cjs",
         "electron-host/webcodecs-host.cjs",
@@ -286,10 +284,9 @@
         "validationStatus": "blocked",
         "minimumOsVersion": null,
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -339,7 +336,7 @@
         "electron-host/package.json",
         "electron-host/profile-directory.cjs",
         "electron-host/protocol.cjs",
-        "electron-host/software-frame.cjs",
+        "electron-host/shared-texture-capture.cjs",
         "electron-host/video-canvases.cjs",
         "electron-host/webcodecs-codec.cjs",
         "electron-host/webcodecs-host.cjs",
@@ -357,10 +354,9 @@
         "validationStatus": "blocked",
         "minimumOsVersion": "11.0",
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -410,7 +406,7 @@
         "electron-host/package.json",
         "electron-host/profile-directory.cjs",
         "electron-host/protocol.cjs",
-        "electron-host/software-frame.cjs",
+        "electron-host/shared-texture-capture.cjs",
         "electron-host/video-canvases.cjs",
         "electron-host/webcodecs-codec.cjs",
         "electron-host/webcodecs-host.cjs",
@@ -428,10 +424,9 @@
         "validationStatus": "blocked",
         "minimumOsVersion": null,
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"
@@ -481,7 +476,7 @@
         "electron-host/package.json",
         "electron-host/profile-directory.cjs",
         "electron-host/protocol.cjs",
-        "electron-host/software-frame.cjs",
+        "electron-host/shared-texture-capture.cjs",
         "electron-host/video-canvases.cjs",
         "electron-host/webcodecs-codec.cjs",
         "electron-host/webcodecs-host.cjs",
@@ -499,10 +494,9 @@
         "validationStatus": "blocked",
         "minimumOsVersion": null,
         "minimumGlibcVersion": null,
-        "gpuRequired": false,
+        "gpuRequired": true,
         "captureBackends": [
-          "electron_software_bgra",
-          "electron_compositor_snapshot"
+          "electron_shared_texture"
         ],
         "conversionBackends": [
           "chromium_webcodecs"

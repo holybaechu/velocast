@@ -64,7 +64,7 @@ impl ElectronRenderer {
             .context("electron.request_overflow")?;
         self.sequence.set(sequence);
         let token = format!("electron-{sequence}");
-        // Preserve authoring paint readiness before the compositor snapshot fence.
+        // Preserve authoring paint readiness before restarting shared texture capture.
         let response = self.host_request(json!({
             "method":"webcodecs-frame", "index":index, "frame":frame, "token":token,
             "script":browser_protocol::render_frame_completion_script(script, true, &token)
@@ -413,7 +413,7 @@ impl HostProcess {
             .env(
                 "VELOCAST_ELECTRON_SURFACE_MODE",
                 match mode {
-                    BrowserSurfaceMode::Software => "software",
+                    BrowserSurfaceMode::Snapshot => "snapshot",
                     BrowserSurfaceMode::WebCodecs => "webcodecs",
                 },
             )
@@ -495,7 +495,7 @@ impl HostProcess {
         let ready = host.receive(Duration::from_secs(16))?;
         ensure!(
             ready["event"] == "ready"
-                && ready["version"] == 5
+                && ready["version"] == 6
                 && ready["pid"].as_u64() == Some(u64::from(host.child.id())),
             "electron.protocol_error: invalid host handshake"
         );
@@ -790,7 +790,7 @@ mod tests {
         let child = Command::new("sh")
             .arg("-c")
             .arg(
-                r#"printf '{"event":"ready","version":5,"pid":%s}\n' "$$"; read request; sleep 30"#,
+                r#"printf '{"event":"ready","version":6,"pid":%s}\n' "$$"; read request; sleep 30"#,
             )
             .process_group(0)
             .stdin(Stdio::piped())
@@ -810,7 +810,7 @@ mod tests {
         let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
             .join("System32/WindowsPowerShell/v1.0/powershell.exe");
         let script = format!(
-            r#"[Console]::WriteLine('{{"event":"ready","version":5,"pid":' + $PID + '}}'); {script}"#
+            r#"[Console]::WriteLine('{{"event":"ready","version":6,"pid":' + $PID + '}}'); {script}"#
         );
         let child = Command::new(shell)
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])

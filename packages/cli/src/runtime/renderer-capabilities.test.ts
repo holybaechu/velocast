@@ -19,7 +19,7 @@ describe("Electron-only capability negotiation", () => {
       outputApiVersion: 1,
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 5,
+      electronHostProtocolVersion: 6,
       videoEncoderBackend: "webcodecs",
       supportedMediaBackends: ["webcodecs"],
       mediaRuntime: "mediabunny",
@@ -41,7 +41,7 @@ describe("Electron-only capability negotiation", () => {
       probe({
         browserHosts: ["cef", "electron"],
         defaultBrowserHost: "cef",
-        electronHostProtocolVersion: 5,
+        electronHostProtocolVersion: 6,
         videoEncoderBackend: "webcodecs",
         supportedMediaBackends: ["webcodecs"],
         mediaRuntime: "mediabunny",
@@ -63,7 +63,7 @@ describe("Electron-only capability negotiation", () => {
           outputApiVersion: 1,
           browserHosts: ["electron"],
           defaultBrowserHost: "electron",
-          electronHostProtocolVersion: 5,
+          electronHostProtocolVersion: 6,
           videoEncoderBackend: "webcodecs",
           supportedMediaBackends: ["webcodecs"],
           mediaRuntime: "mediabunny",
@@ -74,7 +74,7 @@ describe("Electron-only capability negotiation", () => {
     ).toBe(true);
   });
 
-  it.each([0, 1, 2, 3, 4, "5", true, null])(
+  it.each([0, 1, 2, 3, 4, 5, "6", true, null])(
     "rejects unsupported host protocol %s",
     (version) => {
       expect(
@@ -89,7 +89,7 @@ describe("Electron-only capability negotiation", () => {
         ),
       ).toMatchObject({
         available: false,
-        reason: expect.stringContaining("Electron host protocol 5"),
+        reason: expect.stringContaining("Electron host protocol 6"),
       });
     },
   );
@@ -99,7 +99,7 @@ describe("Electron-only capability negotiation", () => {
       outputApiVersion: 1,
       browserHosts: ["electron"],
       defaultBrowserHost: "electron",
-      electronHostProtocolVersion: 5,
+      electronHostProtocolVersion: 6,
       videoEncoderBackend: "webcodecs",
       supportedMediaBackends: ["webcodecs", "native"],
       mediaRuntime: "mediabunny",

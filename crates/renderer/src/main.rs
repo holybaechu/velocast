@@ -188,7 +188,7 @@ fn initial_surface_for_job(job: &RenderJob) -> BrowserSurfaceMode {
     if job.operation == RenderOperation::Render {
         BrowserSurfaceMode::WebCodecs
     } else {
-        BrowserSurfaceMode::Software
+        BrowserSurfaceMode::Snapshot
     }
 }
 
@@ -279,7 +279,7 @@ async fn run_coordinator_render_with_mode(
             effective_concurrency: plan.concurrency,
             probe_tier: "media_metadata".into(),
             segment_count: plan.ranges.len(),
-            capture_mode: "electron_compositor_snapshot".into(),
+            capture_mode: "electron_shared_texture".into(),
             conversion_mode: "chromium_webcodecs".into(),
             encoder_mode: requested_backend.into(),
             planned_encoder_backend: format!(
@@ -661,8 +661,8 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
     #[test]
-    fn video_requires_compositor_and_diagnostics_use_software() {
-        use velocast_renderer_policy::browser_surface::BrowserSurfaceMode::{Software, WebCodecs};
+    fn video_requires_compositor_and_diagnostics_use_snapshots() {
+        use velocast_renderer_policy::browser_surface::BrowserSurfaceMode::{Snapshot, WebCodecs};
         let mut job: RenderJob = serde_json::from_value(serde_json::json!({
             "mode": "composition", "serve_url": "http://localhost",
             "output": "movie.mp4", "codec": "h264"
@@ -671,7 +671,7 @@ mod tests {
         assert_eq!(initial_surface_for_job(&job), WebCodecs);
         for operation in [RenderOperation::Inspect, RenderOperation::Frame] {
             job.operation = operation;
-            assert_eq!(initial_surface_for_job(&job), Software);
+            assert_eq!(initial_surface_for_job(&job), Snapshot);
         }
     }
     #[test]

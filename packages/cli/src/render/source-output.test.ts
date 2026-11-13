@@ -208,6 +208,7 @@ it("retains the last frame duration when muxing 30 fps video into coarse WebM ti
     height: expected.height,
     fps: expected.fps,
     codec: "vp9",
+    hardwareAcceleration: "prefer-software",
     bitrate: 1_000_000,
     outputPath: source,
   });

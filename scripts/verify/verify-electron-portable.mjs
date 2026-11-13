@@ -445,11 +445,11 @@ if (captureExpectation === "required") {
       data.mode !== "reference_web_codecs" ||
       data.encoder_backend !== "electron_webcodecs_h264" ||
       data.conversion_backend !== "chromium_webcodecs" ||
-      data.capture_backend !== "electron_compositor_snapshot" ||
+      data.capture_backend !== "electron_shared_texture" ||
       data.frames_expected !== frames ||
       data.frames_rendered !== frames ||
       data.frames_encoded !== frames ||
-      data.cpu_readback_frames !== frames ||
+      data.cpu_readback_frames !== 0 ||
       data.dropped_frames !== 0 ||
       data.stale_frames !== 0
     )
@@ -668,7 +668,7 @@ for (const args of [
 }
 for (const failure of [
   "capture.compositor_unavailable: acceptance fixture",
-  "Electron compositor snapshot timed out: acceptance fixture",
+  "Electron shared texture capture timed out: acceptance fixture",
   "webcodecs.unsupported_config: acceptance fixture",
 ])
   await gate(`strict-failure-${failure.split(":")[0]}`, async () => {
@@ -681,7 +681,7 @@ for (const failure of [
       wrapper,
       `const fs=require("node:fs");
 fs.appendFileSync(${JSON.stringify(attempts)},process.env.VELOCAST_ELECTRON_SURFACE_MODE+"\\n");
-process.stdout.write(JSON.stringify({event:"ready",version:5,pid:process.pid})+"\\n");
+process.stdout.write(JSON.stringify({event:"ready",version:6,pid:process.pid})+"\\n");
 const input=fs.createReadStream(null,{fd:0});let buffer="";input.on("data",data=>{buffer+=data;let end=buffer.indexOf("\\n");if(end<0)return;const request=JSON.parse(buffer.slice(0,end));buffer=buffer.slice(end+1);process.stdout.write(JSON.stringify({id:request.id,ok:false,error:${JSON.stringify(failure)}})+"\\n");});`,
     );
     const result = await command(
@@ -713,11 +713,12 @@ const input=fs.createReadStream(null,{fd:0});let buffer="";input.on("data",data=
     );
     if (
       result.code === 0 ||
+      (!result.stdout.includes(failure) && !result.stderr.includes(failure)) ||
       sha(await readFile(video)) !== before ||
       (await readFile(attempts, "utf8")).trim() !== "webcodecs"
     )
       throw new Error(
-        "Capture failure retried with CPU pixels or changed prior output",
+        "Capture failure was not observed, retried with CPU pixels, or changed prior output",
       );
   });
 report.status = report.cases.every((entry) => entry.status === "passed")
