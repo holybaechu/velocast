@@ -31,7 +31,7 @@ describe("bin process adapter", () => {
         outputApiVersion: 1,
         browserHosts: ["electron"],
         defaultBrowserHost: "electron",
-        electronHostProtocolVersion: 5,
+        electronHostProtocolVersion: 6,
         videoEncoderBackend: "webcodecs",
         supportedMediaBackends: ["webcodecs"],
         mediaRuntime: "mediabunny",

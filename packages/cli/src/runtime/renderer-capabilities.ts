@@ -86,12 +86,12 @@ export function probeRendererCapabilities(
       parsed.browserHosts.length !== 1 ||
       parsed.browserHosts[0] !== "electron" ||
       parsed.defaultBrowserHost !== "electron" ||
-      parsed.electronHostProtocolVersion !== 5
+      parsed.electronHostProtocolVersion !== 6
     ) {
       return {
         available: false,
         reason:
-          "renderer.electron_unsupported: rebuild or install a renderer advertising Electron host protocol 5",
+          "renderer.electron_unsupported: rebuild or install a renderer advertising Electron host protocol 6",
       };
     }
     if (

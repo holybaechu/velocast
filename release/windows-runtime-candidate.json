@@ -31,7 +31,7 @@
     "electron-host/package.json",
     "electron-host/profile-directory.cjs",
     "electron-host/protocol.cjs",
-    "electron-host/software-frame.cjs",
+    "electron-host/shared-texture-capture.cjs",
     "electron-host/video-canvases.cjs",
     "electron-host/webcodecs-codec.cjs",
     "electron-host/webcodecs-host.cjs",

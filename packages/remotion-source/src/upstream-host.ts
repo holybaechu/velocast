@@ -45,8 +45,14 @@ export interface PreparedRemotionSource {
   url: string;
   /** Original timeline audio, decoded and mixed through WebCodecs. */
   renderAudio(outputPath: string): Promise<string | null>;
-  /** Original browser output assembled through the WebCodecs encoder. */
-  renderReference(outputPath: string): Promise<void>;
+  /** Original browser output assembled through WebCodecs; hardware is preferred by default. */
+  renderReference(
+    outputPath: string,
+    encoding?: {
+      hardwareAcceleration?:
+        "prefer-hardware" | "prefer-software" | "no-preference";
+    },
+  ): Promise<void>;
   renderReferenceFrame(frame: number, outputPath: string): Promise<void>;
   close(): Promise<void>;
 }
@@ -442,7 +448,7 @@ async function openRemotionSource(
       composition: runtime.deserialize<VideoConfig>(serializedComposition),
       url,
       renderAudio: (output) => enqueue(() => audio(output)),
-      renderReference: (output) =>
+      renderReference: (output, { hardwareAcceleration } = {}) =>
         enqueue(async () => {
           const { plan, framePaths } = await collect(true);
           let audioPath: string | undefined;
@@ -468,6 +474,7 @@ async function openRemotionSource(
               height: composition.height,
               bitrate: 8_000_000,
               codec: "h264",
+              hardwareAcceleration,
               audioPath,
             },
             output,

@@ -247,6 +247,7 @@ async function checkPixels(path, expected, { exactStatic = false } = {}) {
   }
   return expected.length;
 }
+// Exercise GPU capture independently of hosted hardware encoder availability.
 const config = join(fixture, "velocast.config.mjs");
 const sampleFrames = frames * 4000;
 const wav = Buffer.alloc(44 + sampleFrames * 4);
@@ -275,7 +276,7 @@ await cp(join(root, "packages/core/dist"), join(source, "core"), {
 });
 await writeFile(
   config,
-  `export default ${JSON.stringify({ entry: "source/index.html", renderer: { binary: renderer, snapshotRoot: "source", mediaBackend: "webcodecs", acceleration: "auto", concurrency: 1, assembly: "reference", codec: "h264", pixelFormat: "yuv420p", bitrate: "8M" } })};\n`,
+  `export default ${JSON.stringify({ entry: "source/index.html", renderer: { binary: renderer, snapshotRoot: "source", mediaBackend: "webcodecs", acceleration: "off", concurrency: 1, assembly: "reference", codec: "h264", pixelFormat: "yuv420p", bitrate: "8M" } })};\n`,
 );
 await writeFile(
   join(source, "index.html"),
@@ -412,9 +413,7 @@ if (captureExpectation === "required") {
       assertWebCodecsTelemetry(data, "electron", frames);
       if (
         data.encoder_backend !== "electron_webcodecs_h264" ||
-        !["prefer-hardware", "no-preference"].includes(
-          data.webcodecs?.hardware_acceleration,
-        )
+        data.webcodecs?.hardware_acceleration !== "prefer-software"
       )
         throw new Error(`Wrong ${encoder} selection: ${JSON.stringify(data)}`);
       return {
@@ -431,6 +430,8 @@ if (captureExpectation === "required") {
       "portable",
       "--media-backend",
       "auto",
+      "--acceleration",
+      "auto",
       "--output",
       video,
       "--report",
@@ -445,11 +446,14 @@ if (captureExpectation === "required") {
       data.mode !== "reference_web_codecs" ||
       data.encoder_backend !== "electron_webcodecs_h264" ||
       data.conversion_backend !== "chromium_webcodecs" ||
-      data.capture_backend !== "electron_compositor_snapshot" ||
+      data.capture_backend !== "electron_shared_texture" ||
+      !["prefer-hardware", "prefer-software"].includes(
+        data.webcodecs?.hardware_acceleration,
+      ) ||
       data.frames_expected !== frames ||
       data.frames_rendered !== frames ||
       data.frames_encoded !== frames ||
-      data.cpu_readback_frames !== frames ||
+      data.cpu_readback_frames !== 0 ||
       data.dropped_frames !== 0 ||
       data.stale_frames !== 0
     )
@@ -458,6 +462,7 @@ if (captureExpectation === "required") {
       decodedFrames: decoded,
       captureBackend: data.capture_backend,
       encoderBackend: data.encoder_backend,
+      hardwareAcceleration: data.webcodecs.hardware_acceleration,
       ...(await checkAudio(video, frames)),
     };
   });
@@ -576,7 +581,7 @@ if (captureExpectation === "required") {
           output: video,
           codec: "h264",
           media_backend: "webcodecs",
-          acceleration: "auto",
+          acceleration: "off",
           pixel_format: "yuv420p",
           event_log_path: events,
         }),
@@ -668,7 +673,7 @@ for (const args of [
 }
 for (const failure of [
   "capture.compositor_unavailable: acceptance fixture",
-  "Electron compositor snapshot timed out: acceptance fixture",
+  "Electron shared texture capture timed out: acceptance fixture",
   "webcodecs.unsupported_config: acceptance fixture",
 ])
   await gate(`strict-failure-${failure.split(":")[0]}`, async () => {
@@ -681,7 +686,7 @@ for (const failure of [
       wrapper,
       `const fs=require("node:fs");
 fs.appendFileSync(${JSON.stringify(attempts)},process.env.VELOCAST_ELECTRON_SURFACE_MODE+"\\n");
-process.stdout.write(JSON.stringify({event:"ready",version:5,pid:process.pid})+"\\n");
+process.stdout.write(JSON.stringify({event:"ready",version:6,pid:process.pid})+"\\n");
 const input=fs.createReadStream(null,{fd:0});let buffer="";input.on("data",data=>{buffer+=data;let end=buffer.indexOf("\\n");if(end<0)return;const request=JSON.parse(buffer.slice(0,end));buffer=buffer.slice(end+1);process.stdout.write(JSON.stringify({id:request.id,ok:false,error:${JSON.stringify(failure)}})+"\\n");});`,
     );
     const result = await command(
@@ -713,11 +718,12 @@ const input=fs.createReadStream(null,{fd:0});let buffer="";input.on("data",data=
     );
     if (
       result.code === 0 ||
+      (!result.stdout.includes(failure) && !result.stderr.includes(failure)) ||
       sha(await readFile(video)) !== before ||
       (await readFile(attempts, "utf8")).trim() !== "webcodecs"
     )
       throw new Error(
-        "Capture failure retried with CPU pixels or changed prior output",
+        "Capture failure was not observed, retried with CPU pixels, or changed prior output",
       );
   });
 report.status = report.cases.every((entry) => entry.status === "passed")

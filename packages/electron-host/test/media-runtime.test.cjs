@@ -244,6 +244,7 @@ test(
           height: 64,
           fps: 30,
           codec: "vp9",
+          hardwareAcceleration: "prefer-software",
           bitrate: 1000000,
           outputPath: source,
         });

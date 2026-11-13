@@ -163,7 +163,7 @@ export function packageElectronRuntime(options) {
   const capabilities = options.probeCapabilities(roots[0]);
   if (
     capabilities.defaultBrowserHost !== "electron" ||
-    capabilities.electronHostProtocolVersion !== 5 ||
+    capabilities.electronHostProtocolVersion !== 6 ||
     capabilities.videoEncoderBackend !== "webcodecs" ||
     capabilities.mediaRuntime !== "mediabunny" ||
     JSON.stringify(capabilities.supportedMediaBackends) !== '["webcodecs"]' ||

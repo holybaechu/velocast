@@ -63,7 +63,7 @@ for (const [name, color] of [["red", [210, 30, 30]], ["blue", [30, 50, 210]]]) {
   }
   const video = join(publicDir, `${name}.mp4`);
   await media({ kind: "encode-frames", framePaths: paths, width, height, fps: 6,
-    bitrate: 500000, codec: "h264", outputPath: video });
+    bitrate: 500000, codec: "h264", hardwareAcceleration: "prefer-software", outputPath: video });
   sourcePaths.push(video);
   for (const path of paths) await unlink(path);
 }
@@ -95,7 +95,7 @@ await build({ root: fixture, configFile: false, base: "./", resolve: { alias: {
   "react-dom": join(root, "packages/react/node_modules/react-dom"),
 } }, build: { outDir: "dist", emptyOutDir: true } });
 const config = join(fixture, "velocast.config.mjs");
-await writeFile(config, `export default ${JSON.stringify({ entry:"dist/index.html", renderer:{ binary:renderer, snapshotRoot:"dist", codec:"h264", pixelFormat:"yuv420p", acceleration:"auto", concurrency:1, assembly:"reference" } })};\n`);
+await writeFile(config, `export default ${JSON.stringify({ entry:"dist/index.html", renderer:{ binary:renderer, snapshotRoot:"dist", codec:"h264", pixelFormat:"yuv420p", acceleration:"off", concurrency:1, assembly:"reference" } })};\n`);
 const video = join(output, "composed.mp4"), report = join(output, "report.json");
 try {
   execFileSync(process.execPath, [join(root, "packages/cli/dist/bin.js"), "render", "footage-native", "--config", config,
@@ -109,7 +109,7 @@ assert.equal(probe.video?.width, 320); assert.equal(probe.video?.height, 90);
 assert.equal(probe.audio?.sampleRate, 48000);
 const telemetry = JSON.parse(await readFile(report, "utf8"));
 assert.equal(telemetry.encoder_backend, "electron_webcodecs_h264");
-assert.equal(telemetry.cpu_readback_frames, 16);
+assert.equal(telemetry.cpu_readback_frames, 0);
 assert.equal(telemetry.frames_encoded, durationFrames);
 const checked = [];
 for (const frame of [0, 1, 2, 5, 6, 13, 15]) {

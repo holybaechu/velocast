@@ -167,7 +167,12 @@ pub(crate) async fn render(
         pixel_format == "yuv420p",
         "encoder.pixel_format_mismatch: received {pixel_format}"
     );
-    report.capture_backend = Some("electron_compositor_snapshot".into());
+    ensure!(
+        opened["config"]["cpuReadback"].as_bool() == Some(false)
+            && opened["config"]["captureBackend"].as_str() == Some("electron_shared_texture"),
+        "capture.shared_texture_required"
+    );
+    report.capture_backend = Some("electron_shared_texture".into());
     report.conversion_backend = Some("chromium_webcodecs".into());
     report.encoder_backend = Some(format!("electron_{backend}_{codec}"));
     report.surface_format_encoder = Some(pixel_format.into());
@@ -181,7 +186,7 @@ pub(crate) async fn render(
             .unwrap_or(hardware)
             .into(),
         hardware_encoder_verified: false,
-        uncompressed_readback_verified: true,
+        uncompressed_readback_verified: false,
         color_space: None,
     });
     let mut context = crate::frame_loop::render_context(composition);
@@ -212,15 +217,14 @@ pub(crate) async fn render(
         report.capture_backend = Some(
             captured["captureBackend"]
                 .as_str()
-                .unwrap_or("electron_compositor_snapshot")
+                .unwrap_or("electron_shared_texture")
                 .into(),
         );
         ensure!(
-            captured["cpuReadback"].as_bool() == Some(true)
-                && captured["captureBackend"].as_str() == Some("electron_compositor_snapshot"),
-            "capture.compositor_snapshot_required"
+            captured["cpuReadback"].as_bool() == Some(false)
+                && captured["captureBackend"].as_str() == Some("electron_shared_texture"),
+            "capture.shared_texture_required"
         );
-        report.cpu_readback_frames += 1;
         report.frames_rendered += 1;
         let previous_encoded = report.frames_encoded;
         let encoded = captured["encodedFrames"]

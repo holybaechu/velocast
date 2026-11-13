@@ -246,9 +246,9 @@ async function render(name, assembly, concurrency) {
   );
   assert.equal(JSON.parse(stdout).status, "success", `${name} CLI result`);
   const stats = JSON.parse(await readFile(telemetry, "utf8"));
-  assert.equal(stats.capture_backend, "electron_compositor_snapshot");
+  assert.equal(stats.capture_backend, "electron_shared_texture");
   assert.equal(stats.frames_encoded, frames);
-  assert.equal(stats.cpu_readback_frames, frames);
+  assert.equal(stats.cpu_readback_frames, 0);
   assert.equal(stats.fallback_used, false);
   assert.equal(
     stats.mode,

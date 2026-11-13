@@ -16,7 +16,7 @@ const caps = {
   outputApiVersion: 1,
   browserHosts: ["electron"],
   defaultBrowserHost: "electron",
-  electronHostProtocolVersion: 5,
+  electronHostProtocolVersion: 6,
   supportedMediaBackends: ["webcodecs"],
   videoEncoderBackend: "webcodecs",
   mediaRuntime: "mediabunny",

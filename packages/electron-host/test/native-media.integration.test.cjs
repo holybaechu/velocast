@@ -148,6 +148,7 @@ test(
             kind: "encode-frames",
             mediaBackend: "webcodecs",
             codec,
+            hardwareAcceleration: "prefer-software",
             container,
             videoProfile: profile,
             width: 160,

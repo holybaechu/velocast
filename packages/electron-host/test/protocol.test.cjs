@@ -26,13 +26,18 @@ test("script completion only accepts the current request token", () => {
 
 test("commands reject unsupported operations and unsafe request IDs", () => {
   assert.equal(
-    parseCommand('{"id":7,"method":"paint","generation":8,"copy":true}').id,
+    parseCommand('{"id":7,"method":"webcodecs-frame","index":0,"frame":8}').id,
     7,
   );
   assert.throws(
-    () => parseCommand('{"id":9007199254740992,"method":"paint"}'),
+    () => parseCommand('{"id":9007199254740992,"method":"webcodecs-frame"}'),
     /safe integer/,
   );
+  for (const method of ["paint", "release"])
+    assert.throws(
+      () => parseCommand(JSON.stringify({ id: 1, method })),
+      /unsupported/,
+    );
   assert.throws(() => parseCommand('{"id":1,"method":"eval"}'), /unsupported/);
 });
 

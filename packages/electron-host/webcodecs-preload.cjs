@@ -2,7 +2,7 @@
 
 // This preload belongs only to the trusted empty encoder window. Composition
 // pages remain sandboxed, without a preload or access to these IPC channels.
-const { ipcRenderer } = require("electron/renderer");
+const { ipcRenderer, sharedTexture } = require("electron/renderer");
 const { MediaSession } = require("./media-session.cjs");
 const frameUtility = process.argv.includes("--velocast-frame-utility");
 const utilityOnly =
@@ -12,6 +12,20 @@ const reply = (id, result) =>
   ipcRenderer.send("velocast:webcodecs:result", { id, ...result });
 const failure = (id, error) =>
   reply(id, { error: String(error?.message || error) });
+
+if (session)
+  sharedTexture.setSharedTextureReceiver(
+    async ({ importedSharedTexture }, { id, index, frame, token }) => {
+      try {
+        // MediaSession closes every VideoFrame and releases the renderer import
+        // on success and failure. Electron fences GPU use before recycling OSR.
+        const result = await session.encode(importedSharedTexture, index);
+        reply(id, { result: { ...result, frame, token } });
+      } catch (error) {
+        failure(id, error);
+      }
+    },
+  );
 
 ipcRenderer.on(
   "velocast:webcodecs:command",
@@ -30,26 +44,7 @@ ipcRenderer.on(
         );
       else if (method === "open" && session)
         result = await session.open(settings);
-      else if (method === "frame" && session) {
-        const decoder = new ImageDecoder({
-          data: settings.png,
-          type: "image/png",
-        });
-        try {
-          const { image } = await decoder.decode({ frameIndex: 0 });
-          result = await session.encode(
-            {
-              getVideoFrame: () => image.clone(),
-              release: () => image.close(),
-            },
-            settings.index,
-          );
-        } finally {
-          decoder.close();
-        }
-        result = { ...result, frame: settings.frame, token: settings.token };
-      } else if (method === "finish" && session)
-        result = await session.finish();
+      else if (method === "finish" && session) result = await session.finish();
       else throw new Error("webcodecs.invalid_command");
       reply(id, { result });
     } catch (error) {
