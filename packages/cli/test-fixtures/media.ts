@@ -110,6 +110,7 @@ export async function writeTestVideo(
     height,
     bitrate: 1_000_000,
     codec: "h264",
+    hardwareAcceleration: "prefer-software",
     outputPath,
     ...(options.timestamps ? { timestamps: options.timestamps } : {}),
     ...(options.rotation ? { rotation: options.rotation } : {}),

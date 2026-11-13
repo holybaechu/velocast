@@ -197,9 +197,14 @@ impl BrowserDriver for ElectronRenderer {
         self.session.borrow().clone()
     }
     fn render_frame(&self, script: &str, _frame: u32) -> anyhow::Result<()> {
+        // Still capture forces its own compositor redraw. Its stopped OSR
+        // capturer cannot be relied on to schedule page animation frames.
+        let wait_for_paint = self.surface_mode == BrowserSurfaceMode::WebCodecs;
         self.report(|token| {
             Ok(browser_protocol::render_frame_completion_script(
-                script, true, token,
+                script,
+                wait_for_paint,
+                token,
             ))
         })
         .map(|_| ())

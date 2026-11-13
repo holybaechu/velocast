@@ -137,6 +137,7 @@ for (const [width, height] of [
         method: "webcodecs-open",
         settings: {
           mediaBackend: "webcodecs",
+          hardwareAcceleration: "prefer-software",
           startFrame: 0,
           width,
           height,
@@ -154,7 +155,7 @@ for (const [width, height] of [
           sources: {},
         },
       });
-      assert.equal(opened.config.hardwareAcceleration, "prefer-hardware");
+      assert.equal(opened.config.hardwareAcceleration, "prefer-software");
       assert.equal(opened.config.cpuReadback, false);
       const colors = [
         [32, 64, 192],

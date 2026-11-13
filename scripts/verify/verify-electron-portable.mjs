@@ -247,6 +247,7 @@ async function checkPixels(path, expected, { exactStatic = false } = {}) {
   }
   return expected.length;
 }
+// Exercise GPU capture independently of hosted hardware encoder availability.
 const config = join(fixture, "velocast.config.mjs");
 const sampleFrames = frames * 4000;
 const wav = Buffer.alloc(44 + sampleFrames * 4);
@@ -275,7 +276,7 @@ await cp(join(root, "packages/core/dist"), join(source, "core"), {
 });
 await writeFile(
   config,
-  `export default ${JSON.stringify({ entry: "source/index.html", renderer: { binary: renderer, snapshotRoot: "source", mediaBackend: "webcodecs", acceleration: "auto", concurrency: 1, assembly: "reference", codec: "h264", pixelFormat: "yuv420p", bitrate: "8M" } })};\n`,
+  `export default ${JSON.stringify({ entry: "source/index.html", renderer: { binary: renderer, snapshotRoot: "source", mediaBackend: "webcodecs", acceleration: "off", concurrency: 1, assembly: "reference", codec: "h264", pixelFormat: "yuv420p", bitrate: "8M" } })};\n`,
 );
 await writeFile(
   join(source, "index.html"),
@@ -412,9 +413,7 @@ if (captureExpectation === "required") {
       assertWebCodecsTelemetry(data, "electron", frames);
       if (
         data.encoder_backend !== "electron_webcodecs_h264" ||
-        !["prefer-hardware", "no-preference"].includes(
-          data.webcodecs?.hardware_acceleration,
-        )
+        data.webcodecs?.hardware_acceleration !== "prefer-software"
       )
         throw new Error(`Wrong ${encoder} selection: ${JSON.stringify(data)}`);
       return {
@@ -576,7 +575,7 @@ if (captureExpectation === "required") {
           output: video,
           codec: "h264",
           media_backend: "webcodecs",
-          acceleration: "auto",
+          acceleration: "off",
           pixel_format: "yuv420p",
           event_log_path: events,
         }),

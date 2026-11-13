@@ -58,29 +58,23 @@ it("emits exact loaded source hashes and updates comment-only watch builds while
     root: f.root,
     configFile: false,
     logLevel: "silent",
-    plugins: [
-      studioSourcePlugin({ demo: "src/demo.js" }),
-      {
-        name: "observe-completed-test-builds",
-        writeBundle() {
-          builds++;
-        },
-      },
-    ],
+    plugins: [studioSourcePlugin({ demo: "src/demo.js" })],
     build: { watch: {}, emptyOutDir: false },
   });
   cleanup.push(() => watcher.close());
   watcher.on("event", (event: { code: string; error?: Error }) => {
+    if (event.code === "END") builds++;
     if (event.code === "ERROR") errors.push(event.error!);
   });
-  await vi.waitFor(
-    async () =>
-      expect(await f.receipt()).toEqual({
-        version: 1,
-        revisions: { demo: hash(f.source) },
-      }),
-    { timeout: 5000 },
-  );
+  // A published receipt does not mean the watcher has finished the build.
+  // Wait for END before inspecting output or making the next source edit.
+  await vi.waitFor(() => expect(builds).toBeGreaterThan(0), {
+    timeout: 5000,
+  });
+  expect(await f.receipt()).toEqual({
+    version: 1,
+    revisions: { demo: hash(f.source) },
+  });
   const assets = join(f.root, "dist/assets");
   const javascript = (await readdir(assets)).find((name) =>
     name.endsWith(".js"),
@@ -89,15 +83,15 @@ it("emits exact loaded source hashes and updates comment-only watch builds while
   const comment =
     f.source +
     "// A comment changes the saved source, not the rendered JavaScript.\r\n";
+  const beforeComment = builds;
   await writeFile(join(f.root, "src/demo.js"), comment);
-  await vi.waitFor(
-    async () =>
-      expect(await f.receipt()).toEqual({
-        version: 1,
-        revisions: { demo: hash(comment) },
-      }),
-    { timeout: 5000 },
-  );
+  await vi.waitFor(() => expect(builds).toBeGreaterThan(beforeComment), {
+    timeout: 5000,
+  });
+  expect(await f.receipt()).toEqual({
+    version: 1,
+    revisions: { demo: hash(comment) },
+  });
   expect(await readFile(join(assets, javascript), "utf8")).toBe(originalBundle);
   const before = builds;
   await writeFile(
@@ -108,10 +102,15 @@ it("emits exact loaded source hashes and updates comment-only watch builds while
     timeout: 5000,
   });
   expect((await f.receipt()).revisions.demo).toBe(hash(comment));
+  const beforeError = builds;
   await writeFile(join(f.root, "src/demo.js"), "export const invalid = <");
-  await vi.waitFor(() => expect(errors.length).toBeGreaterThan(0), {
-    timeout: 5000,
-  });
+  await vi.waitFor(
+    () => {
+      expect(builds).toBeGreaterThan(beforeError);
+      expect(errors.length).toBeGreaterThan(0);
+    },
+    { timeout: 5000 },
+  );
   expect((await f.receipt()).revisions.demo).toBe(hash(comment));
 }, 30_000);
 
