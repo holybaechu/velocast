@@ -92,3 +92,21 @@ test("cancellation rejects an owned capture and releases late deliveries", async
   assert.equal(f.paint().releases(), 1);
   assert.throws(() => f.capture.capture(160, 100), /capture.closed/);
 });
+
+test("resize timeout reports rejected texture geometry without copying pixels", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture();
+  const failed = assert.rejects(f.capture.capture(3840, 2160), (error) => {
+    assert.match(error.message, /expected 3840x2160; 2 textures received/);
+    assert.match(error.message, /"codedSize":\{"width":4096,"height":2160\}/);
+    assert.match(
+      error.message,
+      /"visibleRect":\{"x":0,"y":0,"width":4096,"height":2160\}/,
+    );
+    return true;
+  });
+  assert.equal(f.paint({ widgetType: "popup" }).releases(), 1);
+  assert.equal(f.paint({ width: 4096, height: 2160 }).releases(), 1);
+  t.mock.timers.tick(1800);
+  await failed;
+});

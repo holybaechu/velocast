@@ -21,6 +21,8 @@ class SharedTextureCapture {
         return;
       }
       const { widgetType, codedSize, visibleRect } = texture.textureInfo;
+      pending.received++;
+      pending.lastGeometry = { widgetType, codedSize, visibleRect };
       if (
         widgetType !== "frame" ||
         codedSize.width !== pending.width ||
@@ -46,9 +48,22 @@ class SharedTextureCapture {
     if (this.pending) throw new Error("capture.busy");
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.reject(new Error("Electron shared texture capture timed out"));
+        const { received, lastGeometry } = this.pending;
+        this.reject(
+          new Error(
+            `Electron shared texture capture timed out: expected ${width}x${height}; ${received} textures received; last geometry ${JSON.stringify(lastGeometry)}`,
+          ),
+        );
       }, timeoutMs);
-      this.pending = { width, height, resolve, reject, timer };
+      this.pending = {
+        width,
+        height,
+        resolve,
+        reject,
+        timer,
+        received: 0,
+        lastGeometry: null,
+      };
       try {
         this.contents.startPainting();
       } catch (error) {
